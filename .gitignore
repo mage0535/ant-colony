@@ -36,3 +36,22 @@ Thumbs.db
 .vscode/
 .idea/
 *.sublime-*
+
+
+# Scratch / dev files
+check_parser*.py
+debug_*.py
+*.log
+
+# Conversations
+data/conversations/
+
+# Runtime env
+data/openvort_runtime.env
+
+# External dependencies
+external/
+scratchpad/
+
+# macOS
+.DS_Store
