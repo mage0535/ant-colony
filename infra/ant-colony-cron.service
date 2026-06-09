@@ -1,0 +1,16 @@
+[Unit]
+Description=Ant Colony Cron Scheduler
+After=network.target ant-colony-gateway.service
+
+[Service]
+Type=simple
+User=codexcheck
+WorkingDirectory=/home/codexcheck/ant-colony-probe
+ExecStart=/usr/bin/python3 -m src.orchestrator.cron_scheduler
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+services:
+  searxng:
+    image: ghcr.io/searxng/searxng:latest
+    container_name: searxng
+    network_mode: host
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml
+      - ./limiter.toml:/etc/searxng/limiter.toml
+      - searxng_data:/etc/searxng/data
+    environment:
+      - SEARXNG_LIMITER=false
+      - SEARXNG_PORT=8899
+      - SEARXNG_BIND_ADDRESS=127.0.0.1
+    restart: unless-stopped
+
+volumes:
+  searxng_data:

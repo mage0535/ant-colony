@@ -1,0 +1,38 @@
+# Runtime data
+data/ant-colony.db*
+data/memory/
+data/files/
+data/backups/
+data/cloud_sync/
+data/runtime_settings.json
+data/cron_jobs.json
+data/heartbeat-state.json
+
+# Environment & credentials
+infra/.env*
+.env
+.env.local
+**/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Temp files
+*.bak
+*.swp
+/tmp/
+/scratchpad/
+/external/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*

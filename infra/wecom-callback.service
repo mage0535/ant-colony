@@ -1,0 +1,16 @@
+[Unit]
+Description=Ant Colony WeCom Callback Proxy - Decrypts WeCom messages, forwards to gateway
+After=network.target
+BindsTo=ant-colony-gateway.service
+
+[Service]
+Type=simple
+User=codexcheck
+WorkingDirectory=/home/codexcheck/ant-colony-probe
+ExecStart=/usr/bin/python3 /home/codexcheck/ant-colony-probe/run_callback.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

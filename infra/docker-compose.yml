@@ -1,0 +1,35 @@
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    container_name: ant-colony-gateway
+    ports:
+      - "18090:18090"
+    volumes:
+      - ant-colony-data:/app/data
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-sk-b9d7372341814a4abe4eb77160797064}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash}
+      - ANT_COLONY_DB_PATH=/app/data/ant-colony.db
+    restart: unless-stopped
+
+  callback:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    container_name: ant-colony-callback
+    command: ["python3", "run_callback.py"]
+    ports:
+      - "18091:18091"
+    volumes:
+      - ant-colony-data:/app/data
+    environment:
+      - WECOM_CORP_ID=${WECOM_CORP_ID:-}
+      - WECOM_CALLBACK_TOKEN=${WECOM_CALLBACK_TOKEN:-}
+      - WECOM_CALLBACK_AES_KEY=${WECOM_CALLBACK_AES_KEY:-}
+      - ANT_COLONY_DB_PATH=/app/data/ant-colony.db
+    restart: unless-stopped
+
+volumes:
+  ant-colony-data:

@@ -1,0 +1,51 @@
+search:
+  safe_search: 0
+  formats: [html, json]
+  autocomplete: ""
+  default_lang: "zh-CN"
+server:
+  bind_address: "127.0.0.1"
+  port: 8899
+  limiter: false
+  public_instance: false
+  method: "GET"
+  secret_key: "ant-colony-searxng-secret-2026"
+  image_proxy: false
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  proxies:
+    all://:
+      - http://127.0.0.1:8118
+ui:
+  static_use_hash: true
+  default_theme: simple
+  theme_args:
+    simple_style: auto
+doi_resolvers:
+  oadoi.org: 'https://oadoi.org/'
+  doi.org: 'https://doi.org/'
+  sci-hub.se: 'https://sci-hub.se/'
+  sci-hub.st: 'https://sci-hub.st/'
+  sci-hub.ru: 'https://sci-hub.ru/'
+default_doi_resolver: 'oadoi.org'
+engines:
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+  - name: google
+    engine: google
+    shortcut: go
+  - name: bing
+    engine: bing
+    shortcut: bi
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+  - name: github
+    engine: github
+    shortcut: gh
+  - name: yahoo
+    engine: yahoo
+    shortcut: yh
+    disabled: true
