@@ -161,7 +161,7 @@ M1 第 1 周应重点做：
 
 当前补充约束：`./scratchpad/openvort_probe.env.sample` 中的 `OPENVORT_WEB_DEFAULT_PASSWORD` 已改为占位值而不是空值，避免后续在未编辑样本的情况下首次启动出一个空密码管理员。
 
-当前进一步确认：在 Linux 服务器 `10.12.254.122` 的隔离工作区 `/home/codexcheck/ant-colony-probe` 中，以下步骤已实际执行通过：
+当前进一步确认：在 Linux 服务器 `[server-ip]` 的隔离工作区 `/home/[user]/ant-colony-probe` 中，以下步骤已实际执行通过：
 
 - `git clone --depth 1 https://github.com/openvort/openvort.git ./external/openvort/source`
 - `./scripts/install_openvort_probe_deps.sh`
@@ -216,13 +216,13 @@ Linux 服务器上的当前真实结论与本地探针结论一致，并进一�
 
 当前进一步确认的服务器侧环境事实：
 
-- 测试账号：`codexcheck`
-- 隔离工作目录：`/home/codexcheck/ant-colony-probe`
-- `codexcheck` 当前没有免密 `sudo`
+- 测试账号：`[user]`
+- 隔离工作目录：`/home/[user]/ant-colony-probe`
+- `[user]` 当前没有免密 `sudo`
 - 服务器根分区约 `98G`，当前已用约 `7.4G`，可用约 `86G`
 - 服务器内存约 `7.8GiB`，空闲与可用内存充足
 - 当前 CPU 核数：`4`
-- 当前已为 `codexcheck` 配置 sudo 与 docker 组权限
+- 当前已为 `[user]` 配置 sudo 与 docker 组权限
 
 当前进一步确认：在 Linux 服务器隔离目录中，`./scripts/run_p1_openvort.sh` 现已可完整执行并返回成功；此前导致失败的两个技术问题已经被排除：
 

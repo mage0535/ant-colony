@@ -272,7 +272,7 @@ python run_gateway.py        # 启动系统
 | `DINGTALK_CLIENT_ID` | 钉钉 | Client ID (AppKey) |
 | `DINGTALK_CLIENT_SECRET` | 钉钉 | Client Secret (AppSecret) |
 | `TELEGRAM_BOT_TOKEN` | Telegram | Bot Token |
-| `GBRAIN_DB_URL` | PostgreSQL | 数据库连接（默认 `postgresql://sidecar:sidecar123@localhost:5432/sidecar`） |
+| `GBRAIN_DB_URL` | PostgreSQL | 数据库连接（默认 `postgresql://sidecar:[db-password]@localhost:5432/sidecar`） |
 
 ---
 

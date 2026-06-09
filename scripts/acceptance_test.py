@@ -2,11 +2,6 @@
 """Ant Colony Acceptance Test — simplified, reliable version."""
 import json, sys, time, urllib.request
 
-G = "http://10.12.254.122:18090"
-D = "http://10.12.254.122:18092/api/v1"
-GB = "http://10.12.254.122:8787"
-HS = "http://10.12.254.122:8890"
-EM = "http://10.12.254.122:8766"
 
 ok_count = 0
 fail_count = 0

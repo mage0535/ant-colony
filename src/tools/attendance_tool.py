@@ -172,7 +172,7 @@ def query_attendance(user_id: str, days: int = 7, start_date: str = "", end_date
 
 
 _WECOM_API_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
-_WECOM_CORP_ID = "ww310c6e23dfcd46f9"
+_WECOM_CORP_ID = "[corp-id]"
 _WECOM_SECRET = "zadqkUlK20kxQuacPRVitKQQ_pMywEvjS8GtSyZaVIk"
 
 

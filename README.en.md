@@ -141,7 +141,7 @@ For first-time setup, see the [Installation Guide](docs/installation-guide.en.md
 | `DINGTALK_CLIENT_ID` | DingTalk | Client ID (AppKey) |
 | `DINGTALK_CLIENT_SECRET` | DingTalk | Client Secret (AppSecret) |
 | `TELEGRAM_BOT_TOKEN` | Telegram | Bot Token |
-| `GBRAIN_DB_URL` | PostgreSQL | Database URL (default: `postgresql://sidecar:sidecar123@localhost:5432/sidecar`) |
+| `GBRAIN_DB_URL` | PostgreSQL | Database URL (default: `postgresql://sidecar:[db-password]@localhost:5432/sidecar`) |
 
 ---
 

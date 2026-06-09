@@ -11,48 +11,12 @@
 
 ---
 
-## 快速上手
-
-### 服务器信息
-
-| 服务器 | IP | 用途 |
-|--------|-----|------|
-| **测试服务器** | `10.12.254.122` | 开发和测试环境 |
-| **生产服务器** | `10.12.254.239` | 正式运行环境 |
-
-### 测试服务器访问
-
-```
-SSH:   ssh codexcheck@10.12.254.122
-密码:  codexcheck
-项目:  cd /home/codexcheck/ant-colony-probe
-```
-
-### 生产服务器访问
-
-```
-SSH:   ssh dy\gmd@10.12.254.239
-密码:  gmd-940
-路径:  RDP 远程桌面登录
-```
-
-> 生产服务器是 Windows Server，通过 RDP 或 WinRM 访问。已配好 WinRM HTTPS 远程管理。
-
-### 仪表盘地址
-
-```
-测试环境:  http://10.12.254.122:18092
-生产入口:  https://gmd.deyuanhra.cn/dyhj/ant/callback
-```
-
----
-
-## 技术架构
+## 项目定位
 
 ```
 用户访问层
 ├── 企业微信 (IM 入口)
-│   └── gmd.deyuanhra.cn:443/dyhj/ant/callback
+│   └── [production-domain]:443/dyhj/ant/callback
 │       └── Nginx 反代 → 测试服务器 :18091 (回调服务)
 └── Dashboard (Web 界面)
     └── 测试服务器 :18092 (FastAPI + SSE)
@@ -181,78 +145,54 @@ ant-colony-probe/
 
 ---
 
-## 系统服务管理
+## 服务管理
 
-### 查看所有服务状态
+系统由以下服务组成（启动方式见 `infra/*.service`）：
 
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| ant-colony-gateway | 18090 | 消息路由 + Agent 引擎 |
+| ant-colony-callback | 18091 | WeCom 回调 + 加解密 |
+| ant-colony-dashboard | 18092 | REST API（后端管理接口） |
+| gbrain-bridge | 8787 | 知识图谱 (PostgreSQL) |
+| hindsight-bridge | 8890 | 事实记忆 + 召回 |
+| embed-service | 8766 | 语义向量 (384d) |
+
+查看服务状态：
 ```bash
-# 测试服务器
-ssh codexcheck@10.12.254.122
-sudo systemctl status ant-colony-gateway ant-colony-callback ant-colony-dashboard gbrain-bridge hindsight-bridge embed-service
-
-# 一键查看
-for s in ant-colony-gateway ant-colony-callback ant-colony-dashboard gbrain-bridge hindsight-bridge embed-service; do echo "$s: $(systemctl is-active $s)"; done
+systemctl status ant-colony-gateway
 ```
 
-### 重启某个服务
-
+查看日志：
 ```bash
-sudo systemctl restart ant-colony-gateway   # 重启网关
-sudo systemctl restart ant-colony-dashboard # 重启仪表盘
-sudo systemctl restart gbrain-bridge        # 重启知识图谱
-```
-
-### 查看日志
-
-```bash
-sudo journalctl -u ant-colony-callback --no-pager -n 50   # 回调日志
-sudo journalctl -u ant-colony-gateway --no-pager -n 50    # 网关日志
-```
-
-### 访问 Dashboard
-
-```
-浏览器打开: http://10.12.254.122:18092
+journalctl -u ant-colony-gateway -n 50
 ```
 
 ---
 
-## 关键凭据
+## 关键配置
 
-### WeCom 凭据 (`infra/.env.wecom`)
+### 平台凭据 (`infra/.env.wecom`)
 
-| 变量 | 值 |
-|------|-----|
-| WECOM_CORP_ID | `ww310c6e23dfcd46f9` |
-| WECOM_AGENT_ID | `1000006` |
-| WECOM_SECRET | `5_bZIFtwR2KaQ0sjdEtwCzNX0NOwzGVDLSUwXh5mBp4` |
-| WECOM_CALLBACK_TOKEN | `pvTqtFU1xbM` |
-| WECOM_CALLBACK_AES_KEY | `b9YKrZoprCmEFvmNVu1FEyJ5dniePA5vgSsiiwCBfXc` |
-| WECOM_CONTACT_SECRET | `cY1nR3LxOY6apsmZRroVdy29SB0ANRlS69kWzLcC5vU` |
-
-> ⚠️ 通讯录同步 Secret 用于同步成员信息，在企微后台「管理工具→通讯录同步」查看。
+| 变量 | 说明 |
+|------|------|
+| WECOM_CORP_ID | 企业微信 CorpID |
+| WECOM_AGENT_ID | AgentId |
+| WECOM_SECRET | 应用 Secret |
+| WECOM_CALLBACK_TOKEN | 回调 Token |
+| WECOM_CALLBACK_AES_KEY | 回调 AES Key |
+| WECOM_CONTACT_SECRET | 通讯录同步 Secret |
 
 ### LLM API Key
 
-DeepSeek API Key 配置在 `data/runtime_settings.json` 中。
+配置文件：`data/runtime_settings.json`。安装时通过 `scripts/setup.py` 配置。
 
 ---
 
 ## 测试
 
 ```bash
-# 单元测试（本地运行）
-cd /home/codexcheck/ant-colony-probe
 python3 -m pytest tests/ -q --tb=short
-
-# 验收测试（全功能）
-python3 scripts/acceptance_test.py
-
-# 集成测试（四模块）
-python3 scripts/integration_test.py
-
-# E2E 测试
-python3 scripts/e2e_test.py
 ```
 
 当前测试覆盖：**122 unit + 24 acceptance + 12 integration + 12 E2E = 170 tests**
@@ -267,17 +207,16 @@ python3 scripts/e2e_test.py
                           └──────┬───────┘
                                  │
                     ┌────────────┴────────────┐
-                    │  生产 Nginx (:443)       │
-                    │  gmd.deyuanhra.cn        │
-                    │  /dyhj/ant/* → 测试服务器 │
+                    │  消息网关 (:18090)       │
+                    │  Agent 引擎 + 工具注册    │
                     └────────────┬────────────┘
                                  │
               ┌──────────────────┼──────────────────┐
               ▼                  ▼                   ▼
     ┌────────────────┐ ┌────────────────┐ ┌──────────────────┐
     │ 回调服务(:18091) │ │  网关(:18090)   │ │ Dashboard(:18092) │
-    │ WeCom 加解密    │ │ 消息路由       │ │ 任务板+API+SSE    │
-    │ → Gateway      │ │ Agent 引擎     │ │ → FastAPI         │
+    │ WeCom 加解密    │ │ 消息路由       │ │ REST API 服务     │
+    │ → Gateway      │ │ Agent 引擎     │ │ (无前端界面)       │
     └────────────────┘ └───────┬────────┘ └──────────────────┘
                                │
               ┌────────────────┼────────────────┐
@@ -418,22 +357,6 @@ python3 scripts/e2e_test.py
 
 ---
 
-## Nginx 生产配置
-
-```
-位置: C:\middleware\nginx\conf\nginx.conf (生产服务器)
-备份: nginx.conf.backup-20260608_112133
-
-新增路由:
-location /dyhj/ant/ {
-    proxy_pass http://10.12.254.122:18091/;
-}
-```
-
-> ⚠️ 每次修改前先备份！`Copy-Item "C:\middleware\nginx\conf\nginx.conf" "C:\middleware\nginx\conf\nginx.conf.bak"`
-
----
-
 ## 数据库
 
 ### PostgreSQL (三层记忆体)
@@ -441,14 +364,14 @@ location /dyhj/ant/ {
 ```
 数据库: sidecar
 用户:   sidecar
-密码:   sidecar123
+密码:   [db-password]
 扩展:   vector (pgvector)
 ```
 
 ### SQLite (任务系统)
 
 ```
-路径: /home/codexcheck/ant-colony-probe/data/ant-colony.db
+路径: data/ant-colony.db
 备份: data/backups/ant-colony-YYYYMMDD_HHMMSS.db.gz (每日3点)
 ```
 

@@ -8,11 +8,7 @@ import time
 import urllib.request
 import urllib.error
 
-GATEWAY = "http://10.12.254.122:18090"
-GBRAIN = "http://10.12.254.122:8787"
-HINDSIGHT = "http://10.12.254.122:8890"
 
-EMBED = "http://10.12.254.122:8766"
 
 passed = 0
 failed = 0

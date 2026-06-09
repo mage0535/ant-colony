@@ -9,10 +9,6 @@ Run: python3 scripts/integration_test.py
 """
 import json, sys, time, urllib.request
 
-GATEWAY = "http://10.12.254.122:18090"
-GBRAIN = "http://10.12.254.122:8787"
-HINDSIGHT = "http://10.12.254.122:8890"
-EMBED = "http://10.12.254.122:8766"
 
 passed = 0
 total = 0

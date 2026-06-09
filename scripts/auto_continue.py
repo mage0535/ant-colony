@@ -21,12 +21,10 @@ from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler("/home/codexcheck/ant-colony-probe/data/auto_continue.log"),
               logging.StreamHandler()],
 )
 logger = logging.getLogger("auto_continue")
 
-BASE = Path("/home/codexcheck/ant-colony-probe")
 STATE_FILE = BASE / "data" / "state.json"
 HANDOFF_FILE = BASE / "docs" / "handoff.md"
 

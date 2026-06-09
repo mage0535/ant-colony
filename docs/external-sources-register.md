@@ -49,7 +49,7 @@
   - 当前 `doctor` 暴露的主要阻塞：LLM API Key 未配置、PostgreSQL 不可达、IM 通道未配置、管理员 user_id 未配置、Web 默认管理员密码过弱
   - 当前 `./scripts/check_openvort_prereqs.ps1` 暴露的主要阻塞：数据库默认地址不可达、Docker 不可用、LLM key 未配、管理员 user_id 未配、Web 默认密码未改、企微 5 个核心变量未配
   - 当前 `./scripts/check_openvort_prereqs.ps1` 已按占位值规则校正，不会把样本配置误判为真实可运行配置
-  - 当前 Linux 服务器验证补充事实：`codexcheck` 无免密 sudo，服务器未发现现成 PostgreSQL / Docker / Node / npm
+  - 当前 Linux 服务器验证补充事实：`[user]` 无免密 sudo，服务器未发现现成 PostgreSQL / Docker / Node / npm
   - 下一步应基于当前源码 checkout 做更深的启动与通道验证，而不是继续停留在获取阶段
 
 ### 2. Hermes Agent

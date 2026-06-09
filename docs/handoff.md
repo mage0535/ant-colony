@@ -39,7 +39,7 @@
 5. 压力测试 — 多用户并发场景
 
 ## 环境配置清单
-- Gateway service 已添加 `EnvironmentFile=/home/codexcheck/ant-colony-probe/infra/.env.wecom`
+- Gateway service 已添加 `EnvironmentFile=/home/[test-user]/ant-colony-probe/infra/.env.wecom`
 - 管理员识别：企微需在 .env.wecom 配置凭据，通过聊天命令动态添加
 - 知识库存储：gbrain-bridge (PostgreSQL) 端口 8787
 - Python 包：PyMuPDF, python-docx, python-pptx, openpyxl 已安装

@@ -12,12 +12,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 ATTENDANCE_DB = "/opt/wecom-attendance/data/attendance.db"
-LEADER_CACHE_FILE = "/home/codexcheck/ant-colony-probe/data/dept_leaders.json"
+LEADER_CACHE_FILE = "/home/[user]/ant-colony-probe/data/dept_leaders.json"
 
 
 def _load_env() -> dict[str, str]:
     env: dict[str, str] = {}
-    for p in ["/home/codexcheck/ant-colony-probe/infra/.env.wecom", os.path.expanduser("~/ant-colony-probe/infra/.env.wecom")]:
+    for p in ["/home/[user]/ant-colony-probe/infra/.env.wecom", os.path.expanduser("~/ant-colony-probe/infra/.env.wecom")]:
         if os.path.isfile(p):
             with open(p) as f:
                 for line in f:

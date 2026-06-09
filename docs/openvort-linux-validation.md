@@ -81,7 +81,7 @@
 
 ## 当前已确认的服务器事实
 
-基于当前对 `10.12.254.122` 上测试账号 `codexcheck` 的只读探测：
+基于当前对 `[server-ip]` 上测试账号 `[user]` 的只读探测：
 
 - 系统：`Ubuntu 24.04.4 LTS`
 - Python：`python3` 可用
@@ -89,7 +89,7 @@
 - `docker` 当前不可用
 - `node` / `npm` 当前不可用
 - 账号当前没有免密 `sudo`
-- 已存在隔离验证目录：`/home/codexcheck/ant-colony-probe`
+- 已存在隔离验证目录：`/home/[user]/ant-colony-probe`
 - 当前未发现现成 PostgreSQL 客户端、服务进程或 `5432` 监听
 
 因此当前更适合继续做“隔离工作区验证 + 配置准备”，而不应假设服务器已经具备 OpenVort 的完整运行依赖。
@@ -100,7 +100,7 @@
 
 1. 优先提供一个可达的现成 PostgreSQL
    - 原因：
-     - `codexcheck` 当前没有免密 `sudo`
+     - `[user]` 当前没有免密 `sudo`
      - 服务器未安装 Docker
      - 不需要先改系统级运行环境
 2. 其次再考虑安装 Docker
