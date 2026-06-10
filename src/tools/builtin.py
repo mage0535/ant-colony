@@ -660,7 +660,11 @@ def _select_role_tool(args: dict[str, Any]) -> str:
         if not query:
             return ""
         result = select_role(query)
-        return result["role"].name
+        role = result["role"]
+        out = role.name
+        if role.content:
+            out += "\n\n" + role.content[:2000]
+        return out
     except Exception as e:
         return ""
 
