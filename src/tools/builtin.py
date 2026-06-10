@@ -889,9 +889,27 @@ def _generate_report_handler(args):
     fmt = args.get("format", "docx")
     user_id = args.get("from", "")
 
-    # Don't send blank documents
     if not content.strip():
         return "请提供文档内容后再生成。请告诉我文档的具体内容、章节和需要包含的信息。"
+
+    # Enrich content using LLM before generating
+    try:
+        import json as _json, urllib.request as _ul
+        from src.config.bootstrap import build_settings_service
+        svc = build_settings_service()
+        snap = svc.build_runtime_snapshot()
+        for p in snap.llm_profiles:
+            if p.enabled:
+                prompt_text = "你是一个文档撰写专家。用户提供了以下原始内容，请将其丰富优化为结构完整、语言专业的文档。保持用户原始信息，补充细节使内容更充实。直接返回优化后的内容，不要加额外说明。\n\n" + content
+                body = _json.dumps({"model": p.model_name, "messages": [{"role": "user", "content": prompt_text}], "max_tokens": 4096}).encode()
+                req = _ul.Request(p.api_base.rstrip("/") + "/chat/completions", data=body, headers={"Authorization": "Bearer " + p.api_key, "Content-Type": "application/json"})
+                resp = _json.loads(_ul.urlopen(req, timeout=60).read())
+                enriched = resp["choices"][0]["message"]["content"]
+                if enriched and len(enriched) > len(content) * 1.5:
+                    content = enriched
+                break
+    except Exception:
+        pass
 
     result = generate_report(title, content, fmt)
     if result.startswith("文档生成失败") or result.startswith("OfficeCLI"):
