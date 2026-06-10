@@ -651,44 +651,18 @@ def _delete_cloud_drive_tool(args: dict[str, Any]) -> str:
 
 
 def _select_role_tool(args: dict[str, Any]) -> str:
-
-    from src.platform.role_manager import select_role, get_role
-
-    query = args.get("query", "")
-
-    if not query:
-
-        return "请描述你需要什么帮助"
-
-    result = select_role(query)
-
-    role = result["role"]
-
-    score = result["match_score"]
-
-    lines = [
-
-        f"我将以 **{role.name}** 的身份来协助你。",
-
-        f"领域: {role.category}",
-
-    ]
-
-    # If role content is available, inject it into the session
-
-    if role.content:
-
-        lines.append(f"已加载 {role.name} 的专业知识。")
-
-    lines.append(f"\n匹配度: {'高' if score > 15 else '中' if score > 5 else '低'}")
-
-    lines.append(f"如果角色不合适，请告诉我，我会重新选择。")
-
-    if role.content:
-
-        lines.append(f"\n\n=== 角色定义: {role.name} ===\n{role.content[:2000]}")
-
-    return "\n".join(lines)
+    import traceback
+    try:
+        from src.platform.role_manager import select_role
+        query = args.get("query", "")
+        if not query:
+            return ""
+        result = select_role(query)
+        role = result["role"]
+        return role.name
+    except Exception as e:
+        tb = traceback.format_exc()
+        return f"[select_role error: {e}]\n{tb}"
 
 
 
@@ -2476,7 +2450,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal", "project"],
 
-        description="【自动调用】根据用户请求内容自动选择最适合的 AI 专家角色（支持215个角色）。选择后告知用户当前角色，用户可要求更换。用户说'换一个角色'、'换个专家'、'这个不对'时调用此工具重新选择。",
+        description="【自动调用】根据用户请求内容自动选择最适合的AI专家角色（支持215个角色）。工具返回角色名，然后用自然语言告知用户后继续工作。用户说'换一个角色'、'换个专家'、'这个不对'时重新选择。",
 
         parameters={
 
