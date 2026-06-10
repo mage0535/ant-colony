@@ -16,7 +16,7 @@ def _load_env() -> dict[str, str]:
     candidates = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "infra", ".env.wecom"),
         os.path.expanduser("~/ant-colony-probe/infra/.env.wecom"),
-        "/home/[user]/ant-colony-probe/infra/.env.wecom",
+        "/home/codexcheck/ant-colony-probe/infra/.env.wecom",
     ]
     for env_file in candidates:
         if os.path.isfile(env_file):

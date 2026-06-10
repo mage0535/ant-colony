@@ -12,12 +12,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 ATTENDANCE_DB = "/opt/wecom-attendance/data/attendance.db"
-LEADER_CACHE_FILE = "/home/[user]/ant-colony-probe/data/dept_leaders.json"
+LEADER_CACHE_FILE = "/home/codexcheck/ant-colony-probe/data/dept_leaders.json"
 
 
 def _load_env() -> dict[str, str]:
     env: dict[str, str] = {}
-    for p in ["/home/[user]/ant-colony-probe/infra/.env.wecom", os.path.expanduser("~/ant-colony-probe/infra/.env.wecom")]:
+    for p in ["/home/codexcheck/ant-colony-probe/infra/.env.wecom", os.path.expanduser("~/ant-colony-probe/infra/.env.wecom")]:
         if os.path.isfile(p):
             with open(p) as f:
                 for line in f:
@@ -114,10 +114,29 @@ def get_user_depts(user_id: str) -> list[int]:
 
 
 def query_subordinates(user_id: str, query_type: str = "all", days: int = 7) -> str:
-    leaders = sync_dept_leaders()
-    user_depts = [d for d, ids in leaders.items() if user_id in ids]
-    if not user_depts:
-        return "你目前不是任何部门的负责人，无法查看下属的考勤和审批记录。"
+    """Query subordinates' attendance/approval records. Uses WeCom API for leader check."""
+    # Use unified WeCom API to check if user is a department leader
+    from src.platform.api_wecom import _get as wecom_get
+    try:
+        user_info = wecom_get("user/get", f"userid={user_id}")
+        is_leader = user_info.get("is_leader_in_dept", [0])
+        if isinstance(is_leader, int):
+            is_leader = [is_leader]
+        if not is_leader or not any(is_leader):
+            return "你目前不是任何部门的负责人，无法查看下属的考勤和审批记录。"
+        # Get the user's managed department IDs
+        user_depts = user_info.get("department", [])
+        # Filter to only departments where user is leader
+        managed_depts = []
+        for i, did in enumerate(user_depts):
+            ld = is_leader[i] if i < len(is_leader) else 0
+            if ld == 1:
+                managed_depts.append(did)
+        if not managed_depts:
+            return "你目前不是任何部门的负责人。"
+    except Exception as e:
+        logger.warning("WeCom leader check failed: %s", e)
+        return "无法验证部门负责人身份。"
 
     token = _get_app_token()
     conn = sqlite3.connect(ATTENDANCE_DB)
@@ -150,7 +169,7 @@ def query_subordinates(user_id: str, query_type: str = "all", days: int = 7) -> 
     TYPE_CN = {"leave": "请假", "outing": "外出", "overtime": "加班", "business_trip": "出差"}
 
     results = []
-    for dept_id in user_depts:
+    for dept_id in managed_depts:
         dept_name = _get_dept_name(dept_id)
         try:
             url = f"https://qyapi.weixin.qq.com/cgi-bin/user/list?access_token={token}&department_id={dept_id}&fetch_child=0"
@@ -211,10 +230,25 @@ def query_subordinates(user_id: str, query_type: str = "all", days: int = 7) -> 
 
 def query_subordinate_by_name(manager_id: str, name: str, query_type: str = "attendance", days: int = 7) -> str:
     """Department head queries a specific subordinate by name."""
-    leaders = sync_dept_leaders()
-    user_depts = [d for d, ids in leaders.items() if manager_id in ids]
-    if not user_depts:
-        return "你目前不是任何部门的负责人。"
+    from src.platform.api_wecom import _get as wecom_get
+    try:
+        user_info = wecom_get("user/get", f"userid={manager_id}")
+        is_leader = user_info.get("is_leader_in_dept", [0])
+        if isinstance(is_leader, int):
+            is_leader = [is_leader]
+        if not is_leader or not any(is_leader):
+            return "你目前不是任何部门的负责人。"
+        user_depts = user_info.get("department", [])
+        managed_depts = []
+        for i, did in enumerate(user_depts):
+            ld = is_leader[i] if i < len(is_leader) else 0
+            if ld == 1:
+                managed_depts.append(did)
+        if not managed_depts:
+            return "你目前不是任何部门的负责人。"
+    except Exception as e:
+        logger.warning("WeCom leader check failed: %s", e)
+        return "无法验证部门负责人身份。"
 
     target_id = None
     # First try local DB
@@ -233,7 +267,7 @@ def query_subordinate_by_name(manager_id: str, name: str, query_type: str = "att
     # Fallback to WeCom API
     if not target_id:
         token = _get_app_token()
-        for dept_id in user_depts:
+        for dept_id in managed_depts:
             try:
                 members = json.loads(urllib.request.urlopen(urllib.request.Request(f"https://qyapi.weixin.qq.com/cgi-bin/user/list?access_token={token}&department_id={dept_id}"), timeout=10).read())
                 for u in members.get("userlist", []):
@@ -298,10 +332,25 @@ def query_subordinate_by_name(manager_id: str, name: str, query_type: str = "att
 
 def query_subordinate_balance(manager_id: str, name: str) -> str:
     """Department head queries a specific subordinate's leave balance via WeCom API."""
-    leaders = sync_dept_leaders()
-    user_depts = [d for d, ids in leaders.items() if manager_id in ids]
-    if not user_depts:
-        return "你目前不是任何部门的负责人。"
+    from src.platform.api_wecom import _get as wecom_get
+    try:
+        user_info = wecom_get("user/get", f"userid={manager_id}")
+        is_leader = user_info.get("is_leader_in_dept", [0])
+        if isinstance(is_leader, int):
+            is_leader = [is_leader]
+        if not is_leader or not any(is_leader):
+            return "你目前不是任何部门的负责人。"
+        user_depts = user_info.get("department", [])
+        managed_depts = []
+        for i, did in enumerate(user_depts):
+            ld = is_leader[i] if i < len(is_leader) else 0
+            if ld == 1:
+                managed_depts.append(did)
+        if not managed_depts:
+            return "你目前不是任何部门的负责人。"
+    except Exception as e:
+        logger.warning("WeCom leader check failed: %s", e)
+        return "无法验证部门负责人身份。"
 
     # First try local DB for user lookup (more reliable)
     target_id = None
@@ -323,7 +372,7 @@ def query_subordinate_balance(manager_id: str, name: str) -> str:
     # Fallback to WeCom API department lists
     if not target_id:
         token = _get_app_token()
-        for dept_id in user_depts:
+        for dept_id in managed_depts:
             try:
                 members = json.loads(urllib.request.urlopen(urllib.request.Request(
                     f"https://qyapi.weixin.qq.com/cgi-bin/user/list?access_token={token}&department_id={dept_id}"), timeout=10).read())

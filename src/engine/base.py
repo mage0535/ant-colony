@@ -84,11 +84,9 @@ class AgentEngine:
             )
 
         today = __import__('datetime').datetime.now().strftime("%Y年%m月%d日")
-        system = self.config.system_prompt or self._default_system_prompt()
+        system = self.config.system_prompt or self._default_system_prompt(user_identity)
         if knowledge_prefix:
             system = knowledge_prefix + "\n\n" + system
-        if user_identity:
-            system = f"当前用户信息：\n{user_identity}\n\n" + system
         system = f"今天是{today}。{system}"
         if self.tool_registry:
             system = self._inject_tools(system)
@@ -114,9 +112,10 @@ class AgentEngine:
             },
         )
 
-    def _default_system_prompt(self) -> str:
+    def _default_system_prompt(self, user_identity: str = "") -> str:
+        user_name = user_identity or self.config.agent_role or "员工"
         return (
-            f"你是 {self.config.agent_role} 的 AI 助手。请用中文回复，简洁专业。\n\n"
+            f"你是 {user_name} 的 AI 助手。请用中文回复，简洁专业。\n\n"
             "重要规则：\n"
             "1. 事实查询（天气/新闻/百科/价格/股票等）必须调用工具获取数据，不得凭自身知识回答。\n"
             "2. 【全聊天运营】所有功能通过聊天命令完成，无需仪表盘。包括：任务管理、知识搜索、文档生成、统计、审批、日程。\n"
@@ -126,7 +125,9 @@ class AgentEngine:
              "6. 【邮件与PDF】支持发送邮件、查看收件箱、合并/拆分/压缩/加密PDF、DuckDuckGo搜索。\n"
              "7. 【云盘同步】支持12+云盘（OneDrive/GoogleDrive/阿里云盘等）。管理员和负责人可配置云盘，从云盘同步文件到知识库。用户说\"添加云盘/查看云盘/同步云盘\"时使用对应工具。\n"
              "8. 【AI角色系统】系统内置215个AI专家角色。当用户提出非简单查询的需求时，必须先调用select_role工具匹配最佳角色，告知用户\"我将以[角色名]的身份来协助你\"，然后按角色能力回答。用户说\"换一个/换个角色/不对\"时调用select_role或set_role切换。用户说\"有哪些角色\"时调用list_roles。\n"
-             "9. 【管理员管理】平台管理员和企业管理员不同。用户说\"添加管理员\"时调用add_admin（把当前用户ID传from），管理员列表空时任意添加，之后仅管理员可添加。用户说\"谁是管理员/企业管理员\"时调用who_is_admin。用户说\"部门负责人/部门领导\"时调用who_is_leader。"
+             "9. 【管理员管理】平台管理员和企业管理员不同。用户说\"添加管理员\"时调用add_admin（把当前用户ID传from），管理员列表空时任意添加，之后仅管理员可添加。用户说\"谁是管理员/企业管理员\"时调用who_is_admin。用户说\"部门负责人/部门领导\"时调用who_is_leader。\n"
+             "10. 【强制：人类行为适配】你对用户说的每一句话都必须先分析对方的风格再决定怎么说。用户话短你更短（别提问题外的信息）。用户话长你可详细。用户情绪低落时先共情后建议。用户用词随意你就别说书面语。这是强制流程，不能跳过。\n"
+             "11. 【强制：去AI味】你回复的每一条消息在发出前都必须做去AI化处理。检查有没有用了\"此外\"\"值得注意的是\"\"总的来说\"\"体现了\"\"作为AI\"这类词？有没有破折号堆砌、三点式列举、先恭维再回答？有没有\"希望这个回答对你有帮助\"之类的空洞结尾？去掉所有AI味和机器人感，用自然人说话的方式改写。这不是可选功能，是必须遵守的规则。"
         )
     def _inject_tools(self, system: str) -> str:
         tools = self.tool_registry.get_for_agent(self.config.agent_role)
@@ -195,7 +196,17 @@ class AgentEngine:
             ],
             max_tokens=self.config.max_tokens,
         )
-        return resp.choices[0].message.content or ""
+        return self._humanize_response(resp.choices[0].message.content or "")
+
+    def _humanize_response(self, text: str) -> str:
+        """Post-process every LLM response to remove AI patterns and add natural voice."""
+        if not text:
+            return text
+        try:
+            from src.tools.humanizer import humanize
+            return humanize(text)
+        except Exception:
+            return text
 
     def _call_anthropic(self, system: str, user_text: str) -> str:
         return _retry_llm(lambda: self._anthropic_inner(system, user_text))
@@ -214,4 +225,4 @@ class AgentEngine:
         for block in resp.content:
             if block.type == "text":
                 parts.append(block.text)
-        return "\n".join(parts)
+        return self._humanize_response("\n".join(parts))

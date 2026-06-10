@@ -1,13 +1,30 @@
 from __future__ import annotations
 
+import logging
+
 from src.engine.base import AgentEngine
 from src.memory.sidecar import SidecarMemory
 from src.models.contracts import AgentResponse, MessageContext
 
+logger = logging.getLogger(__name__)
+
+_user_name_cache: dict[str, str] = {}
+
+
+def _resolve_user_name(user_id: str) -> str:
+    if user_id in _user_name_cache:
+        return _user_name_cache[user_id]
+    try:
+        from src.platform.api_wecom import _get
+        user = _get("user/get", f"userid={user_id}")
+        name = user.get("name", "") or user_id
+        _user_name_cache[user_id] = name
+        return name
+    except Exception:
+        return user_id
+
 
 class PersonalAgent:
-    """Employee-facing agent contract with sidecar memory injection."""
-
     def __init__(self, user_id: str, engine: AgentEngine, memory_dir: str = "") -> None:
         self.user_id = user_id
         self.engine = engine
@@ -18,6 +35,7 @@ class PersonalAgent:
         if user_id != self.user_id:
             raise ValueError("personal agent user_id mismatch")
         knowledge_block = self.memory.build_context_block()
-        identity = f"你的微信ID(userid)是：{self.user_id}。当用户查询考勤、打卡等个人数据时，请使用此userid调用相关工具。"
+        user_name = _resolve_user_name(user_id)
+        identity = f"你的名字：{user_name}\n你的微信ID(userid)：{self.user_id}"
         return self.engine.process_text(text, context, knowledge_prefix=knowledge_block,
-                                        conversation_context=conversation_context, user_identity=identity)
+                                        conversation_context=conversation_context, user_identity=user_name)
