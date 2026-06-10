@@ -25,11 +25,14 @@ def _cli(args: list[str]) -> tuple[int, str]:
 
 def generate_report(title: str, content: str, format: str = "docx") -> str:
     """Generate a document using OfficeCLI."""
+    logger.info("generate_report: title=%s content_len=%d format=%s", title, len(content), format)
     allowed = {"docx", "xlsx", "pptx"}
     if format not in allowed:
         return f"不支持的格式: {format}，可选: {', '.join(allowed)}"
     if not os.path.isfile(OFFICECLI):
         return "OfficeCLI 未安装"
+    if len(content.strip()) < 5:
+        return "文档内容太短，请提供更详细的文档内容后再生成。"
 
     os.makedirs(DOCUMENTS_DIR, exist_ok=True)
     filename = f"{_sanitize_filename(title)}.{format}"
