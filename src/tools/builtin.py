@@ -949,6 +949,16 @@ def _generate_report_handler(args):
         return result
     import os as _os2
     _fn = _os2.path.basename(result)
+    # Try WeCom push
+    _pushed = False
+    if user_id:
+        try:
+            from src.gateway.wecom_outbound import send_file
+            _pushed = send_file(user_id, result)
+        except Exception:
+            pass
+    if _pushed:
+        return f"文档已生成，请在聊天中查收文件。\n如果未收到，也可点击下载：http://10.12.254.122:18092/api/v1/documents/{_fn}"
     return f"文档已生成，点击下载：http://10.12.254.122:18092/api/v1/documents/{_fn}"
 
 
