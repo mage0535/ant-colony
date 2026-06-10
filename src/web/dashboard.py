@@ -624,3 +624,19 @@ def _task_to_dict(t: Task) -> dict[str, Any]:
 @app.get("/")
 def root():
     return {"name": "Ant Colony API", "version": "0.3.0", "docs": "/docs"}
+
+
+# ---- Document Download ----
+
+import os as _doc_os
+from fastapi.responses import FileResponse as _FileResponse
+
+@app.get("/api/v1/documents/{filename:path}")
+def download_document(filename: str):
+    """Download a generated document file."""
+    docs_dir = _doc_os.path.join(_doc_os.path.dirname(_doc_os.path.dirname(__file__)), "data", "documents")
+    filepath = _doc_os.path.join(docs_dir, filename)
+    if ".." in filename or not _doc_os.path.isfile(filepath):
+        from fastapi import HTTPException
+        raise HTTPException(404, "File not found")
+    return _FileResponse(filepath, filename=filename)

@@ -911,6 +911,20 @@ def _humanize_tool(args):
     return "\n".join(out)
 
 
+def _generate_report_handler(args):
+    from src.tools.document_tool import generate_report
+    title = args.get("title", "文档")
+    content = args.get("content", "")
+    fmt = args.get("format", "docx")
+    result = generate_report(title, content, fmt)
+    if result.startswith("文档生成失败") or result.startswith("OfficeCLI"):
+        return result
+    # Convert local path to download URL
+    import os
+    filename = os.path.basename(result)
+    return f"文档已生成，下载地址：http://10.12.254.122:18092/api/v1/documents/{filename}"
+
+
 def _set_priority_tool(args: dict[str, Any]) -> str:
 
     from src.store.database import Database
@@ -1577,7 +1591,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal", "project"],
 
-        description="生成可下载的办公文档。支持 docx(文档)、xlsx(表格含甘特图/图表)、pptx(演示)。当用户说'生成报告'、'导出周报'、'生成文档'、'甘特图'、'项目进度表'、'生成表格'、'帮我写一个文档'时使用。可用xlsx生成甘特图和项目计划表。content参数每段之间空一行。任务清单每行一个任务，格式：任务名|开始日期|结束日期|负责人。",
+        description="生成可下载的办公文档。支持 docx(文档)、xlsx(表格含甘特图/图表)、pptx(演示)。生成后返回下载地址。当用户说'生成报告'、'导出周报'、'生成文档'、'甘特图'、'项目进度表'、'生成表格'时使用。content参数每段之间空一行。任务清单每行一个任务，格式：任务名|开始日期|结束日期|负责人。",
 
         parameters={
 
@@ -1589,12 +1603,8 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         },
 
-        handler=lambda a: __import__('importlib').import_module('src.tools.document_tool').generate_report(
-
-            a.get('title', '文档'), a.get('content', ''), a.get('format', 'docx')),
-
+        handler=_generate_report_handler,
     ),
-
     ToolSpec(
 
         id="builtin:cron_list",

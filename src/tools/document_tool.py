@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import uuid
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,9 @@ OFFICECLI = "/usr/local/bin/officecli"
 
 def _officecli_available() -> bool:
     return os.path.isfile(OFFICECLI)
+
+
+DOCUMENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "documents")
 
 
 def generate_report(title: str, content: str, format: str = "docx") -> str:
@@ -26,7 +31,7 @@ def generate_report(title: str, content: str, format: str = "docx") -> str:
         format: 'docx' (default), 'xlsx', or 'pptx'
 
     Returns:
-        Path to the generated file, or error message.
+        Download URL or error message.
     """
     if not _officecli_available():
         return "OfficeCLI 未安装，无法生成文档"
@@ -59,9 +64,19 @@ def generate_report(title: str, content: str, format: str = "docx") -> str:
                 para = para.strip()
                 if para:
                     _run_cli(["set", filepath, "--add-slide", "--prop", f"title={para[:100]}"])
-        return filepath
+
+        # Copy to public documents directory
+        os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+        public_path = os.path.join(DOCUMENTS_DIR, filename)
+        # Avoid overwriting
+        if os.path.exists(public_path):
+            stem, ext = os.path.splitext(filename)
+            public_path = os.path.join(DOCUMENTS_DIR, f"{stem}_{uuid.uuid4().hex[:8]}{ext}")
+        shutil.copy2(filepath, public_path)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return public_path
     except Exception as e:
-        logger.error("Document generation failed: %s", e)
+        logger.exception("Document generation failed")
         return f"文档生成失败: {e}"
 
 
