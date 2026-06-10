@@ -960,11 +960,17 @@ def _generate_report_handler(args):
     _fn = _os2.path.basename(result)
     _pushed = False
     if user_id:
+        logger.info("Attempting send_file to user_id=%s, file=%s", user_id, _fn)
         try:
             from src.gateway.wecom_outbound import send_file
             _pushed = send_file(user_id, result)
-        except Exception:
-            pass
+            logger.info("send_file(%s, %s) -> %s", user_id, _fn, _pushed)
+        except Exception as _e:
+            logger.error("send_file failed: %s", _e)
+            import traceback as _tb
+            logger.error(_tb.format_exc())
+    else:
+        logger.warning("send_file skipped: user_id is empty, args keys=%s", list(args.keys()))
     if _pushed:
         return f"文档已生成，请在聊天中查收文件。\n如果未收到，也可点击下载：http://10.12.254.122:18092/api/v1/documents/{_fn}"
     return f"文档已生成，点击下载：http://10.12.254.122:18092/api/v1/documents/{_fn}"
