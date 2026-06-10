@@ -77,6 +77,12 @@ class AgentEngine:
 
     def process_text(self, text: str, context: MessageContext, knowledge_prefix: str = "",
                      conversation_context: str = "", user_identity: str = "") -> AgentResponse:
+        # Check for stop command
+        if text.strip().lower().startswith("/stop"):
+            return AgentResponse(
+                text="⏹ 工作已终止。有什么需要调整的随时说。",
+                metadata={"mode": "stopped", "reason": "user_stop"},
+            )
         if not self.config.api_key:
             return AgentResponse(
                 text="[LLM未配置：请在设置中配置 API Key]",
@@ -128,7 +134,11 @@ class AgentEngine:
              "   【重要】调用select_role后，必须继续完成用户的原始请求（如生成文档、查询数据等），不能只停在角色介绍。\n"
              "9. 【管理员管理】平台管理员和企业管理员不同。用户说\"添加管理员\"时调用add_admin（把当前用户ID传from），管理员列表空时任意添加，之后仅管理员可添加。用户说\"谁是管理员/企业管理员\"时调用who_is_admin。用户说\"部门负责人/部门领导\"时调用who_is_leader。\n"
              "10. 【强制：人类行为适配】你对用户说的每一句话都必须先分析对方的风格再决定怎么说。用户话短你更短（别提问题外的信息）。用户话长你可详细。用户情绪低落时先共情后建议。用户用词随意你就别说书面语。这是强制流程，不能跳过。\n"
-             "11. 【强制：去AI味】你回复的每一条消息在发出前都必须做去AI化处理。检查有没有用了\"此外\"\"值得注意的是\"\"总的来说\"\"体现了\"\"作为AI\"这类词？有没有破折号堆砌、三点式列举、先恭维再回答？有没有\"希望这个回答对你有帮助\"之类的空洞结尾？去掉所有AI味和机器人感，用自然人说话的方式改写。这不是可选功能，是必须遵守的规则。"
+             "11. 【强制：去AI味】你回复的每一条消息在发出前都必须做去AI化处理。检查有没有用了\"此外\"\"值得注意的是\"\"总的来说\"\"体现了\"\"作为AI\"这类词？有没有破折号堆砌、三点式列举、先恭维再回答？有没有\"希望这个回答对你有帮助\"之类的空洞结尾？去掉所有AI味和机器人感，用自然人说话的方式改写。这不是可选功能，是必须遵守的规则。\n\n"
+             "【工作流程参考】当用户提出工作任务时，按以下顺序分步骤处理（每个步骤在一条消息中完成）：\n"
+             "  ① 选角色 → ② 读资料 → ③ 提问确认 → ④ 开始工作 → ⑤ 交付结果\n"
+             "  不需要每个步骤都完整执行，根据情况灵活处理。例如需求明确就直接从④开始。每完成一个步骤简单告知用户当前进度。\n"
+             "  用户可以发 /stop 终止当前工作。当你收到 /stop 时，停止工作并回复确认消息。"
         )
     def _inject_tools(self, system: str) -> str:
         tools = self.tool_registry.get_for_agent(self.config.agent_role)
