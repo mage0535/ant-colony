@@ -891,10 +891,14 @@ def _generate_report_handler(args):
     content = args.get("content", "")
     fmt = args.get("format", "docx")
     user_id = args.get("from", "")
+
+    # Don't send blank documents
+    if not content.strip():
+        return "请提供文档内容后再生成。请告诉我文档的具体内容、章节和需要包含的信息。"
+
     result = generate_report(title, content, fmt)
     if result.startswith("文档生成失败") or result.startswith("OfficeCLI"):
         return result
-    # Try to send file via WeCom
     if user_id:
         try:
             from src.gateway.wecom_outbound import send_file
@@ -1574,7 +1578,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal", "project"],
 
-        description="生成可下载的办公文档。支持 docx(文档)、xlsx(表格含甘特图/图表)、pptx(演示)。生成后通过企业微信发送文件给用户。当用户说'生成报告'、'导出周报'、'生成文档'、'甘特图'、'项目进度表'、'生成表格'时使用。content参数每段之间空一行。from参数传当前用户ID。",
+        description="生成可下载的办公文档。支持 docx(文档)、xlsx(表格含甘特图/图表)、pptx(演示)。生成后通过企业微信发送文件给用户。注意：必须先收集完整的文档内容和章节信息后再调用，不要用空内容调用。当用户说'生成报告'、'导出周报'、'生成文档'、'甘特图'、'项目进度表'、'生成表格'时使用。如果用户未提供具体内容，先提问再生成。from参数传当前用户ID。",
 
         parameters={
 
