@@ -1569,7 +1569,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         id="builtin:generate_document",
 
-        name="生成文档（周报/纪要/报告→DOCX/XLSX）",
+        name="生成文档（周报/纪要/报告/甘特图→DOCX/XLSX/PPTX）",
 
         category="document",
 
@@ -1577,7 +1577,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal", "project"],
 
-        description="生成可下载的办公文档。支持 docx(文档)、xlsx(表格)、pptx(演示)。当用户说'生成报告'、'导出周报'、'生成文档'、'帮我写一个文档'时使用。content参数每段之间空一行。",
+        description="生成可下载的办公文档。支持 docx(文档)、xlsx(表格含甘特图/图表)、pptx(演示)。当用户说'生成报告'、'导出周报'、'生成文档'、'甘特图'、'项目进度表'、'生成表格'、'帮我写一个文档'时使用。可用xlsx生成甘特图和项目计划表。content参数每段之间空一行。任务清单每行一个任务，格式：任务名|开始日期|结束日期|负责人。",
 
         parameters={
 
