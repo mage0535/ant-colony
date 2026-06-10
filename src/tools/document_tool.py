@@ -1,94 +1,97 @@
-"""Document generation via OfficeCLI — DOCX reports, XLSX exports."""
+"""Document generation via OfficeCLI — DOCX reports, XLSX exports.
+Uses the correct OfficeCLI API:
+  - add (not set --prop text=) for adding new paragraphs/content
+  - set for modifying existing properties (like cell values in xlsx)
+"""
 from __future__ import annotations
 
 import json
 import logging
 import os
+import subprocess
 import uuid
 
 logger = logging.getLogger(__name__)
 
+OFFICECLI = "/usr/local/bin/officecli"
 DOCUMENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "documents")
 
 
+def _cli(args: list[str]) -> tuple[int, str]:
+    cmd = [OFFICECLI] + args
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    return result.returncode, (result.stderr or result.stdout)
+
+
 def generate_report(title: str, content: str, format: str = "docx") -> str:
-    """Generate a document using python-docx / openpyxl / python-pptx."""
+    """Generate a document using OfficeCLI."""
     allowed = {"docx", "xlsx", "pptx"}
     if format not in allowed:
         return f"不支持的格式: {format}，可选: {', '.join(allowed)}"
+    if not os.path.isfile(OFFICECLI):
+        return "OfficeCLI 未安装"
+
+    os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+    filename = f"{_sanitize_filename(title)}.{format}"
+    filepath = os.path.join(DOCUMENTS_DIR, filename)
+    if os.path.exists(filepath):
+        stem, ext = os.path.splitext(filename)
+        filepath = os.path.join(DOCUMENTS_DIR, f"{stem}_{uuid.uuid4().hex[:8]}{ext}")
+
     try:
+        # Create blank document
+        rc, out = _cli(["create", filepath])
+        if rc != 0:
+            return f"创建文档失败: {out}"
+
         if format == "docx":
-            return _generate_docx(title, content)
+            _build_docx(filepath, content)
         elif format == "xlsx":
-            return _generate_xlsx(title, content)
+            _build_xlsx(filepath, content)
         elif format == "pptx":
-            return _generate_pptx(title, content)
-        return "不支持的格式"
+            _build_pptx(filepath, content)
+
+        size = os.path.getsize(filepath)
+        logger.info("Document created: %s (%d bytes)", filepath, size)
+        return filepath
+
     except Exception as e:
         logger.exception("Document generation failed")
         return f"文档生成失败: {e}"
 
 
-def _generate_docx(title: str, content: str) -> str:
-    from docx import Document
-    from docx.shared import Pt, Inches
-
-    doc = Document()
+def _build_docx(filepath: str, content: str):
+    """Build a DOCX using OfficeCLI add command."""
     paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
     for i, para in enumerate(paragraphs):
         if i == 0:
-            # Title
-            h = doc.add_heading(para, level=1)
+            _cli(["add", filepath, "/body", "--type", "paragraph",
+                  "--prop", f"text={para}", "--prop", "style=Heading1"])
         elif len(para) < 60 and not para.endswith("。") and not para.endswith(")"):
-            # Likely a heading
-            doc.add_heading(para, level=2)
+            _cli(["add", filepath, "/body", "--type", "paragraph",
+                  "--prop", f"text={para}", "--prop", "style=Heading2"])
         else:
-            p = doc.add_paragraph(para)
-            # Make first paragraph of each section slightly larger
-            if len(para) > 0:
-                p.paragraph_format.space_after = Pt(6)
-    return _save_doc(doc, title, "docx")
+            _cli(["add", filepath, "/body", "--type", "paragraph", "--prop", f"text={para}"])
 
 
-def _generate_xlsx(title: str, content: str) -> str:
-    from openpyxl import Workbook
-    from openpyxl.styles import Font
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = title[:31]  # Excel sheet name max 31 chars
-
+def _build_xlsx(filepath: str, content: str):
+    """Build an XLSX using OfficeCLI."""
     rows = [line.split("\t") for line in content.strip().split("\n") if line.strip()]
+    sheet = "/sheet1"
     for ri, row in enumerate(rows):
         for ci, val in enumerate(row):
-            cell = ws.cell(row=ri + 1, column=ci + 1, value=val.strip())
-            if ri == 0:
-                cell.font = Font(bold=True)
-    return _save_doc(wb, title, "xlsx")
+            cell_ref = f"{sheet}/{chr(65 + ci)}{ri + 1}"
+            _cli(["set", filepath, cell_ref, "--prop", f"value={val.strip()}"])
 
 
-def _generate_pptx(title: str, content: str) -> str:
-    from pptx import Presentation
-    from pptx.util import Inches
-
-    prs = Presentation()
+def _build_pptx(filepath: str, content: str):
+    """Build a PPTX using OfficeCLI."""
     paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
-    for para in paragraphs:
-        slide = prs.slides.add_slide(prs.slide_layouts[1])  # Title + Content
-        slide.shapes.title.text = para[:100]
-    return _save_doc(prs, title, "pptx")
-
-
-def _save_doc(doc, title: str, fmt: str) -> str:
-    os.makedirs(DOCUMENTS_DIR, exist_ok=True)
-    filename = f"{_sanitize_filename(title)}.{fmt}"
-    filepath = os.path.join(DOCUMENTS_DIR, filename)
-    if os.path.exists(filepath):
-        stem, ext = os.path.splitext(filename)
-        filepath = os.path.join(DOCUMENTS_DIR, f"{stem}_{uuid.uuid4().hex[:8]}{ext}")
-    doc.save(filepath)
-    logger.info("Document saved: %s (%d bytes)", filepath, os.path.getsize(filepath))
-    return filepath
+    for i, para in enumerate(paragraphs):
+        if i == 0:
+            _cli(["set", filepath, "/slide[1]", "--prop", f"title={para[:100]}"])
+        else:
+            _cli(["add", filepath, "/", "--type", "slide", "--prop", f"title={para[:100]}"])
 
 
 def _sanitize_filename(name: str) -> str:
