@@ -659,7 +659,7 @@ def _select_role_tool(args: dict[str, Any]) -> str:
             return ""
         result = select_role(query)
         role = result["role"]
-        return f"我将以 **{role.name}** 来协助你。请提供详细内容，我来帮你完成。"
+        return f"我将以 **{role.name}** 来协助你。现在开始工作。"
     except Exception as e:
         tb = traceback.format_exc()
         return f"[select_role error: {e}]\n{tb}"
