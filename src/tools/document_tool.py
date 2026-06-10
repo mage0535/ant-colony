@@ -75,6 +75,8 @@ def _build_docx(filepath: str, content: str):
                   "--prop", f"text={para}", "--prop", "style=Heading2"])
         else:
             _cli(["add", filepath, "/body", "--type", "paragraph", "--prop", f"text={para}"])
+    # Must close to persist changes to disk
+    _cli(["close", filepath])
 
 
 def _build_xlsx(filepath: str, content: str):
@@ -85,6 +87,7 @@ def _build_xlsx(filepath: str, content: str):
         for ci, val in enumerate(row):
             cell_ref = f"{sheet}/{chr(65 + ci)}{ri + 1}"
             _cli(["set", filepath, cell_ref, "--prop", f"value={val.strip()}"])
+    _cli(["close", filepath])
 
 
 def _build_pptx(filepath: str, content: str):
@@ -95,6 +98,7 @@ def _build_pptx(filepath: str, content: str):
             _cli(["set", filepath, "/slide[1]", "--prop", f"title={para[:100]}"])
         else:
             _cli(["add", filepath, "/", "--type", "slide", "--prop", f"title={para[:100]}"])
+    _cli(["close", filepath])
 
 
 def _sanitize_filename(name: str) -> str:

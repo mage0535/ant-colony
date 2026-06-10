@@ -651,18 +651,15 @@ def _delete_cloud_drive_tool(args: dict[str, Any]) -> str:
 
 
 def _select_role_tool(args: dict[str, Any]) -> str:
-    import traceback
     try:
         from src.platform.role_manager import select_role
         query = args.get("query", "")
         if not query:
             return ""
         result = select_role(query)
-        role = result["role"]
-        return f"我将以 **{role.name}** 来协助你。现在开始工作。"
+        return result["role"].name
     except Exception as e:
-        tb = traceback.format_exc()
-        return f"[select_role error: {e}]\n{tb}"
+        return ""
 
 
 
