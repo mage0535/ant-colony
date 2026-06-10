@@ -1595,7 +1595,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal", "project"],
 
-        description="生成docx/xlsx/pptx办公文档并推送给用户。",
+        description="生成docx/xlsx/pptx文档推送给用户。当用户说'生成文档/报告/周报/纪要/合同/通知'或要求把内容做成文件时使用。",
 
         parameters={
 
