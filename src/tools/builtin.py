@@ -900,7 +900,9 @@ def _generate_report_handler(args):
         snap = svc.build_runtime_snapshot()
         for p in snap.llm_profiles:
             if p.enabled:
-                prompt_text = "你是一个文档撰写专家。用户提供了以下原始内容，请将其丰富优化为结构完整、语言专业的文档。保持用户原始信息，补充细节使内容更充实。直接返回优化后的内容，不要加额外说明。\n\n" + content
+                prompt_text = ("你是一个文档撰写专家。根据以下内容生成一份结构完整、语言专业的文档。"
+                               "如果内容中包含格式说明（如标题层级、章节划分等），请严格遵守。"
+                               "直接返回优化后的内容，不要加额外说明。\n\n" + content)
                 body = _json.dumps({"model": p.model_name, "messages": [{"role": "user", "content": prompt_text}], "max_tokens": 4096}).encode()
                 req = _ul.Request(p.api_base.rstrip("/") + "/chat/completions", data=body, headers={"Authorization": "Bearer " + p.api_key, "Content-Type": "application/json"})
                 resp = _json.loads(_ul.urlopen(req, timeout=60).read())
