@@ -4,96 +4,91 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
-import subprocess
-import tempfile
 import uuid
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-OFFICECLI = "/usr/local/bin/officecli"
-
-
-def _officecli_available() -> bool:
-    return os.path.isfile(OFFICECLI)
-
-
-DOCUMENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "documents")
+DOCUMENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "documents")
 
 
 def generate_report(title: str, content: str, format: str = "docx") -> str:
-    """Generate a document from structured content.
-
-    Args:
-        title: Document title / filename stem
-        content: Plain text content (paragraphs separated by blank lines)
-        format: 'docx' (default), 'xlsx', or 'pptx'
-
-    Returns:
-        Download URL or error message.
-    """
-    if not _officecli_available():
-        return "OfficeCLI 未安装，无法生成文档"
+    """Generate a document using python-docx / openpyxl / python-pptx."""
     allowed = {"docx", "xlsx", "pptx"}
     if format not in allowed:
         return f"不支持的格式: {format}，可选: {', '.join(allowed)}"
     try:
-        tmpdir = tempfile.mkdtemp(prefix="ant_doc_")
-        filename = f"{_sanitize_filename(title)}.{format}"
-        filepath = os.path.join(tmpdir, filename)
-        _create_blank(filepath, format)
         if format == "docx":
-            for para in content.split("\n\n"):
-                para = para.strip()
-                if not para:
-                    continue
-                _run_cli(["set", filepath, "/", "--prop", f"text={para}"])
-                is_heading = len(para) < 60 and not para.endswith("。")
-                if is_heading:
-                    _run_cli(["set", filepath, "/", "--prop", "style=Heading1"])
+            return _generate_docx(title, content)
         elif format == "xlsx":
-            rows = [line.split("\t") for line in content.strip().split("\n")]
-            for ri, row in enumerate(rows):
-                for ci, val in enumerate(row):
-                    cell = chr(65 + ci) + str(ri + 1)
-                    _run_cli(["set", filepath, cell, "--prop", f"value={val}"])
+            return _generate_xlsx(title, content)
         elif format == "pptx":
-            _run_cli(["set", filepath, "/", "--layout", "title"])
-            for para in content.split("\n\n"):
-                para = para.strip()
-                if para:
-                    _run_cli(["set", filepath, "--add-slide", "--prop", f"title={para[:100]}"])
-
-        # Copy to public documents directory
-        os.makedirs(DOCUMENTS_DIR, exist_ok=True)
-        public_path = os.path.join(DOCUMENTS_DIR, filename)
-        # Avoid overwriting
-        if os.path.exists(public_path):
-            stem, ext = os.path.splitext(filename)
-            public_path = os.path.join(DOCUMENTS_DIR, f"{stem}_{uuid.uuid4().hex[:8]}{ext}")
-        shutil.copy2(filepath, public_path)
-        shutil.rmtree(tmpdir, ignore_errors=True)
-        return public_path
+            return _generate_pptx(title, content)
+        return "不支持的格式"
     except Exception as e:
         logger.exception("Document generation failed")
         return f"文档生成失败: {e}"
 
 
-def _create_blank(filepath: str, format: str) -> None:
-    _run_cli(["create", filepath])
-    if format in ("docx",):
-        _run_cli(["set", filepath, "/", "--add-paragraph", "--prop", "text="])
-    elif format == "pptx":
-        _run_cli(["set", filepath, "/", "--add-slide", "--prop", "title=Slide 1"])
+def _generate_docx(title: str, content: str) -> str:
+    from docx import Document
+    from docx.shared import Pt, Inches
+
+    doc = Document()
+    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+    for i, para in enumerate(paragraphs):
+        if i == 0:
+            # Title
+            h = doc.add_heading(para, level=1)
+        elif len(para) < 60 and not para.endswith("。") and not para.endswith(")"):
+            # Likely a heading
+            doc.add_heading(para, level=2)
+        else:
+            p = doc.add_paragraph(para)
+            # Make first paragraph of each section slightly larger
+            if len(para) > 0:
+                p.paragraph_format.space_after = Pt(6)
+    return _save_doc(doc, title, "docx")
 
 
-def _run_cli(args: list[str]) -> str:
-    cmd = [OFFICECLI] + args
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        logger.warning("officecli %s failed: %s", args[0], result.stderr[:200])
-    return result.stdout
+def _generate_xlsx(title: str, content: str) -> str:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = title[:31]  # Excel sheet name max 31 chars
+
+    rows = [line.split("\t") for line in content.strip().split("\n") if line.strip()]
+    for ri, row in enumerate(rows):
+        for ci, val in enumerate(row):
+            cell = ws.cell(row=ri + 1, column=ci + 1, value=val.strip())
+            if ri == 0:
+                cell.font = Font(bold=True)
+    return _save_doc(wb, title, "xlsx")
+
+
+def _generate_pptx(title: str, content: str) -> str:
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+    for para in paragraphs:
+        slide = prs.slides.add_slide(prs.slide_layouts[1])  # Title + Content
+        slide.shapes.title.text = para[:100]
+    return _save_doc(prs, title, "pptx")
+
+
+def _save_doc(doc, title: str, fmt: str) -> str:
+    os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+    filename = f"{_sanitize_filename(title)}.{fmt}"
+    filepath = os.path.join(DOCUMENTS_DIR, filename)
+    if os.path.exists(filepath):
+        stem, ext = os.path.splitext(filename)
+        filepath = os.path.join(DOCUMENTS_DIR, f"{stem}_{uuid.uuid4().hex[:8]}{ext}")
+    doc.save(filepath)
+    logger.info("Document saved: %s (%d bytes)", filepath, os.path.getsize(filepath))
+    return filepath
 
 
 def _sanitize_filename(name: str) -> str:
