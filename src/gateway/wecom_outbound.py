@@ -131,6 +131,8 @@ def send_file(user_id: str, filepath: str) -> bool:
         "msgtype": "file",
         "agentid": AGENT_ID,
         "file": {"media_id": media_id},
+        "safe": 0,
+        "enable_duplicate_check": 0,
     }).encode("utf-8")
     try:
         req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
@@ -143,4 +145,33 @@ def send_file(user_id: str, filepath: str) -> bool:
         return True
     except Exception as e:
         logger.error("WeCom send_file error: %s", e)
+        return False
+
+
+def send_file_card(user_id: str, filename: str, download_url: str) -> bool:
+    """Send a rich textcard with download button — reliably delivers to chat."""
+    token = _get_token()
+    url = f"{WECOM_API}/message/send?access_token={token}"
+    body = json.dumps({
+        "touser": user_id,
+        "msgtype": "textcard",
+        "agentid": AGENT_ID,
+        "textcard": {
+            "title": filename,
+            "description": '<div class=\"normal\">文档已生成，点击下方按钮下载</div>',
+            "url": download_url,
+            "btntxt": "下载文档",
+        },
+    }, ensure_ascii=False).encode("utf-8")
+    try:
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        if data.get("errcode", 0) != 0:
+            logger.warning("WeCom send_file_card failed: %s", data.get("errmsg"))
+            return False
+        logger.info("File card sent to %s via WeCom", user_id)
+        return True
+    except Exception as e:
+        logger.error("WeCom send_file_card error: %s", e)
         return False
