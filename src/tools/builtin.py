@@ -10,7 +10,10 @@ from typing import Any
 
 
 
+import logging
 from src.models.contracts import Task, TaskDraft, TaskStatus as _TaskStatus
+
+logger = logging.getLogger(__name__)
 
 from src.tools.registry import ToolSpec
 
@@ -893,25 +896,48 @@ def _generate_report_handler(args):
         return "请提供文档内容后再生成。请告诉我文档的具体内容、章节和需要包含的信息。"
 
     # Enrich content using LLM before generating
+    _original_len = len(content)
+    _enriched = False
+    _err = ""
     try:
-        import json as _json, urllib.request as _ul
         from src.config.bootstrap import build_settings_service
-        svc = build_settings_service()
-        snap = svc.build_runtime_snapshot()
-        for p in snap.llm_profiles:
-            if p.enabled:
-                prompt_text = ("你是一个文档撰写专家。根据以下内容生成一份结构完整、语言专业的文档。"
-                               "如果内容中包含格式说明（如标题层级、章节划分等），请严格遵守。"
-                               "直接返回优化后的内容，不要加额外说明。\n\n" + content)
-                body = _json.dumps({"model": p.model_name, "messages": [{"role": "user", "content": prompt_text}], "max_tokens": 4096}).encode()
-                req = _ul.Request(p.api_base.rstrip("/") + "/chat/completions", data=body, headers={"Authorization": "Bearer " + p.api_key, "Content-Type": "application/json"})
-                resp = _json.loads(_ul.urlopen(req, timeout=60).read())
-                enriched = resp["choices"][0]["message"]["content"]
-                if enriched and len(enriched) > len(content) * 1.5:
-                    content = enriched
-                break
-    except Exception:
-        pass
+
+        snap = None
+        try:
+            svc = build_settings_service()
+            snap = svc.build_runtime_snapshot()
+        except Exception as e:
+            _err = f"settings: {e}"
+
+        if snap and snap.llm_profiles:
+            for p in snap.llm_profiles:
+                if p.enabled:
+                    api_base = (p.api_base or "").rstrip("/")
+                    if not api_base or not p.api_key:
+                        continue
+                    import httpx as _httpx
+                    prompt_text = ("你是一个文档撰写专家。根据以下内容生成一份结构完整、语言专业的文档。"
+                                   "如果内容中包含格式说明（如标题层级、章节划分等），请严格遵守。"
+                                   "直接返回优化后的内容，不要加额外说明。\n\n" + content)
+                    _resp = _httpx.post(api_base + "/chat/completions",
+                        headers={"Authorization": "Bearer " + p.api_key},
+                        json={"model": p.model_name, "messages": [{"role": "user", "content": prompt_text}], "max_tokens": 4096},
+                        timeout=60)
+                    if _resp.status_code == 200:
+                        enriched = _resp.json()["choices"][0]["message"]["content"]
+                        if enriched and len(enriched) > _original_len:
+                            content = enriched
+                            _enriched = True
+                    else:
+                        _err = f"API {_resp.status_code}"
+                    break
+    except Exception as e:
+        _err = str(e)
+
+    if _enriched:
+        logger.info("Content enriched: %d -> %d chars", _original_len, len(content))
+    elif _err:
+        logger.warning("Content enrichment skipped: %s", _err)
 
     result = generate_report(title, content, fmt)
     if result.startswith("文档生成失败") or result.startswith("OfficeCLI"):
