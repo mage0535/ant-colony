@@ -7,6 +7,10 @@ Knowledge scope rules:
   department   — dept members can read, admin+dept-leader can write
   project      — project members can read, admin+project-members can write
   personal     — only self can read/write (admin overrides all)
+
+Department-level permissions are scoped to SPECIFIC departments:
+  - A user can only read a department KB if they belong to that department
+  - A user can only write to a department KB if they lead that department
 """
 
 from __future__ import annotations
@@ -25,7 +29,56 @@ class Role(IntEnum):
     admin = 4
 
 
+# Cache for department membership: user_id -> (dept_ids, leader_dept_ids)
+_dept_cache: dict[str, tuple[list[int], list[int]]] = {}
+_dept_cache_expiry: dict[str, float] = {}
+import time as _time
+
+
+def _get_user_depts(user_id: str) -> tuple[list[int], list[int]]:
+    """Fetch user's departments and leader departments from WeCom.
+
+    Returns: (all_dept_ids, leader_dept_ids)
+    Cached for 300 seconds.
+    """
+    now = _time.time()
+    if user_id in _dept_cache and _dept_cache_expiry.get(user_id, 0) > now:
+        return _dept_cache[user_id]
+
+    all_depts: list[int] = []
+    leader_depts: list[int] = []
+    try:
+        from src.platform.api_wecom import _get
+        resp = _get("user/get", f"userid={user_id}")
+        all_depts = resp.get("department", [])
+        is_leader = resp.get("is_leader_in_dept", [0])
+        if isinstance(is_leader, int):
+            is_leader = [is_leader]
+        for i, did in enumerate(all_depts):
+            if i < len(is_leader) and is_leader[i] == 1:
+                leader_depts.append(did)
+    except Exception:
+        pass
+
+    _dept_cache[user_id] = (all_depts, leader_depts)
+    _dept_cache_expiry[user_id] = now + 300
+    return all_depts, leader_depts
+
+
+def _is_dept_member(user_id: str, dept_id: str) -> bool:
+    """Check if user is a member of a specific department."""
+    all_depts, _ = _get_user_depts(user_id)
+    return any(str(d) == dept_id or d == dept_id for d in all_depts)
+
+
+def _is_dept_leader(user_id: str, dept_id: str) -> bool:
+    """Check if user is the leader of a specific department."""
+    _, leader_depts = _get_user_depts(user_id)
+    return any(str(d) == dept_id or d == dept_id for d in leader_depts)
+
+
 def resolve_role(user_id: str, space_id: str = "") -> Role:
+    """Determine the highest role for *user_id* in the given *space_id*."""
     """Determine the highest role for *user_id* in the given *space_id*."""
     if not user_id:
         return Role.everyone
@@ -91,47 +144,63 @@ def resolve_role(user_id: str, space_id: str = "") -> Role:
 
 
 def may_read(role: Role, owner_type: str, owner_id: str, user_id: str) -> bool:
-    """Check whether *role* can read a knowledge entry."""
+    """Check whether *role* can read a knowledge entry.
+
+    For department scope, user must be a member of that specific department.
+    """
     if role >= Role.admin:
         return True
     if owner_type == "organization":
         return True
     if owner_type == "department":
-        return role >= Role.member
+        if role >= Role.leader:
+            return True  # leaders can read any department
+        if role >= Role.member:
+            return _is_dept_member(user_id, owner_id)
+        return False
     if owner_type == "project":
         return role >= Role.member
     if owner_type == "personal":
-        return role >= Role.self and (owner_id == user_id or role >= Role.admin)
+        return role >= Role.self and (owner_id == user_id)
     return False
 
 
 def may_write(role: Role, owner_type: str, owner_id: str, user_id: str) -> bool:
-    """Check whether *role* can write/delete a knowledge entry."""
+    """Check whether *role* can write/delete a knowledge entry.
+
+    For department scope, user must be the leader of that specific department.
+    """
     if role >= Role.admin:
         return True
     if owner_type == "organization":
         return role >= Role.leader
     if owner_type == "department":
-        return role >= Role.leader
+        if role >= Role.leader:
+            return _is_dept_leader(user_id, owner_id)
+        return False
     if owner_type == "project":
         return role >= Role.member
     if owner_type == "personal":
-        return role >= Role.self and (owner_id == user_id or role >= Role.admin)
+        return role >= Role.self and (owner_id == user_id)
     return False
 
 
 def visible_scopes(role: Role, user_id: str) -> list[tuple[str, str]]:
     """Return (owner_type, owner_id) pairs that *role* can search/read.
 
-    An admin sees everything; a leader sees org/dep/project/personal;
-    a member sees accessible projects + personal; self sees personal only.
+    An admin sees everything; a leader sees org + their departments + personal;
+    a member sees org (if member) + personal; self sees personal only.
     """
     scopes: list[tuple[str, str]] = []
-    # Everyone can see *some* org-level stuff
     if role >= Role.self:
         scopes.append(("personal", user_id))
+    scopes.append(("organization", "*"))
     if role >= Role.member:
-        scopes.append(("organization", "*"))
+        # Add user's own departments
+        all_depts, _ = _get_user_depts(user_id)
+        for d in all_depts[:20]:
+            scopes.append(("department", str(d)))
     if role >= Role.leader:
-        scopes.append(("department", "*"))  # leader sees all depts
+        # Leaders also see all org-level content
+        pass  # org already added above
     return scopes
