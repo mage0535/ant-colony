@@ -143,7 +143,13 @@ class AgentEngine:
         else:
             reply = self._call_openai(system, text)
 
-        if self.tool_registry and self._has_tool_calls(reply):
+        import sys as _sys2
+        has_tc = self.tool_registry and self._has_tool_calls(reply)
+        print("[ENGINE] LLM reply len=%d tool_call=%s first100=%s" % (
+            len(reply), has_tc, reply[:100].replace("\n", "\\n")[:100]
+        ), file=_sys2.stderr, flush=True)
+
+        if has_tc:
             reply = self._execute_tool_calls(reply)
 
         return AgentResponse(
@@ -204,10 +210,17 @@ class AgentEngine:
         for name, raw_args in calls:
             args: dict[str, Any] = _lenient_parse_args(name, raw_args) if raw_args else {}
             if name.endswith("generate_document"):
+                import sys as _sys
+                print("[BASE] generate_document: content_len=%d, from=%s, latest_user_id=%s" % (
+                    len(args.get("content", "").strip()),
+                    args.get("from", "(not set)"),
+                    getattr(self, "_latest_user_id", "(attr missing)"),
+                ), file=_sys.stderr, flush=True)
                 if len(args.get("content", "").strip()) < 100:
                     args["_context_text"] = getattr(self, "_latest_user_text", text)
                 if not args.get("from"):
                     args["from"] = getattr(self, "_latest_user_id", "")
+                print("[BASE] after inject: from=%s" % args.get("from"), file=_sys.stderr, flush=True)
             replacement = self._dispatch_tool(name, args, tools)
             result = result.replace(
                 f"<tool_call>{name}({raw_args})</tool_call>",

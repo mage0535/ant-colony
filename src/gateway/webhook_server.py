@@ -111,9 +111,9 @@ class WecomWebhookHandler(BaseHTTPRequestHandler):
                 if memory_reply:
                     body["reply"] = memory_reply
                     result.response = None
-                elif result.response:
+                elif result.response and result.response.text:
                     body["reply"] = result.response.text
-            elif result.response:
+            elif result.response and result.response.text:
                 body["reply"] = result.response.text
             if result.buffered_count:
                 body["buffered"] = result.buffered_count
