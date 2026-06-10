@@ -514,6 +514,14 @@ def serve(host: str = "0.0.0.0", port: int = 18090, profile_id: str = "server-de
 
     logger.info("gateway webhook on %s:%s (flusher=%ss, threaded, status transitions)", host, port, flusher.interval_seconds)
 
+    # Ensure callback service is running (auto-recover if systemd restart limit was hit)
+    try:
+        import subprocess as _sp
+        _sp.run(["systemctl", "is-active", "--quiet", "ant-colony-callback"], check=True)
+    except Exception:
+        logger.warning("ant-colony-callback is down — restarting it")
+        _sp.run(["sudo", "systemctl", "restart", "ant-colony-callback"], capture_output=True, timeout=15)
+
     # Start platform adapters (Feishu/DingTalk/Telegram) if configured
     try:
         from src.gateway.platform_adapters import start_platform_adapters
