@@ -899,23 +899,23 @@ def _generate_report_handler(args):
 
     if len(content.strip()) < 100 and context_text:
         content = context_text
+    # Strip the Agent's own tool_call XML from context to get clean user input
+    import re as _re
+    content = _re.sub(r"<tool_call>.*?</tool_call>", "", content, flags=_re.DOTALL).strip()
     if not content.strip():
         return "请提供文档内容后再生成。请告诉我文档的具体内容、章节和需要包含的信息。"
 
-    # Enrich content using LLM before generating
     _original_len = len(content)
     _enriched = False
     _err = ""
     try:
         from src.config.bootstrap import build_settings_service
-
         snap = None
         try:
             svc = build_settings_service()
             snap = svc.build_runtime_snapshot()
         except Exception as e:
             _err = f"settings: {e}"
-
         if snap and snap.llm_profiles:
             for p in snap.llm_profiles:
                 if p.enabled:
@@ -923,25 +923,31 @@ def _generate_report_handler(args):
                     if not api_base or not p.api_key:
                         continue
                     import httpx as _httpx
-                    prompt_text = ("你是一个专业的文档撰写专家。根据以下内容生成一份格式规范、结构完整的正式文档。"
-                                   "要求：有清晰的标题层级、章节划分、条目编号。"
-                                   "如果内容中提到了格式要求或模板参考，请严格遵守。"
-                                   "直接返回完整的文档内容，不要加额外说明。\n\n" + content)
+                    prompt_text = (
+                        "你是一名资深企业文档撰写专家。用户提供了一份文档模板或草稿，需要你按照模板的章节结构、层级格式、条目编号，"
+                        "将内容充实为一篇完整、正式、可直接使用的正式文档。\n\n"
+                        "要求：\n"
+                        "1. 严格继承模板中的标题层级（章/节/条/款）和编号格式（如 1. / 1.1 / (1) / 第一条 等）\n"
+                        "2. 模板中的空章节、占位符、简短标题 —— 都要展开为完整段落，补充实质性内容\n"
+                        "3. 保留模板中的关键术语、表格结构、签字栏等框架元素\n"
+                        "4. 语言正式、条款式，符合企业规章制度或政府公文格式\n"
+                        "5. 输出完整的文档正文（含标题），不要加额外说明、不要对话\n\n"
+                        "=== 以下是模板/草稿 ===\n" + content
+                    )
                     _resp = _httpx.post(api_base + "/chat/completions",
                         headers={"Authorization": "Bearer " + p.api_key},
-                        json={"model": p.model_name, "messages": [{"role": "user", "content": prompt_text}], "max_tokens": 4096},
-                        timeout=60)
+                        json={"model": p.model_name, "messages": [{"role": "user", "content": prompt_text}], "max_tokens": 16384},
+                        timeout=120)
                     if _resp.status_code == 200:
                         enriched = _resp.json()["choices"][0]["message"]["content"]
-                        if enriched and len(enriched) > _original_len:
+                        if enriched and len(enriched.strip()) >= 20:
                             content = enriched
                             _enriched = True
                     else:
-                        _err = f"API {_resp.status_code}"
+                        _err = f"API {_resp.status_code}: {_resp.text[:200]}"
                     break
     except Exception as e:
         _err = str(e)
-
     if _enriched:
         logger.info("Content enriched: %d -> %d chars", _original_len, len(content))
     elif _err:
@@ -952,7 +958,6 @@ def _generate_report_handler(args):
         return result
     import os as _os2
     _fn = _os2.path.basename(result)
-    # Try WeCom push
     _pushed = False
     if user_id:
         try:
