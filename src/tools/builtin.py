@@ -1575,17 +1575,17 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal", "project"],
 
-        description="生成可下载的办公文档。支持 docx(文档)、xlsx(表格含甘特图/图表)、pptx(演示)。生成后通过企业微信发送文件给用户。注意：必须先收集完整的文档内容和章节信息后再调用，不要用空内容调用。当用户说'生成报告'、'导出周报'、'生成文档'、'甘特图'、'项目进度表'、'生成表格'时使用。如果用户未提供具体内容，先提问再生成。from参数传当前用户ID。",
+        description="生成docx/xlsx/pptx办公文档并推送给用户。",
 
         parameters={
 
-            "title": {"type": "string", "description": "文档标题/文件名（必填）"},
+            "title": {"type": "string", "description": "文档标题（必填）"},
 
-            "content": {"type": "string", "description": "文档内容，段落间空一行（必填）"},
+            "content": {"type": "string", "description": "文档内容，段落间空一行"},
 
-            "format": {"type": "string", "description": "格式：docx/xlsx/pptx（可选，默认docx）"},
+            "format": {"type": "string", "description": "docx/xlsx/pptx（默认docx）"},
 
-            "from": {"type": "string", "description": "当前用户的微信ID，从会话上下文获取"},
+            "from": {"type": "string", "description": "用户ID"},
 
         },
 
