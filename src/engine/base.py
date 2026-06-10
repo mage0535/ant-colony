@@ -93,6 +93,13 @@ class AgentEngine:
         system = self.config.system_prompt or self._default_system_prompt(user_identity)
         if knowledge_prefix:
             system = knowledge_prefix + "\n\n" + system
+        # Auto-inject role content based on user's text (Hermes-style skill loading)
+        try:
+            _role_text = self._load_matching_role(text)
+            if _role_text:
+                system = _role_text + "\n\n" + system
+        except Exception:
+            pass
         system = f"今天是{today}。{system}"
         if self.tool_registry:
             system = self._inject_tools(system)
@@ -136,6 +143,20 @@ class AgentEngine:
              "11. 【强制：去AI味】你回复的每一条消息在发出前都必须做去AI化处理。检查有没有用了\"此外\"\"值得注意的是\"\"总的来说\"\"体现了\"\"作为AI\"这类词？有没有破折号堆砌、三点式列举、先恭维再回答？有没有\"希望这个回答对你有帮助\"之类的空洞结尾？去掉所有AI味和机器人感，用自然人说话的方式改写。\n\n"
              "用户可以用任何方式给你下达任务。充分理解用户提供的所有资料后再执行工具。不清楚的直接问。可随时发/stop终止。"
         )
+
+    def _load_matching_role(self, text: str) -> str:
+        """Auto-load relevant role content based on user's text (Hermes-style)."""
+        try:
+            from src.platform.role_manager import search_roles, _load_role_file
+            results = search_roles(text, limit=1)
+            if results:
+                content = _load_role_file(results[0].name)
+                if content:
+                    return f"## 专家角色：{results[0].name}\n{content[:2500]}"
+        except Exception:
+            pass
+        return ""
+
     def _inject_tools(self, system: str) -> str:
         tools = self.tool_registry.get_for_agent(self.config.agent_role)
         if not tools:
