@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time as _time
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +22,11 @@ class InboundResult:
     response: AgentResponse | None = None
     buffered_count: int = 0
     memory_context: str = ""
+
+
+# Buffer for pairing file + text messages from same user (WeCom sends them separately)
+_file_buffer: dict[str, tuple[str, float]] = {}  # user_id -> (file_text, timestamp)
+_FILE_TIMEOUT = 30  # seconds to wait for text message after file
 
 
 class InboundGatewayService:
@@ -46,24 +53,33 @@ class InboundGatewayService:
                                                  warm_store=warm_store, cold_store=cold_store)
 
     def handle_wecom_payload(self, payload: dict[str, Any]) -> InboundResult:
-        # Intercept file messages: download, convert, index, inject text
+        user_id = payload.get("from_user_id", "") or payload.get("from", "")
+
+        # Intercept file messages: download, convert, buffer for pairing with next text
         if payload.get("msg_type") == "file" and payload.get("media_id"):
             try:
                 from src.gateway.wecom_file_handler import handle_wecom_file
                 file_text = handle_wecom_file(payload)
                 if file_text:
-                    payload["content"] = file_text
-                    payload["is_file_message"] = True
-                    # File-only messages: silently accept, don't trigger Agent response
-                    # User will send text instructions in a follow-up message
-                    if not payload.get("text", "").strip():
-                        return InboundResult(
-                            route_kind=RouteKind.PERSONAL.value,
-                            target_id=payload.get("from_user_id", ""),
-                            response=AgentResponse(text=""),
-                        )
+                    # Buffer file content, waiting for a follow-up text message
+                    _file_buffer[user_id] = (file_text, _time.time())
+                    return InboundResult(route_kind="personal", target_id=user_id,
+                                         response=AgentResponse(text=""))
             except Exception as e:
                 logger.error("File handler error: %s", e)
+
+        # Clear stale buffer entries
+        now = _time.time()
+        stale = [uid for uid, (_, ts) in _file_buffer.items() if now - ts > _FILE_TIMEOUT]
+        for uid in stale:
+            del _file_buffer[uid]
+
+        # If there's buffered file content for this user, prepend it to the message text
+        if user_id in _file_buffer:
+            file_text, _ = _file_buffer.pop(user_id)
+            msg_text = payload.get("content") or payload.get("text", "")
+            payload["content"] = file_text + "\n\n" + msg_text
+            payload["is_file_message"] = True
 
         adapted = adapt_wecom_payload(payload)
         decision = self.dispatcher.route(adapted.message)
