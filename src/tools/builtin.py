@@ -947,17 +947,9 @@ def _generate_report_handler(args):
     result = generate_report(title, content, fmt)
     if result.startswith("文档生成失败") or result.startswith("OfficeCLI"):
         return result
-    if user_id:
-        try:
-            from src.gateway.wecom_outbound import send_file
-            sent = send_file(user_id, result)
-            if sent:
-                return f"文档已生成并通过企业微信发送给您，请注意查收文件消息。"
-        except Exception:
-            pass
-    import os
-    filename = os.path.basename(result)
-    return f"文档已生成（{filename}），可在浏览器打开下载：http://[服务器IP]:18092/api/v1/documents/{filename}"
+    import os as _os2
+    _fn = _os2.path.basename(result)
+    return f"文档已生成，点击下载：http://10.12.254.122:18092/api/v1/documents/{_fn}"
 
 
 def _set_priority_tool(args: dict[str, Any]) -> str:
