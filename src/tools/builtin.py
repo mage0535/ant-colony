@@ -920,9 +920,10 @@ def _generate_report_handler(args):
                     if not api_base or not p.api_key:
                         continue
                     import httpx as _httpx
-                    prompt_text = ("你是一个文档撰写专家。根据以下内容生成一份结构完整、语言专业的文档。"
-                                   "如果内容中包含格式说明（如标题层级、章节划分等），请严格遵守。"
-                                   "直接返回优化后的内容，不要加额外说明。\n\n" + content)
+                    prompt_text = ("你是一个专业的文档撰写专家。根据以下内容生成一份格式规范、结构完整的正式文档。"
+                                   "要求：有清晰的标题层级、章节划分、条目编号。"
+                                   "如果内容中提到了格式要求或模板参考，请严格遵守。"
+                                   "直接返回完整的文档内容，不要加额外说明。\n\n" + content)
                     _resp = _httpx.post(api_base + "/chat/completions",
                         headers={"Authorization": "Bearer " + p.api_key},
                         json={"model": p.model_name, "messages": [{"role": "user", "content": prompt_text}], "max_tokens": 4096},
