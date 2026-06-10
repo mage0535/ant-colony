@@ -58,6 +58,33 @@ def _extract_tool_calls(text: str) -> list[tuple[str, str]]:
     return results
 
 
+def _lenient_parse_args(name: str, raw_args: str) -> dict[str, Any]:
+    """Parse tool args with fallback: try JSON first, then regex extraction."""
+    if not raw_args:
+        return {}
+    try:
+        return json.loads(raw_args)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    args: dict[str, Any] = {}
+    _escaped = re.sub(r'(?<!\\)"', '', raw_args)  # very rough: remove unescaped quotes
+    for key in ("title", "content", "format", "from", "query", "assignee",
+                "project_id", "description", "priority", "task_id", "user_id"):
+        m = re.search(rf'"{key}"\s*:\s*"((?:\\.|[^"\\])*)"', raw_args, re.UNICODE)
+        if m:
+            val = m.group(1)
+            val = val.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\')
+            args[key] = val
+            continue
+        m2 = re.search(rf'"{key}"\s*:\s*([^,}}]+)', raw_args)
+        if m2:
+            v = m2.group(1).strip().strip('"').strip("'")
+            args[key] = v
+    if not args and raw_args.count('"') >= 2 and raw_args.replace('"', '', 1).find('"') > 0:
+        args["content"] = raw_args
+    return args
+
+
 @dataclass(slots=True)
 class AgentEngineConfig:
     model_name: str
@@ -74,6 +101,7 @@ class AgentEngine:
     def __init__(self, config: AgentEngineConfig, tool_registry: Any = None) -> None:
         self.config = config
         self.tool_registry = tool_registry
+        self._latest_user_text = ""
 
     def process_text(self, text: str, context: MessageContext, knowledge_prefix: str = "",
                      conversation_context: str = "", user_identity: str = "") -> AgentResponse:
@@ -83,6 +111,7 @@ class AgentEngine:
                 text="⏹ 工作已终止。有什么需要调整的随时说。",
                 metadata={"mode": "stopped", "reason": "user_stop"},
             )
+        self._latest_user_text = text
         if not self.config.api_key:
             return AgentResponse(
                 text="[LLM未配置：请在设置中配置 API Key]",
@@ -132,7 +161,7 @@ class AgentEngine:
             "工作方式：\n"
             "1. 先理解用户需求。用户可能用任何方式表达：文件、文字、模板都可以。\n"
             "2. 理解后用下方工具完成任务。用户要求生成文档时，用generate_report生成docx并推送。\n"
-            "3. 调用generate_report时，content参数要包含完整的文档内容，如果有模板格式参考也要包含在内。\n"
+            "3. 调用generate_report时content只写简短概述（如'车间通行管理规定'），from填@你的用户名。系统自动从对话历史提取并丰富完整文档内容。\n"
             "4. 用户可随时发/stop终止。回复去掉AI味（此外/值得注意的是/总的来说/作为AI这类词）。"
         )
 
@@ -172,12 +201,10 @@ class AgentEngine:
         result = text
         tools = self.tool_registry.get_for_agent(self.config.agent_role)
         for name, raw_args in calls:
-            try:
-                args: dict[str, Any] = json.loads(raw_args) if raw_args else {}
-            except json.JSONDecodeError:
-                replacement = f"[工具 {name} 参数解析失败]"
-            else:
-                replacement = self._dispatch_tool(name, args, tools)
+            args: dict[str, Any] = _lenient_parse_args(name, raw_args) if raw_args else {}
+            if name.endswith("generate_document") and len(args.get("content", "").strip()) < 100:
+                args["_context_text"] = getattr(self, "_latest_user_text", text)
+            replacement = self._dispatch_tool(name, args, tools)
             result = result.replace(
                 f"<tool_call>{name}({raw_args})</tool_call>",
                 replacement,

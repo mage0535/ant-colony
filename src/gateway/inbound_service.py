@@ -24,9 +24,11 @@ class InboundResult:
     memory_context: str = ""
 
 
-# Buffer for pairing file + text messages from same user (WeCom sends them separately)
-_file_buffer: dict[str, tuple[str, float]] = {}  # user_id -> (file_text, timestamp)
-_FILE_TIMEOUT = 10  # seconds to wait for text message after file
+# Buffer for pairing file → text messages from same user (WeCom sends separately)
+# File messages are buffered; when the follow-up text arrives they're merged.
+# If text arrives first, file content will be included in the next message instead.
+_file_buffer: dict[str, tuple[str, float]] = {}      # user_id -> (file_text, timestamp)
+_PAIR_TIMEOUT = 20  # seconds to wait for text after file, or file after text
 
 
 class InboundGatewayService:
@@ -70,7 +72,7 @@ class InboundGatewayService:
 
         # Clear stale buffer entries
         now = _time.time()
-        stale = [uid for uid, (_, ts) in _file_buffer.items() if now - ts > _FILE_TIMEOUT]
+        stale = [uid for uid, (_, ts) in _file_buffer.items() if now - ts > _PAIR_TIMEOUT]
         for uid in stale:
             del _file_buffer[uid]
 

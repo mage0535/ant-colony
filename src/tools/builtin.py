@@ -895,7 +895,10 @@ def _generate_report_handler(args):
     content = args.get("content", "")
     fmt = args.get("format", "docx")
     user_id = args.get("from", "")
+    context_text = args.pop("_context_text", "")
 
+    if len(content.strip()) < 100 and context_text:
+        content = context_text
     if not content.strip():
         return "请提供文档内容后再生成。请告诉我文档的具体内容、章节和需要包含的信息。"
 
