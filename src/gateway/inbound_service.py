@@ -24,11 +24,10 @@ class InboundResult:
     memory_context: str = ""
 
 
-# Buffer for pairing file → text messages from same user (WeCom sends separately)
-# File messages are buffered; when the follow-up text arrives they're merged.
-# If text arrives first, file content will be included in the next message instead.
-_file_buffer: dict[str, tuple[str, float]] = {}      # user_id -> (file_text, timestamp)
-_PAIR_TIMEOUT = 20  # seconds to wait for text after file, or file after text
+# Bidirectional buffer: pair file ↔ text messages regardless of which arrives first
+_file_buffer: dict[str, tuple[str, float]] = {}      # user_id -> (file_text, timestamp) — file came first
+_text_buffer: dict[str, tuple[str, float]] = {}      # user_id -> (text, timestamp) — text came first  
+_PAIR_TIMEOUT = 30  # seconds to wait for the paired message
 
 
 class InboundGatewayService:

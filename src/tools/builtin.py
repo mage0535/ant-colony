@@ -923,16 +923,24 @@ def _generate_report_handler(args):
                     if not api_base or not p.api_key:
                         continue
                     import httpx as _httpx
+                    # Split content: first big chunk is template, last lines are user instructions
+                    _parts = content.strip().split("\n\n")
+                    _template = "\n\n".join(_parts[:-1]) if len(_parts) > 1 else content
+                    _request = _parts[-1] if len(_parts) > 1 else ""
+                    _template_block = _template if len(_template) > 50 else content
                     prompt_text = (
-                        "你是一名资深企业文档撰写专家。用户提供了一份文档模板或草稿，需要你按照模板的章节结构、层级格式、条目编号，"
-                        "将内容充实为一篇完整、正式、可直接使用的正式文档。\n\n"
-                        "要求：\n"
-                        "1. 严格继承模板中的标题层级（章/节/条/款）和编号格式（如 1. / 1.1 / (1) / 第一条 等）\n"
-                        "2. 模板中的空章节、占位符、简短标题 —— 都要展开为完整段落，补充实质性内容\n"
-                        "3. 保留模板中的关键术语、表格结构、签字栏等框架元素\n"
-                        "4. 语言正式、条款式，符合企业规章制度或政府公文格式\n"
-                        "5. 输出完整的文档正文（含标题），不要加额外说明、不要对话\n\n"
-                        "=== 以下是模板/草稿 ===\n" + content
+                        "你是企业文档撰写专家。下面包含两部分：\n"
+                        "【模板】一份文档模板/草稿，规定了章节结构、标题层级、编号格式、签字栏等框架\n"
+                        "【要求】用户的具体需求\n\n"
+                        "你的任务：完全按照【模板】的章节结构和格式框架，根据【要求】将内容充实为一篇可直接使用的正式文档。\n\n"
+                        "规则：\n"
+                        "1. 章节结构、标题层级、编号格式（1. / 1.1 / 第一条 等）、表格、签字栏 —— 全部继承自【模板】，一个都不要丢\n"
+                        "2. 模板中的空章节、占位符、简短标题 —— 展开为有实质内容的完整段落\n"
+                        "3. 如果【要求】中有具体的补充内容或修改指示，优先响应，覆盖模板中的占位内容\n"
+                        "4. 语言正式、条款式，符合企业规章制度格式\n"
+                        "5. 输出完整文档正文（含标题），不要任何额外说明、不要对话\n\n"
+                        "=== 【模板】===\n" + _template_block + "\n\n"
+                        "=== 【要求】===\n" + _request
                     )
                     _resp = _httpx.post(api_base + "/chat/completions",
                         headers={"Authorization": "Bearer " + p.api_key},
