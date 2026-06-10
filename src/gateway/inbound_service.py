@@ -26,7 +26,7 @@ class InboundResult:
 
 # Buffer for pairing file + text messages from same user (WeCom sends them separately)
 _file_buffer: dict[str, tuple[str, float]] = {}  # user_id -> (file_text, timestamp)
-_FILE_TIMEOUT = 30  # seconds to wait for text message after file
+_FILE_TIMEOUT = 10  # seconds to wait for text message after file
 
 
 class InboundGatewayService:
