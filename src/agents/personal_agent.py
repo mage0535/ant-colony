@@ -38,5 +38,6 @@ class PersonalAgent:
         user_name = _resolve_user_name(user_id)
         identity = f"你的微信ID(userid)：{self.user_id}。当你查询考勤、打卡等个人数据时，请用此userid调用相关工具。"
         full_knowledge = identity + "\n" + knowledge_block if knowledge_block else identity
+        self.engine._latest_user_id = self.user_id
         return self.engine.process_text(text, context, knowledge_prefix=full_knowledge,
                                         conversation_context=conversation_context, user_identity=user_name)

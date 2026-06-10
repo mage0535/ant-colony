@@ -102,6 +102,7 @@ class AgentEngine:
         self.config = config
         self.tool_registry = tool_registry
         self._latest_user_text = ""
+        self._latest_user_id = ""
 
     def process_text(self, text: str, context: MessageContext, knowledge_prefix: str = "",
                      conversation_context: str = "", user_identity: str = "") -> AgentResponse:
@@ -202,8 +203,11 @@ class AgentEngine:
         tools = self.tool_registry.get_for_agent(self.config.agent_role)
         for name, raw_args in calls:
             args: dict[str, Any] = _lenient_parse_args(name, raw_args) if raw_args else {}
-            if name.endswith("generate_document") and len(args.get("content", "").strip()) < 100:
-                args["_context_text"] = getattr(self, "_latest_user_text", text)
+            if name.endswith("generate_document"):
+                if len(args.get("content", "").strip()) < 100:
+                    args["_context_text"] = getattr(self, "_latest_user_text", text)
+                if not args.get("from"):
+                    args["from"] = getattr(self, "_latest_user_id", "")
             replacement = self._dispatch_tool(name, args, tools)
             result = result.replace(
                 f"<tool_call>{name}({raw_args})</tool_call>",
