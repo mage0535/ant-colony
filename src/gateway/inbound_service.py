@@ -54,6 +54,14 @@ class InboundGatewayService:
                 if file_text:
                     payload["content"] = file_text
                     payload["is_file_message"] = True
+                    # File-only messages: silently accept, don't trigger Agent response
+                    # User will send text instructions in a follow-up message
+                    if not payload.get("text", "").strip():
+                        return InboundResult(
+                            route_kind=RouteKind.PERSONAL.value,
+                            target_id=payload.get("from_user_id", ""),
+                            response=AgentResponse(text=""),
+                        )
             except Exception as e:
                 logger.error("File handler error: %s", e)
 
