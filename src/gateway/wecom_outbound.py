@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import re
 import time
@@ -76,4 +77,70 @@ def send_text(user_id: str, content: str) -> bool:
         return True
     except Exception as e:
         logger.error("WeCom send error: %s", e)
+        return False
+
+
+def upload_file(filepath: str) -> str | None:
+    """Upload a file to WeCom and return media_id.
+
+    Uses the media/upload API. Supports file type.
+    Returns media_id string or None on failure.
+    """
+    token = _get_token()
+    url = f"{WECOM_API}/media/upload?access_token={token}&type=file"
+    try:
+        import http.client
+        # Read file content
+        with open(filepath, "rb") as f:
+            file_data = f.read()
+        filename = os.path.basename(filepath)
+        # Build multipart form data manually
+        boundary = f"----WebKitFormBoundary{os.urandom(16).hex()}"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="media"; filename="{filename}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode("utf-8")
+        body += file_data
+        body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+        req = urllib.request.Request(url, data=body)
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+        if data.get("errcode", 0) != 0:
+            logger.warning("WeCom file upload failed: %s", data.get("errmsg"))
+            return None
+        media_id = data.get("media_id", "")
+        logger.info("WeCom file uploaded: %s -> %s", filename, media_id)
+        return media_id
+    except Exception as e:
+        logger.error("WeCom file upload error: %s", e)
+        return None
+
+
+def send_file(user_id: str, filepath: str) -> bool:
+    """Upload a file and send it as a file message to a user."""
+    media_id = upload_file(filepath)
+    if not media_id:
+        return False
+    token = _get_token()
+    url = f"{WECOM_API}/message/send?access_token={token}"
+    body = json.dumps({
+        "touser": user_id,
+        "msgtype": "file",
+        "agentid": AGENT_ID,
+        "file": {"media_id": media_id},
+    }).encode("utf-8")
+    try:
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        if data.get("errcode", 0) != 0:
+            logger.warning("WeCom send_file failed: %s", data.get("errmsg"))
+            return False
+        logger.info("File sent to %s via WeCom", user_id)
+        return True
+    except Exception as e:
+        logger.error("WeCom send_file error: %s", e)
         return False

@@ -916,13 +916,22 @@ def _generate_report_handler(args):
     title = args.get("title", "文档")
     content = args.get("content", "")
     fmt = args.get("format", "docx")
+    user_id = args.get("from", "")
     result = generate_report(title, content, fmt)
     if result.startswith("文档生成失败") or result.startswith("OfficeCLI"):
         return result
-    # Convert local path to download URL
+    # Try to send file via WeCom
+    if user_id:
+        try:
+            from src.gateway.wecom_outbound import send_file
+            sent = send_file(user_id, result)
+            if sent:
+                return f"文档已生成并通过企业微信发送给您，请注意查收文件消息。"
+        except Exception:
+            pass
     import os
     filename = os.path.basename(result)
-    return f"文档已生成，下载地址：http://10.12.254.122:18092/api/v1/documents/{filename}"
+    return f"文档已生成（{filename}），可在浏览器打开下载：http://[服务器IP]:18092/api/v1/documents/{filename}"
 
 
 def _set_priority_tool(args: dict[str, Any]) -> str:
@@ -1591,7 +1600,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal", "project"],
 
-        description="生成可下载的办公文档。支持 docx(文档)、xlsx(表格含甘特图/图表)、pptx(演示)。生成后返回下载地址。按照流程：先分析需求→提问确认→生成文档→给出下载链接。每步发一条简短状态。当用户说'生成报告'、'导出周报'、'生成文档'、'甘特图'、'项目进度表'、'生成表格'时使用。content参数每段之间空一行。任务清单每行一个任务，格式：任务名|开始日期|结束日期|负责人。",
+        description="生成可下载的办公文档。支持 docx(文档)、xlsx(表格含甘特图/图表)、pptx(演示)。生成后通过企业微信发送文件给用户。当用户说'生成报告'、'导出周报'、'生成文档'、'甘特图'、'项目进度表'、'生成表格'时使用。content参数每段之间空一行。from参数传当前用户ID。",
 
         parameters={
 
@@ -1600,6 +1609,8 @@ BUILTIN_TOOLS: list[ToolSpec] = [
             "content": {"type": "string", "description": "文档内容，段落间空一行（必填）"},
 
             "format": {"type": "string", "description": "格式：docx/xlsx/pptx（可选，默认docx）"},
+
+            "from": {"type": "string", "description": "当前用户的微信ID，从会话上下文获取"},
 
         },
 
