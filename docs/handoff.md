@@ -118,8 +118,70 @@ t.start()  # 后台异步处理
 #### 1. JSON 参数解析崩溃
 `_lenient_parse_args()` 在 `base.py:61-84`，当 Agent 的 `<tool_call>` 中 JSON 含特殊字符时降级为正则提取。
 
-#### 2. 文档内容未按模板生成
-`builtin.py:_generate_report_handler` 丰富阶段提示词分为 `【模板】` 和 `【要求】` 双块，避免 LLM 混为一谈只做格式化。
+## 已知 Bug 2：文档内容未参照模板生成
+
+### 现象
+用户向企微发送 .docx 模板文件 + 文字要求（如"生成车间通行管理规定"）后，Agent 生成的文档只有简单排版/格式化，没有参照模板的章节结构、标题层级、编号格式来展开和充实内容。
+
+### 完整流程
+
+```
+用户 → 发模板 docx + 文字
+  → WeCom 回调服务器 → 下载 docx → 提取纯文本（格式丢失）
+  → 文字转发 → 合并文件文本 + 用户文字 → Agent
+  → Agent 生成 <tool_call>generate_document(content=...)>
+  → _generate_report_handler:
+      1. content 太短 → 用 _context_text（合并后的原始文本）替补
+      2. 调用 Zen API 丰富内容
+      3. generate_report() → OfficeCLI 生成 docx
+      4. send_file_card() 投递
+  → 用户收到 docx，但内容没按模板走
+```
+
+### 尝试过的方法
+
+| 尝试 | 代码 | 结果 |
+|------|------|------|
+| 原始提示词："生成一份格式规范、结构完整的正式文档，如果内容中提到了格式要求或模板参考，请严格遵守" | 旧版 `builtin.py` | LLM 只做格式化排版，不做内容充实 |
+| 丰富提示词改为 5 条指令：继承模板层级 / 展开占位符 / 保留编号 / 正式语言 / 输出完整正文 | `builtin.py:926-935` | 仍然不理想，LLM 将模板和用户要求混为一谈 |
+| 提示词分为 `【模板】` + `【要求】` 双块 | `builtin.py:927-948` | 最新版，待充分验证。理论上让 LLM 区分模板结构和用户指令 |
+| `max_tokens` 4096 → 16384, timeout 60s → 120s | `builtin.py:939-940` | 允许长文档完整生成 |
+| 丰富阈值从 `len(enriched) > original` 改为 `>= 20` | `builtin.py:943` | 只要 API 返回有意义结果就采用 |
+
+### 根因分析
+
+**根本原因**：docx 模板在下载后被提取为纯文本，**所有格式信息丢失**（字号/加粗/表格/页眉页脚/样式等）。`python-docx` 提取的文本只有基础段落内容，没有层级关系。LLM 收到的是：
+
+```
+第一章 总则
+第一条 为了...
+第二章 具体规定
+...
+```
+
+LLM 无法从纯文本中重建模板的视觉格式。而且旧版提示词把所有文本混在一起，没有区分"这是模板你要继承"和"这是用户你要响应"。
+
+### 当前方案
+
+1. **提示词双块结构** — `【模板】`（需继承的章节框架）和 `【要求】`（用户具体指令），用 `\n\n` 分割启发式区分
+2. **提取原文直接作为 content** — 当 Agent 的 content 太短时，从对话历史取出完整用户消息（含文件内容）作为 document content
+3. **OfficeCLI 直接按章节写 docx** — `_build_docx()` 将内容按 `\n\n` 分段，首段 Heading1、短行 Heading2
+
+### 后续攻坚方向
+
+1. **使用模板 docx 作为基底**（推荐）
+   - 不提取文本重新生成，而是保留模板 .docx 文件
+   - 用 OfficeCLI 的 `set` / `add` 在模板基础上修改特定占位符
+   - 需要解决：如何识别模板中的占位符（`{title}`, `{{content}}` 等）
+   - 或者：用 `python-docx` 直接操作模板的段落替换
+
+2. **提取模板的结构化大纲**
+   - 用 `python-docx` 提取精确的层级结构（Heading 1/2/3, numbered lists, tables）
+   - 作为结构模板传给 LLM→LLM 按此结构生成内容→OfficeCLI 按此结构写 docx
+
+3. **OfficeCLI 样式复制**
+   - 用 OfficeCLI 读取模板的样式定义 → 应用到新文档的对应段落
+   - 需要探索 OfficeCLI 是否支持跨文档样式复制
 
 #### 3. 文件消息空回复
 `webhook_server.py:114-117` 增加 `and result.response.text` 检查，避免文件消息的空 `AgentResponse(text="")` 被当做回复发送到企微。
@@ -134,14 +196,17 @@ t.start()  # 后台异步处理
 - **WeCom send_file 不可靠**：`message/send` API 的 `msgtype=file` 返回成功但用户收不到。**
   当前使用 textcard（带下载按钮）作为替代方案**，文件托管在网关 HTTP 端口（:18092/api/v1/documents/）。
   如需真正的文件推送，需进一步研究企微协议（见上述方案分析）。
+- **文档内容未参照模板生成**：docx 模板提取为纯文本后格式丢失，LLM 丰富阶段无法恢复章节结构/标题层级。**
+  当前使用提示词双块结构（`【模板】` + `【要求】`）作为替代方案**，后续最佳方案是用模板 docx 作为操作基底（见 Bug 2 分析）。
 
 ## 下一步建议（按优先级）
-1. ⭐ 解决 WeCom `msgtype=file` 不投递问题（根因分析见上）
-2. 为飞书/钉钉/Telegram 在 systemd 中配置 env 凭证并测试
-3. 完善企微文档/日程/会议的 API 端点测试（部分端点返回 404）
-4. 为具体业务场景添加审批模板匹配
-5. 编写第三方插件开发文档
-6. 压力测试 — 多用户并发场景
+1. ⭐ **解决文档模板参照问题** — 最佳方向：保留模板 docx 文件，用 OfficeCLI 在模板基础上修改占位符，而非从文本重新生成（见 Bug 2 后续攻坚方向 1）
+2. ⭐ 解决 WeCom `msgtype=file` 不投递问题（根因分析见 Bug 1）
+3. 为飞书/钉钉/Telegram 在 systemd 中配置 env 凭证并测试
+4. 完善企微文档/日程/会议的 API 端点测试（部分端点返回 404）
+5. 为具体业务场景添加审批模板匹配
+6. 编写第三方插件开发文档
+7. 压力测试 — 多用户并发场景
 
 ## 环境配置清单
 - Gateway service 已添加 `EnvironmentFile=/home/[test-user]/ant-colony-probe/infra/.env.wecom`
@@ -157,7 +222,9 @@ t.start()  # 后台异步处理
 | `src/gateway/wecom_callback_server.py` | 回调接收：异步 `_forward_and_reply` |
 | `src/gateway/webhook_server.py` | 网关 HTTP：路由 + 回复构建 |
 | `src/gateway/inbound_service.py` | 入站处理：文件缓冲 + 消息合并 |
-| `src/engine/base.py` | 引擎核心：`_execute_tool_calls` / `_lenient_parse_args` |
+| `src/gateway/wecom_file_handler.py` | 文件下载 + docx/PDF/图片文本提取 |
+| `src/engine/base.py` | 引擎核心：`_execute_tool_calls` / `_lenient_parse_args` / 系统提示词 |
 | `src/tools/builtin.py` | 工具注册：`_generate_report_handler` 丰富 + 推送 |
-| `src/tools/document_tool.py` | OfficeCLI 文档生成 |
+| `src/tools/document_tool.py` | OfficeCLI 文档生成：`_build_docx` / `_build_xlsx` / `_build_pptx` |
+| `src/agents/personal_agent.py` | 个人 Agent：设置 `_latest_user_id` |
 
