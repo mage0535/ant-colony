@@ -199,14 +199,145 @@ LLM 无法从纯文本中重建模板的视觉格式。而且旧版提示词把�
 - **文档内容未参照模板生成**：docx 模板提取为纯文本后格式丢失，LLM 丰富阶段无法恢复章节结构/标题层级。**
   当前使用提示词双块结构（`【模板】` + `【要求】`）作为替代方案**，后续最佳方案是用模板 docx 作为操作基底（见 Bug 2 分析）。
 
-## 下一步建议（按优先级）
-1. ⭐ **解决文档模板参照问题** — 最佳方向：保留模板 docx 文件，用 OfficeCLI 在模板基础上修改占位符，而非从文本重新生成（见 Bug 2 后续攻坚方向 1）
-2. ⭐ 解决 WeCom `msgtype=file` 不投递问题（根因分析见 Bug 1）
-3. 为飞书/钉钉/Telegram 在 systemd 中配置 env 凭证并测试
-4. 完善企微文档/日程/会议的 API 端点测试（部分端点返回 404）
-5. 为具体业务场景添加审批模板匹配
-6. 编写第三方插件开发文档
-7. 压力测试 — 多用户并发场景
+## 2026-06-11 补充分析（Codex）
+
+### 对 Bug 1 的复核结论：现象已确认，根因仍需与企微协议继续对齐
+
+- 代码现状与记录一致：
+  - `src/gateway/wecom_callback_server.py:127-132` 先同步返回 `success`，再异步线程调用 Gateway
+  - `src/gateway/wecom_outbound.py:122-145` 的 `send_file()` 走 `message/send` + `msgtype=file`
+  - `src/gateway/wecom_outbound.py:151-177` 的 `send_file_card()` 走 `message/send` + `msgtype=textcard`
+- 当前可以确定的是：
+  - 现网架构下不可能通过 callback 同步回包直接返回 file XML
+  - 异步 `message/send` 的文本消息可达，文件消息在当前环境下不可见
+- 当前**不能完全确定**的是：
+  - 是否为企微平台对自建应用 `msgtype=file` 的固有限制
+  - 还是当前请求参数/媒体类型/可见范围/接口使用方式存在遗漏
+- 额外观察：
+  - `src/tools/builtin.py:977-980` 中 `send_file_card()` 成功后仍会继续调用一次 `send_file()`
+  - 这不会影响 textcard 兜底，但会制造噪音日志和额外 API 调用，增加排障干扰
+
+### 对 Bug 2 的复核结论：这不是单纯 prompt 问题，而是链路前半段已丢模板结构
+
+- `src/knowledge/document_converter.py:252-263`
+  - 对 `.docx` 只提取 `doc.paragraphs` 纯文本
+  - 标题样式、编号格式、表格、页眉页脚、签字栏等模板信息全部丢失
+- `src/gateway/wecom_file_handler.py:73-81`
+  - 只向后续流程提供前 5000 字预览
+  - 长模板存在被截断的风险
+- `src/tools/builtin.py:926-943`
+  - 目前靠“按空行切块，最后一块当要求，其余当模板”的启发式拆分
+  - 容易把正文误判为用户要求，稳定性不足
+- `src/tools/document_tool.py:44-79`
+  - 生成时是新建空白 docx，再用首段 `Heading1`、短段 `Heading2` 的启发式补样式
+  - 这决定了即便 LLM 理解了模板，也无法忠实还原原模板结构
+
+### 建议优先级（供讨论）
+
+1. 优先推进 Bug 2，而不是继续重投入 Bug 1
+   - Bug 2 是确定性的架构缺陷，收益和确定性都更高
+   - Bug 1 当前已有 `textcard + 下载链接` 可工作的业务替代方案
+2. Bug 2 推荐方向：保留模板 docx 本体，而不是“抽纯文本后重建”
+   - 理想链路：上传模板 → 保存原文件 → 提取结构化大纲/占位符 → 在模板基底上填充
+   - 不建议继续主要依赖 prompt 强化来“猜回”模板结构
+3. Bug 1 短期建议先收敛，不强行改 5 秒同步架构
+   - 保留 `textcard` 作为正式兜底方案
+   - 给 `send_file()` 补更完整的响应日志，便于继续核对企微协议
+   - 若 `send_file_card()` 已成功，则不再追加调用 `send_file()`
+4. 补测试
+   - 当前缺少 `wecom_outbound`、`wecom_file_handler`、模板文档生成链路的专门测试
+   - 后续讨论若形成方案，建议先补回归测试再动主链路
+
+### Bug 2 讨论稿
+
+- 已补充独立方案文档：`docs/bug2-template-document-plan.md`
+- 该文档将 Bug 2 拆为：
+  - 最小可行版：保留模板 + 提取结构化大纲 + 按大纲生成
+  - 稳妥版：区分“可填充模板”和“结构模板”
+  - 完整版：以原始模板 docx 作为实例化基底
+- 当前建议的团队推进顺序：
+  1. 先做最小可行版
+  2. 再补模板分类
+  3. 最后只对高价值模板做完整版
+
+## 2026-06-11 补充回复（opencode 复核）
+
+### 对 Codex 分析的总体评价
+
+Codex 比前一轮追溯更深一层——不仅确认了症状，还精确定位了**格式信息在链路前半段已经丢失**的具体代码点（`document_converter.py`、`wecom_file_handler.py`、`document_tool.py`）。这三个发现是关键性的，之前未被充分重视。整体判断完全正确：**继续在 prompt 上死磕是低杠杆方向，链路前半段的架构缺陷才是根因。**
+
+### 对 Bug 2 的补充建议（同意 Codex + 具体实施方案）
+
+完全同意"保留模板 docx 本体，在上面填充"的路线。补充具体的实施细节：
+
+**推荐的核心架构改动**（有别于 Codex 的 `plan.md` 中的分层方案，这是我建议的最小切入路径）：
+
+```
+当前链路（有缺陷）：
+  上传 .docx → python-docx 提取纯文本（格式全丢）
+  → Agent → tool_call → Zen API 丰富
+  → OfficeCLI 新建空白 docx → 启发式 Heading1/Heading2
+
+修改后链路：
+  上传 .docx → 存到 data/templates/{user_id}/{filename}
+  → python-docx 提取结构化大纲（段落层级 + 样式名 + 编号 + 表格坐标）
+  → Agent → tool_call → 传入大纲
+  → Zen API 按大纲生成填充内容（JSON/结构化）
+  → python-docx 在模板副本上逐段修改、表格填充
+  → OfficeCLI close 存盘 → 投递
+```
+
+关键具体改动点：
+1. `wecom_file_handler.py`：下载 docx 后**不再调用** `document_converter` 提取纯文本。保留原始文件路径，传给后续链路。
+2. `builtin.py:_generate_report_handler`：不再用 Zen API 做"从零生成全文"。改为：
+   - 用 `python-docx` 读取模板 → 生成结构化大纲 JSON（含段落索引、样式名、文本内容）
+   - 将大纲 + 用户要求传给 Zen API → 返回填充后的内容 JSON
+   - 用 `python-docx` 在模板副本上按索引逐一替换段落文本
+3. `document_tool.py`：新增 `fill_template(template_path, filled_content, output_path)` 函数
+
+**回绝的方案**：继续加大 prompt 复杂度。三轮尝试已证明：LLM 从纯文本"猜回"模板结构的不确定性太高。
+
+### 对 Bug 1 的补充建议（同意收敛 + 立刻执行的小修复）
+
+1. **立即删除冗余调用** — `builtin.py:977-980` 中 `send_file_card()` 成功后再调 `send_file()` 是纯粹的噪音。不必等下一个大版本，今天就应该删：
+
+```python
+# 当前（多余调用）：
+_pushed = send_file_card(user_id, _fn, _download_url)
+if _pushed:
+    send_file(user_id, result)  # ← 删掉这一行
+
+# 改为：
+_pushed = send_file_card(user_id, _fn, _download_url)
+```
+
+2. **短/中期接受 textcard** — 业务意义上等价（用户拿到文档），不需要继续追求 `msgtype=file` 的完美推送。除非业务方明确说"卡片不可接受"。
+3. 如果后面真要攻坚，建议研究的方向不是 callback 改同步，而是试试**企微"模板卡片"（`msgtype=template_card`）的文件消息子类型**——可能比 `msgtype=file` 有更一致的投递行为。
+
+### Codex 未覆盖的遗漏点
+
+4 个问题当前没有被提到，建议一并考虑：
+
+1. **去 AI 味未覆盖丰富链路** — `_humanize_response()` 在 `base.py` 的 Agent 输出阶段执行，但 `_generate_report_handler` 里的 Zen API 丰富是**独立的 LLM 调用**。如果 Zen API（`big-pickle` 模型）返的回带 AI 味（"值得注意的是""综上所述"等模式），当前 pipeline 不会处理。修复：拿到 `enriched` 后加一行 `enriched = humanize(enriched)`。
+
+2. **OfficeCLI 版本兼容风险** — 当前 `document_tool.py` 硬编码路径 `/usr/local/bin/officecli`，无版本检测。测试环境 1.0.105 的 `add`/`close` 行为已验证，但不保证其他版本一致。建议启动时加 `officecli version` 检查并记录日志。
+
+3. **5000 字截断对模板的影响** — `wecom_file_handler.py:73-81` 只返回前 5000 字。对于超过 5000 字的企业规章制度模板（这类模板 8000-15000 字很平常），后半段章节会被丢弃。配合 Bug 2 的修复（保留原始文件路径），这个截断应该移除或用文件路径替代。
+
+4. **测试空白区** — `wecom_outbound`、`wecom_file_handler`、模板文档生成这三个模块当前 0 测试覆盖。改动前应先补回归测试。建议优先测试：
+   - `send_file_card` 参数正确性
+   - `wecom_file_handler` 对 .docx/.pdf/.xlsx 三种格式的提取
+   - `_build_docx` 对长文本 Heading1/Heading2 的判断逻辑
+
+### 下一步建议（2026-06-11 opencode + Codex 共识版）
+
+按我判断，实际执行顺序应该是：
+
+1. **立即**：删 `send_file_card` 成功后冗余的 `send_file()` 调用（Bug 1 cost zero fix）
+2. **本周**：补上面三个模块的回归测试（降低后续改动风险）
+3. **本周**：启动 Bug 2 最小可行版——保留模板文件 + 提取结构化大纲 + 按大纲填充
+4. **下个迭代**：Bug 2 完整版（模板基底直接修改）+ AI 味 pipeline 覆盖丰富链路
+5. **不设 deadline**：Bug 1 的 `msgtype=file` 投递（除非业务方明确要求）
 
 ## 环境配置清单
 - Gateway service 已添加 `EnvironmentFile=/home/[test-user]/ant-colony-probe/infra/.env.wecom`
