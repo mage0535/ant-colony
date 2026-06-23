@@ -303,6 +303,31 @@ class TestPersonalAgent(unittest.TestCase):
 
         self.assertIn("我先从你有权限访问的知识库里找到了相关内容", response.text)
         self.assertIn("企业微信 AI 助手激活说明书", response.text)
+        self.assertIn("第一步 打开企业微信", response.text)
+
+    def test_personal_agent_uses_last_knowledge_for_followup_question(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        engine = AgentEngine(config)
+        agent = PersonalAgent("u1", engine)
+        context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
+
+        with patch(
+            "src.agents.personal_agent._prefetch_accessible_knowledge",
+            side_effect=[
+                "【公司知识】企业微信 AI 助手激活说明书\n第一步 打开企业微信\n第二步 找到机器人",
+                "",
+            ],
+        ):
+            first = agent.process_message("u1", "我要激活ai机器人", context)
+            second = agent.process_message("u1", "引导我操作", context)
+
+        self.assertIn("企业微信 AI 助手激活说明书", first.text)
+        self.assertIn("第一步 打开企业微信", second.text)
 
 
 class TestToolCalling(unittest.TestCase):

@@ -23,7 +23,7 @@ class TestPlatformCapabilityTools(unittest.TestCase):
     def test_doc_search_tool_prefers_local_knowledge(self) -> None:
         from src.tools.platform_capability_tools import doc_search_tool
 
-        with patch("src.tools.knowledge_tools.search_knowledge_tool", return_value="搜索 '制度' 找到 1 条结果:\n  [organization] 企业微信 AI 助手激活说明书"), \
+        with patch("src.tools.knowledge_tools.search_knowledge_tool", return_value="搜索 '制度' 找到 1 条结果:\n  [公司] 企业微信 AI 助手激活说明书"), \
              patch("src.platform.invoke_capability") as mock_invoke:
             result = doc_search_tool({"query": "制度", "user_id": "u1"})
 

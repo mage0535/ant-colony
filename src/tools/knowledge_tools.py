@@ -13,6 +13,16 @@ _SEARCH_STOPWORDS = {
 _GUIDE_KEYWORDS = {
     "企业微信", "企微", "AI", "ai", "机器人", "助手", "激活", "说明书", "指南", "知识库", "权限", "模板", "文档", "流程", "管理",
 }
+_OWNER_TYPE_LABELS = {
+    "organization": "公司",
+    "department": "部门",
+    "project": "项目",
+    "personal": "个人",
+}
+
+
+def owner_type_label(owner_type: str) -> str:
+    return _OWNER_TYPE_LABELS.get(owner_type, owner_type)
 
 
 def _candidate_queries(query: str) -> list[str]:
@@ -103,7 +113,7 @@ def search_knowledge_tool(args: dict[str, Any]) -> str:
     lines = [f"搜索 '{query}' 找到 {len(results)} 条结果:"]
     for result in results:
         title = str(result.metadata.get("title", "")).strip() or result.content.splitlines()[0][:60]
-        lines.append(f"  [{result.owner_type.value}] {title}")
+        lines.append(f"  [{owner_type_label(result.owner_type.value)}] {title}")
     return "\n".join(lines)
 
 
@@ -130,7 +140,7 @@ def list_knowledge_tool(args: dict[str, Any]) -> str:
     lines = [f"知识条目 ({len(results)} 条):"]
     for result in results[:20]:
         title = str(result.metadata.get("title", "")).strip() or result.content.splitlines()[0][:60]
-        lines.append(f"  [{result.owner_type.value}] {title}")
+        lines.append(f"  [{owner_type_label(result.owner_type.value)}] {title}")
     return "\n".join(lines)
 
 
