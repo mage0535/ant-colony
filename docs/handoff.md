@@ -295,6 +295,17 @@
     - 普通员工不自行创建 BOT
     - 不让员工自己配置回调 URL / Token / AESKey
     - 企微 / 飞书 / 钉钉 BOT 由平台统一接管和配置
+  - 统一开通已补充必填凭据校验：
+    - 企微：`bot_id`、`bot_secret`
+    - 飞书：`app_id`、`app_secret`
+    - 钉钉：`client_id`、`client_secret`、`robot_code`
+  - 管理状态已补充：
+    - 中文平台名称
+    - 缺少配置
+    - 当前进程缺少环境变量
+    - 是否需要重启
+    - 下一步动作提示
+  - 钉钉开通会同时写入 `DINGTALK_CLIENT_ID/CLIENT_SECRET` 与兼容旧配置的 `DINGTALK_APP_KEY/APP_SECRET`
 - 知识命中文件直接推送：
   - 当 WeCom Bot 命中单个知识条目且条目有源文件时
   - 机器人直接返回 `BOT_FILE`

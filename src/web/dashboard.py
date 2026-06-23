@@ -306,14 +306,17 @@ def list_platform_bots():
 def activate_platform_bot_api(platform: str, req: PlatformBotActivationRequest):
     from src.platform.activation_service import activate_platform_bot
 
-    result = activate_platform_bot(
-        platform=platform,
-        credentials=req.credentials,
-        activated_by=req.activated_by,
-        display_name=req.display_name,
-        visibility_scope=req.visibility_scope,
-        auto_permissions=req.auto_permissions,
-    )
+    try:
+        result = activate_platform_bot(
+            platform=platform,
+            credentials=req.credentials,
+            activated_by=req.activated_by,
+            display_name=req.display_name,
+            visibility_scope=req.visibility_scope,
+            auto_permissions=req.auto_permissions,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     return {
         "platform": result.platform,
         "enabled": result.enabled,
@@ -322,6 +325,8 @@ def activate_platform_bot_api(platform: str, req: PlatformBotActivationRequest):
         "visibility_scope": result.visibility_scope,
         "display_name": result.display_name,
         "auto_permissions": result.auto_permissions,
+        "restart_required": result.restart_required,
+        "next_action": result.next_action,
     }
 
 # ---- Spaces ----
@@ -954,24 +959,27 @@ def platform_bot_management_page():
 </head>
 <body>
   <h1>平台机器人管理</h1>
-  <p>这里是管理员或负责人使用的平台统一开通入口。普通员工不需要自行创建机器人、不需要配置回调地址、不需要填写 Token 或 AESKey。</p>
+  <p>这里是管理员或负责人使用的平台统一开通入口。普通员工不需要自行创建机器人、不需要配置回调地址、不需要填写 Token 或 AESKey。保存后如提示需要重启，请重启对应服务再进行消息测试。</p>
   <div id="status"></div>
   <div class="grid">
     <div class="card">
       <h2>企业微信 BOT</h2>
       <input id="wecomDisplayName" placeholder="显示名称，默认 企业 AI 助手">
+      <p>必填：bot_id、bot_secret。需要调用通讯录、文档、消息等应用能力时，同时填写 corp_id、agent_id、secret。</p>
       <textarea id="wecomCredentials" rows="8" placeholder='JSON 格式，例如 { "bot_id": "...", "bot_secret": "...", "corp_id": "...", "agent_id": "...", "secret": "...", "callback_token": "...", "callback_aes_key": "..." }'></textarea>
       <button onclick="activate('wecom', 'wecomCredentials', 'wecomDisplayName')">保存并接管</button>
     </div>
     <div class="card">
       <h2>飞书 BOT</h2>
       <input id="feishuDisplayName" placeholder="显示名称，默认 飞书 AI 助手">
+      <p>必填：app_id、app_secret。国内飞书 domain 可填 feishu/cn，国际版可填 lark/intl。</p>
       <textarea id="feishuCredentials" rows="8" placeholder='JSON 格式，例如 { "app_id": "...", "app_secret": "...", "domain": "feishu" }'></textarea>
       <button onclick="activate('feishu', 'feishuCredentials', 'feishuDisplayName')">保存并接管</button>
     </div>
     <div class="card">
       <h2>钉钉 BOT</h2>
       <input id="dingtalkDisplayName" placeholder="显示名称，默认 钉钉 AI 助手">
+      <p>必填：client_id、client_secret、robot_code。平台会同时写入兼容旧配置的 app_key/app_secret 别名。</p>
       <textarea id="dingtalkCredentials" rows="8" placeholder='JSON 格式，例如 { "client_id": "...", "client_secret": "...", "robot_code": "..." }'></textarea>
       <button onclick="activate('dingtalk', 'dingtalkCredentials', 'dingtalkDisplayName')">保存并接管</button>
     </div>
@@ -981,7 +989,7 @@ def platform_bot_management_page():
     async function refresh() {
       const data = await fetch('/api/v1/platform/bots').then(r => r.json());
       document.getElementById('status').innerHTML = data.platforms.map(p =>
-        `<div class="card"><strong>${p.platform}</strong> | 启用: ${p.enabled} | 平台接管: ${p.managed_by_platform} | 显示名: ${p.display_name} | 可见范围: ${p.visibility_scope || '-'} | 已配置: ${(p.configured_keys || []).join(', ') || '-'}</div>`
+        `<div class="card"><strong>${p.platform_label || p.platform}</strong> | 启用: ${p.enabled} | 平台接管: ${p.managed_by_platform} | 显示名: ${p.display_name} | 可见范围: ${p.visibility_scope || '-'}<br>已配置: ${(p.configured_keys || []).join(', ') || '-'}<br>缺少配置: ${(p.missing_keys || []).join(', ') || '-'}<br>当前进程缺少环境变量: ${(p.missing_process_env || []).join(', ') || '-'}<br>是否需要重启: ${p.restart_required ? '是' : '否'}<br>下一步: ${p.next_action || '-'}</div>`
       ).join('');
     }
     async function activate(platform, credId, displayId) {
