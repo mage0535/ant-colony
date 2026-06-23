@@ -60,7 +60,8 @@ class TestPlatformDetailTools(unittest.TestCase):
     def test_read_docs_tool_uses_backend(self) -> None:
         from src.tools.platform_capability_tools import read_docs_tool
 
-        with patch("src.platform.invoke_capability_first", return_value="doc-content") as mock_first:
+        with patch("src.tools.knowledge_tools.search_knowledge_tool", return_value="未找到关于 '流程' 的知识条目"), \
+             patch("src.platform.invoke_capability_first", return_value="doc-content") as mock_first:
             result = read_docs_tool({"query": "流程"})
 
         self.assertEqual(mock_first.call_args.args[:2], ("docs.read", "流程"))

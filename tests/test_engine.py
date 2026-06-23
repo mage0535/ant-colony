@@ -284,6 +284,26 @@ class TestPersonalAgent(unittest.TestCase):
         self.assertEqual(response.text, "你好，我是你的 AI 助手")
         self.assertTrue(response.visible_to_user)
 
+    def test_personal_agent_prefers_prefetched_knowledge_for_how_to_queries(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        engine = AgentEngine(config)
+        agent = PersonalAgent("u1", engine)
+        context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
+
+        with patch(
+            "src.agents.personal_agent._prefetch_accessible_knowledge",
+            return_value="[organization] 企业微信 AI 助手激活说明书\n企业微信 AI 助手激活说明书\n\n第一步 打开企业微信\n第二步 找到机器人",
+        ):
+            response = agent.process_message("u1", "我想让其他同事也激活类似你的员工企微机器人，应该怎么操作", context)
+
+        self.assertIn("我先从你有权限访问的知识库里找到了相关内容", response.text)
+        self.assertIn("企业微信 AI 助手激活说明书", response.text)
+
 
 class TestToolCalling(unittest.TestCase):
     def test_tool_call_regex_match(self) -> None:

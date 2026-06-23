@@ -1,19 +1,103 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any
 
 
-def search_knowledge_tool(args: dict[str, Any]) -> str:
+_SEARCH_STOPWORDS = {
+    "我", "想", "让", "其他", "同事", "也", "类似", "你的", "员工", "应该", "怎么", "如何", "操作",
+    "方法", "请问", "一下", "一下子", "这个", "那个", "有关", "相关", "接入", "使用", "帮我", "查", "搜索",
+}
+_GUIDE_KEYWORDS = {
+    "企业微信", "企微", "AI", "ai", "机器人", "助手", "激活", "说明书", "指南", "知识库", "权限", "模板", "文档", "流程", "管理",
+}
+
+
+def _candidate_queries(query: str) -> list[str]:
+    text = re.sub(r"[^\w\u4e00-\u9fff]+", " ", query).strip()
+    if not text:
+        return []
+    tokens = [part.strip() for part in text.split() if part.strip()]
+    candidates: list[str] = [query.strip()]
+
+    keyword_hits = [word for word in _GUIDE_KEYWORDS if word.lower() in text.lower()]
+    if keyword_hits:
+        candidates.append(" ".join(sorted(dict.fromkeys(keyword_hits), key=lambda item: len(item), reverse=True)[:6]))
+
+    meaningful_tokens = [
+        token for token in tokens
+        if token not in _SEARCH_STOPWORDS and len(token) >= 2
+    ]
+    if meaningful_tokens:
+        candidates.append(" ".join(meaningful_tokens[:6]))
+        candidates.extend(meaningful_tokens[:6])
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        normalized = item.strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique.append(normalized)
+    return unique
+
+
+def search_knowledge_entries(query: str, *, user_id: str = "", space_id: str = "", limit: int = 5):
+    from src.knowledge.contracts import KnowledgeOwnerType
     from src.knowledge.repository_factory import build_knowledge_repository
 
     repo = build_knowledge_repository()
+    merged = []
+    seen_ids: set[str] = set()
+    for candidate in _candidate_queries(query):
+        results = repo.search_accessible(candidate, user_id=user_id, space_id=space_id, limit=limit) if user_id and user_id != "*" else repo.search(candidate, limit=limit)
+        for result in results:
+            if result.id in seen_ids:
+                continue
+            seen_ids.add(result.id)
+            merged.append(result)
+            if len(merged) >= limit:
+                return merged
+    if merged:
+        return merged
+
+    try:
+        visible_entries = repo.list_accessible(user_id=user_id, limit=200) if user_id and user_id != "*" else repo.list_for_owner(KnowledgeOwnerType.ORGANIZATION, "*")
+    except Exception:
+        visible_entries = []
+
+    tokens = []
+    for candidate in _candidate_queries(query):
+        tokens.extend([part for part in re.split(r"[^\w\u4e00-\u9fff]+", candidate) if part.strip()])
+    normalized_tokens = [token for token in dict.fromkeys(tokens) if token not in _SEARCH_STOPWORDS and len(token) >= 2]
+
+    scored = []
+    for entry in visible_entries:
+        title = str(entry.metadata.get("title", ""))
+        haystack = f"{title}\n{' '.join(entry.tags)}\n{entry.content[:4000]}"
+        score = 0
+        for token in normalized_tokens:
+            if token in title:
+                score += 5
+            elif token in " ".join(entry.tags):
+                score += 3
+            elif token in haystack:
+                score += 1
+        if score > 0:
+            scored.append((score, entry))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [entry for _, entry in scored[:limit]]
+
+
+def search_knowledge_tool(args: dict[str, Any]) -> str:
     query = str(args.get("query", ""))
     if not query:
         return "请提供搜索关键词 (query)"
     user_id = args.get("user_id", "*")
-    results = repo.search_accessible(query, user_id, limit=5) if user_id and user_id != "*" else repo.search(query, limit=5)
+    space_id = str(args.get("space_id", ""))
+    results = search_knowledge_entries(query, user_id=str(user_id), space_id=space_id, limit=5)
     if not results:
         return f"未找到关于 '{query}' 的知识条目"
     lines = [f"搜索 '{query}' 找到 {len(results)} 条结果:"]

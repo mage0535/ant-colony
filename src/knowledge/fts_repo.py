@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import sqlite3
 import time
 from typing import Any
 
@@ -89,13 +91,7 @@ class FtsKnowledgeRepository:
         return [_row_to_entry(r) for r in rows]
 
     def search(self, query: str, user_id: str = "", space_id: str = "", limit: int = 20) -> list[KnowledgeEntry]:
-        rows = self._conn.execute(
-            """SELECT ki.* FROM knowledge_items ki
-               JOIN knowledge_fts kf ON ki.id = kf.id
-               WHERE knowledge_fts MATCH ?
-               LIMIT ?""",
-            (query, limit),
-        ).fetchall()
+        rows = self._query_rows(query, limit)
         return [_row_to_entry(r) for r in rows if _acl_check(r, user_id, space_id)]
 
     def search_accessible(self, query: str, user_id: str, space_id: str = "", limit: int = 20) -> list[KnowledgeEntry]:
@@ -109,13 +105,7 @@ class FtsKnowledgeRepository:
 
         # Fetch more rows than limit; ACL may filter some out
         fetch_limit = limit * 3 if limit > 0 else 60
-        rows = self._conn.execute(
-            """SELECT ki.* FROM knowledge_items ki
-               JOIN knowledge_fts kf ON ki.id = kf.id
-               WHERE knowledge_fts MATCH ?
-               LIMIT ?""",
-            (query, fetch_limit),
-        ).fetchall()
+        rows = self._query_rows(query, fetch_limit)
 
         results: list[KnowledgeEntry] = []
         for r in rows:
@@ -125,6 +115,33 @@ class FtsKnowledgeRepository:
                 if len(results) >= limit:
                     break
         return results
+
+    def _query_rows(self, query: str, limit: int) -> list[Any]:
+        try:
+            return self._conn.execute(
+                """SELECT ki.* FROM knowledge_items ki
+                   JOIN knowledge_fts kf ON ki.id = kf.id
+                   WHERE knowledge_fts MATCH ?
+                   LIMIT ?""",
+                (query, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            logger.warning("FTS query failed for %r, falling back to LIKE search", query)
+            terms = [part.strip() for part in re.split(r"[^\w\u4e00-\u9fff]+", query) if part.strip()]
+            search_terms = terms or [query]
+            clauses = []
+            params: list[Any] = []
+            for term in search_terms[:8]:
+                clauses.append("(content LIKE ? OR tags LIKE ? OR metadata_json LIKE ?)")
+                wildcard = f"%{term}%"
+                params.extend([wildcard, wildcard, wildcard])
+            return self._conn.execute(
+                f"""SELECT * FROM knowledge_items
+                   WHERE {" OR ".join(clauses)}
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                [*params, limit],
+            ).fetchall()
 
     def list_accessible(self, user_id: str, limit: int = 50) -> list[KnowledgeEntry]:
         """List all knowledge entries the user may read, ordered by creation time."""
