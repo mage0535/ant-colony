@@ -6,6 +6,8 @@ import re
 import time
 from typing import Any
 
+from src.memory.warm_store import WarmMemoryStore
+
 logger = logging.getLogger(__name__)
 
 _ENTITY_PATTERNS = [

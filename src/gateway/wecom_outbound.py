@@ -7,13 +7,42 @@ import os
 import re
 import time
 import urllib.request
+from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
 WECOM_API = "https://qyapi.weixin.qq.com/cgi-bin"
-CORP_ID = os.environ.get("WECOM_CORP_ID", "")
-AGENT_ID = int(os.environ.get("WECOM_AGENT_ID", "1000006"))
-APP_SECRET = os.environ.get("WECOM_SECRET", "")
+_ENV_FILE_CANDIDATES = [
+    os.path.join(os.getcwd(), "infra", ".env.wecom"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "infra", ".env.wecom"),
+    os.path.join(os.environ.get("ANT_COLONY_HOME", ""), "infra", ".env.wecom") if os.environ.get("ANT_COLONY_HOME") else "",
+    os.path.expanduser("~/ant-colony/infra/.env.wecom"),
+]
+
+
+def _load_env_values() -> dict[str, str]:
+    values: dict[str, str] = {}
+    for env_file in _ENV_FILE_CANDIDATES:
+        if not os.path.isfile(env_file):
+            continue
+        with open(env_file, encoding="utf-8", errors="replace") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip()
+        break
+    for key in ("WECOM_CORP_ID", "WECOM_AGENT_ID", "WECOM_SECRET"):
+        if os.environ.get(key):
+            values[key] = os.environ[key]
+    return values
+
+
+_ENV = _load_env_values()
+CORP_ID = _ENV.get("WECOM_CORP_ID", "")
+AGENT_ID = int(_ENV.get("WECOM_AGENT_ID", "1000006"))
+APP_SECRET = _ENV.get("WECOM_SECRET", "")
 
 _token_cache: tuple[str, float] = ("", 0)
 
@@ -46,10 +75,14 @@ def download_media(media_id: str) -> tuple[bytes, str]:
         data = resp.read()
         cd = resp.headers.get("Content-Disposition", "")
         filename = media_id
-        if "filename=" in cd:
-            m = re.search(r'filename["\']?\s*:\s*["\']?(.+?)["\']?$', cd, re.IGNORECASE)
-            if m:
-                filename = m.group(1).strip()
+        if cd:
+            m_star = re.search(r"filename\*\s*=\s*[^']*''([^;]+)", cd, re.IGNORECASE)
+            if m_star:
+                filename = unquote(m_star.group(1).strip().strip('"'))
+            else:
+                m = re.search(r'filename\s*=\s*"?(?P<name>[^";]+)"?', cd, re.IGNORECASE)
+                if m:
+                    filename = m.group("name").strip()
         return data, filename
 
 

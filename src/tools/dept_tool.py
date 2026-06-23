@@ -12,12 +12,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 ATTENDANCE_DB = "/opt/wecom-attendance/data/attendance.db"
-LEADER_CACHE_FILE = "/home/codexcheck/ant-colony-probe/data/dept_leaders.json"
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+LEADER_CACHE_FILE = os.environ.get("ANT_COLONY_DEPT_LEADER_CACHE", os.path.join(_PROJECT_ROOT, "data", "dept_leaders.json"))
 
 
 def _load_env() -> dict[str, str]:
     env: dict[str, str] = {}
-    for p in ["/home/codexcheck/ant-colony-probe/infra/.env.wecom", os.path.expanduser("~/ant-colony-probe/infra/.env.wecom")]:
+    for p in [
+        os.path.join(_PROJECT_ROOT, "infra", ".env.wecom"),
+        os.path.expanduser("~/ant-colony/infra/.env.wecom"),
+    ]:
         if os.path.isfile(p):
             with open(p) as f:
                 for line in f:
@@ -85,7 +89,7 @@ def _load_cached() -> dict[str, list[str]]:
         with open(LEADER_CACHE_FILE) as f:
             data = json.load(f)
         return data.get("leaders", {})
-    except:
+    except Exception:
         return {}
 
 
@@ -94,7 +98,7 @@ def _get_dept_name(dept_id: str) -> str:
         with open(LEADER_CACHE_FILE) as f:
             data = json.load(f)
         return data.get("dept_names", {}).get(dept_id, f"部门{dept_id}")
-    except:
+    except Exception:
         return f"部门{dept_id}"
 
 
@@ -109,7 +113,7 @@ def get_user_depts(user_id: str) -> list[int]:
         if not user:
             return []
         return [1]  # fallback
-    except:
+    except Exception:
         return []
 
 
@@ -153,7 +157,7 @@ def query_subordinates(user_id: str, query_type: str = "all", days: int = 7) -> 
             t = datetime.fromisoformat(str(val))
             t_cn = t + timedelta(hours=8)
             return t_cn.strftime("%H:%M")
-        except:
+        except Exception:
             return str(val)[11:16] if len(str(val)) > 10 else str(val)[:5]
 
     ATTEND_STATUS_CN = {
@@ -175,7 +179,7 @@ def query_subordinates(user_id: str, query_type: str = "all", days: int = 7) -> 
             url = f"https://qyapi.weixin.qq.com/cgi-bin/user/list?access_token={token}&department_id={dept_id}&fetch_child=0"
             members = json.loads(urllib.request.urlopen(urllib.request.Request(url), timeout=10).read())
             users = members.get("userlist", [])
-        except:
+        except Exception:
             users = []
         subordinate_ids = [u["userid"] for u in users if u["userid"] != user_id]
         if not subordinate_ids:
@@ -189,7 +193,7 @@ def query_subordinates(user_id: str, query_type: str = "all", days: int = 7) -> 
                 e = cur.fetchone()
                 if e and e[0]:
                     name = e[0]
-            except:
+            except Exception:
                 pass
 
             if query_type in ("attendance", "all"):
@@ -261,7 +265,7 @@ def query_subordinate_by_name(manager_id: str, name: str, query_type: str = "att
                 target_id = row[0]
                 break
         conn2.close()
-    except:
+    except Exception:
         pass
 
     # Fallback to WeCom API
@@ -276,7 +280,7 @@ def query_subordinate_by_name(manager_id: str, name: str, query_type: str = "att
                     if name in uname or uname in name or u["userid"].lower() == name.lower():
                         target_id = u["userid"]
                         break
-            except:
+            except Exception:
                 pass
             if target_id:
                 break
@@ -295,7 +299,7 @@ def query_subordinate_by_name(manager_id: str, name: str, query_type: str = "att
     def _fmt(val):
         if not val: return "--:--"
         try: return (datetime.fromisoformat(str(val)) + timedelta(hours=8)).strftime("%H:%M")
-        except: return str(val)[11:16] if len(str(val)) > 10 else str(val)[:5]
+        except Exception: return str(val)[11:16] if len(str(val)) > 10 else str(val)[:5]
 
     ASC = {"normal":"正常","normal+early_leave":"正常+早退","late":"迟到","late+early_leave":"迟到+早退","minor_late":"轻微迟到","missing_checkout":"缺下班卡"}
     lines = []
@@ -366,7 +370,7 @@ def query_subordinate_balance(manager_id: str, name: str) -> str:
                 target_name = uname or row["user_id"]
                 break
         conn.close()
-    except:
+    except Exception:
         pass
 
     # Fallback to WeCom API department lists
@@ -384,7 +388,7 @@ def query_subordinate_balance(manager_id: str, name: str) -> str:
                         target_id = u["userid"]
                         target_name = uname or u["userid"]
                         break
-            except:
+            except Exception:
                 pass
             if target_id:
                 break
@@ -394,7 +398,6 @@ def query_subordinate_balance(manager_id: str, name: str) -> str:
 
     # Call WeCom vacation quota API for subordinate
     try:
-        import urllib.request, json
         corpid = _ENV.get("WECOM_CORP_ID", "")
         secret = _ENV.get("WECOM_SECRET", "")
         token2 = json.loads(urllib.request.urlopen(urllib.request.Request(

@@ -1,8 +1,11 @@
 """Cron Scheduler — background loop that executes due jobs."""
 from __future__ import annotations
 
+import json
 import logging
+import subprocess
 import time
+import urllib.request
 from threading import Thread
 
 from src.orchestrator.cron_job import CronJobRegistry, run_no_agent
@@ -76,7 +79,7 @@ def _register_defaults(reg: CronJobRegistry) -> None:
             id="org-sync",
             name="组织架构同步",
             schedule="0 3 * * *",
-            command="curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:18092/api/v1/org/sync",
+            command="python:src.orchestrator.cron_scheduler._org_sync",
             no_agent=True,
             tags=["system", "org"],
         ),
@@ -90,20 +93,40 @@ def _register_defaults(reg: CronJobRegistry) -> None:
         ),
     ]
     for j in defaults:
-        if not reg.get(j.id):
+        existing = reg.get(j.id)
+        if not existing:
             reg.register(j)
-
-
-if __name__ == "__main__":
-    run_scheduler()
+        elif existing.command != j.command:
+            existing.command = j.command
+            existing.no_agent = True
+            reg.register(existing)
 
 
 def _health_check() -> str:
     """Built-in health check."""
-    import os, json
     results = {}
     for svc in ["ant-colony-gateway", "ant-colony-dashboard", "gbrain-bridge",
                 "hindsight-bridge", "embed-service", "ant-colony-org-sync.timer"]:
-        r = os.system(f"systemctl is-active {svc} >/dev/null 2>&1")
-        results[svc] = "active" if r == 0 else "inactive"
+        completed = subprocess.run(
+            ["systemctl", "is-active", svc],
+            shell=False,
+            capture_output=True,
+            timeout=15,
+        )
+        results[svc] = "active" if completed.returncode == 0 else "inactive"
     return json.dumps(results, ensure_ascii=False)
+
+
+def _org_sync() -> str:
+    """Trigger organization synchronization through the local backend."""
+    request = urllib.request.Request(
+        "http://127.0.0.1:18092/api/v1/org/sync",
+        data=b"",
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=120) as response:
+        return f"HTTP {response.status}"
+
+
+if __name__ == "__main__":
+    run_scheduler()

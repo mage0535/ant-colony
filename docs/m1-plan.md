@@ -1,83 +1,42 @@
-# M1 计划
+# M1 Plan
 
-## 当前目标
+## Scope
 
-在单部门 5-10 人试点中，跑通：
+M1 is the smallest production-shaped slice of the current architecture:
 
-- 聊天监听
-- 任务草案识别
-- 轻确认
-- 正式入板
-- 提醒催办
-- 阻塞确认
+- Bot as the only primary user entry
+- unified capability backend behind the Bot
+- file and document handling as first-class workflow
+- local/private Office and PDF processing
+- task, memory, and knowledge orchestration sufficient for day-to-day enterprise use
 
-## 前置阶段：P-1 技术可行性验证（2026-06-06 已完成）
+## Delivered Baseline
 
-### 验证结果
+- WeCom Bot mainline available
+- Feishu and DingTalk adapter entrypoints available
+- capability backend and internal provider available
+- local DOCX/XLSX/PPTX/PDF capabilities connected
+- template-preserving document generation available
+- local security and build hardening completed
 
-| 验证项 | 状态 | 备注 |
-|--------|------|------|
-| OpenVort 企微通道 | ✅ 通过 | 源码落地，Linux 深验证闭环 |
-| Hermes loop 可抽取性 | ✅ 通过 | 源码落地，agent/conversation_loop.py 确认 |
-| Sidecar 多目录安装 | ✅ 通过 | 源码落地，全 13 个 memory 脚本确认 |
-| gbrain 基础接口 | 🟡 跳过 | 本地 Docker 不可用，M1 非必需 |
-| 依赖冲突扫描 | ✅ 通过 | 31 项 smoke test 通过 |
+## Current M1 Exit Standard
 
-### 结论
+M1 should be considered locally complete when all of the following hold:
 
-P-1 三核心验证项全部通过。**正式进入 M1 开发阶段。**
+1. `python -m pytest -q` passes locally
+2. Bot file -> instruction -> generated file pushback mainline is covered by regression tests
+3. capability additions enter through the unified backend rather than platform-specific business branches
+4. startup and handoff documents are sufficient for a new teammate to continue work without oral context
 
-## M1 开发顺序
+## Remaining M1-Level Follow-up
 
-### 第 1 周
+- finish decomposing legacy `src/tools/builtin.py`
+- deepen Feishu / DingTalk file-message contract coverage and run live validation after credentials are available
+- keep Bot-facing file workflows reproducible through scripted regression runs
+- strengthen identity / scope / audit propagation for capability calls
 
-- 企微通道
-- AgentEngine 最小可运行
-- 单个人 agent 跑通
+## Non-Goals
 
-### 第 2 周
-
-- Dispatcher
-- MessageBuffer
-- BatchProcessor
-
-### 第 3 周
-
-- TaskOrchestrator
-- 任务识别 prompt 初版
-- TaskDraft 输出
-
-### 第 4 周
-
-- 轻确认流程
-- 正式入板
-- 消息卡片
-- 内部干跑
-
-### 第 5 周
-
-- 催办
-- 阻塞识别
-- 治理指令
-
-### 第 6 周
-
-- 试点部署
-- 反馈收集
-- 不新增功能，优先修正显著问题
-
-## M1 不做
-
-- Web 任务板
-- 完整组织架构同步
-- 独立主持人 agent
-- 多角色分析引擎
-- RAG 分层 ACL
-- 知识采集管线
-
-## 当前待补充
-
-- M1 接口细化
-- 数据模型 DDL
-- 试点部门信息
-- LLM 选型和预算
+- new primary web frontend
+- per-platform user-facing application UI as the main interaction surface
+- external hosted document processing as the default enterprise path

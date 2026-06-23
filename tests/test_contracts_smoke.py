@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from src.agents import PersonalAgent, ProjectAgent
 from src.config import (
@@ -235,6 +236,23 @@ class ContractsSmokeTest(unittest.TestCase):
         self.assertEqual(reloaded.get_admin_settings().admin_user_ids, ["u1", "u2"])
         self.assertEqual(reloaded.get_platform_settings(PlatformType.FEISHU).settings["app_id"], "app-1")
 
+    def test_json_settings_file_permissions_are_restricted(self) -> None:
+        file_path = self._temp_settings_path("secure-settings.json")
+        repository = JsonFileSettingsRepository(file_path)
+        service = SettingsManagementService(repository)
+
+        with patch("os.chmod") as chmod:
+            service.save_llm_profile(
+                service.make_llm_profile(
+                    provider=LLMProvider.OPENAI,
+                    profile_id="secure-profile",
+                    model_name="gpt-5",
+                    api_key="secret-value",
+                )
+            )
+
+        chmod.assert_called_with(file_path, 0o600)
+
     def test_settings_management_upsert_and_views_smoke(self) -> None:
         repository = InMemorySettingsRepository()
         service = SettingsManagementService(repository)
@@ -413,6 +431,17 @@ class ContractsSmokeTest(unittest.TestCase):
         merged_text = Path(temp_target).read_text(encoding="utf-8")
         self.assertIn("OPENVORT_WEB_DEFAULT_PASSWORD=strong-password", merged_text)
         self.assertIn("OPENVORT_WECOM_CORP_ID=corp-1", merged_text)
+
+    def test_exported_env_file_permissions_are_restricted(self) -> None:
+        repository = InMemorySettingsRepository()
+        service = SettingsManagementService(repository)
+        service.upsert_admin_settings(admin_user_ids=["u-admin"], web_default_password="strong-password")
+        output_path = self._temp_settings_path("secure.env")
+
+        with patch("os.chmod") as chmod:
+            write_openvort_env_file(service.build_runtime_snapshot(), output_path)
+
+        chmod.assert_called_with(output_path, 0o600)
 
     def test_settings_readiness_audit_smoke(self) -> None:
         repository = InMemorySettingsRepository()

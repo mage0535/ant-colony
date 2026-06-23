@@ -19,8 +19,12 @@ import sys
 import urllib.request
 from pathlib import Path
 
+BASE = Path(os.environ.get("ANT_COLONY_HOME", str(Path(__file__).resolve().parents[1])))
+LOG_FILE = Path(os.environ.get("ANT_COLONY_AUTO_CONTINUE_LOG", str(BASE / "data" / "auto_continue.log")))
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.FileHandler(LOG_FILE),
               logging.StreamHandler()],
 )
 logger = logging.getLogger("auto_continue")

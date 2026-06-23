@@ -42,6 +42,9 @@ def adapt_wecom_payload(payload: dict[str, Any]) -> AdaptedInboundMessage:
     else:
         space_type = SpaceType.DEPARTMENT
 
+    provider = _pick(payload, "provider", default="wecom")
+    transport = _pick(payload, "transport", default="")
+
     message = Message(
         id=msg_id,
         space_id=space_id,
@@ -50,7 +53,8 @@ def adapt_wecom_payload(payload: dict[str, Any]) -> AdaptedInboundMessage:
         msg_type=_pick(payload, "msg_type", default="text"),
         created_at=created_at,
         metadata={
-            "provider": "wecom",
+            "provider": provider,
+            "transport": transport,
             "is_direct": is_direct,
             "raw": payload,
         },
@@ -63,7 +67,8 @@ def adapt_wecom_payload(payload: dict[str, Any]) -> AdaptedInboundMessage:
         project_id=project_id,
         mentions=list(_pick(payload, "mentions", default=[])),
         metadata={
-            "provider": "wecom",
+            "provider": provider,
+            "transport": transport,
             "conversation_type": _pick(payload, "conversation_type"),
             "is_direct": is_direct,
         },

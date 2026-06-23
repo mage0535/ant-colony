@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.config.contracts import LLMProvider, PlatformType, RuntimeSettingsSnapshot
+from src.config.file_permissions import restrict_to_owner
 
 
 def export_openvort_env(snapshot: RuntimeSettingsSnapshot) -> dict[str, str]:
@@ -68,6 +69,7 @@ def write_openvort_env_file(snapshot: RuntimeSettingsSnapshot, output_path: str 
     lines = [f"{key}={value}" for key, value in sorted(env_map.items())]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    restrict_to_owner(path)
     return path
 
 
@@ -76,6 +78,7 @@ def apply_openvort_env_overlay(snapshot: RuntimeSettingsSnapshot, target_path: s
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("", encoding="utf-8")
+        restrict_to_owner(path)
 
     env_map = export_openvort_env(snapshot)
     target_lines = path.read_text(encoding="utf-8").splitlines()
@@ -99,6 +102,7 @@ def apply_openvort_env_overlay(snapshot: RuntimeSettingsSnapshot, target_path: s
             new_lines.append(f"{key}={value}")
 
     path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    restrict_to_owner(path)
     return path
 
 

@@ -1,27 +1,33 @@
 from __future__ import annotations
 
-import hashlib
+import hmac
+import ipaddress
 import logging
+import os
 import time
-from typing import Any
+import uuid
 
 from fastapi import HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
-# Simple token-based auth: shared secret in Authorization header
-# Set ANT_COLONY_AUTH_TOKEN env var, or defaults to no-auth
-import os
+# Shared Bearer token for network access. Loopback remains available for internal services.
 AUTH_TOKEN = os.environ.get("ANT_COLONY_AUTH_TOKEN", "")
 
 
 def require_auth(request: Request) -> None:
     if not AUTH_TOKEN:
-        return
+        client_host = request.client.host if request.client else ""
+        try:
+            if ipaddress.ip_address(client_host).is_loopback:
+                return
+        except ValueError:
+            pass
+        raise HTTPException(503, detail="Dashboard authentication is not configured")
     auth = request.headers.get("Authorization", "")
     if not auth:
         raise HTTPException(401, detail="Authorization header required")
-    if auth == f"Bearer {AUTH_TOKEN}":
+    if hmac.compare_digest(auth, f"Bearer {AUTH_TOKEN}"):
         return
     raise HTTPException(403, detail="Invalid token")
 
@@ -52,9 +58,6 @@ def check_rate_limit(request: Request) -> None:
                 del _requests[k]
 
 
-# Request ID middleware
-import uuid as _uuid
-
 def add_request_id(request: Request) -> str:
-    rid = request.headers.get("X-Request-ID", str(_uuid.uuid4())[:8])
+    rid = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
     return rid

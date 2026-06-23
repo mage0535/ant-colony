@@ -15,8 +15,7 @@ def _load_env() -> dict[str, str]:
     # Try known locations for env file
     candidates = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "infra", ".env.wecom"),
-        os.path.expanduser("~/ant-colony-probe/infra/.env.wecom"),
-        "/home/codexcheck/ant-colony-probe/infra/.env.wecom",
+        os.path.expanduser("~/ant-colony/infra/.env.wecom"),
     ]
     for env_file in candidates:
         if os.path.isfile(env_file):
@@ -89,7 +88,11 @@ class OrgSynchronizer:
             return []
 
     def sync_all(self) -> dict[str, Any]:
+        from src.platform.org_graph import OrgGraphService
+
         try:
+            graph = OrgGraphService()
+            graph_summary = graph.sync_wecom_directory()
             depts = self.fetch_departments()
             users = self.fetch_users()
         except Exception as e:
@@ -111,11 +114,18 @@ class OrgSynchronizer:
 
         if self._space_registry:
             for d_id in collected_depts:
-                self._space_registry.register(d_id, name=d_id, space_type="department")
+                self._space_registry.register(d_id, name=d_id, space_type="department", metadata={"platform": "wecom"})
             for d in depts:
                 dept_name = d.get("name", str(d.get("id", "")))
                 dept_id = f"dept-{d.get('id')}"
-                self._space_registry.register(dept_id, name=dept_name, space_type="department")
+                members = graph.get_department_members("wecom", str(d.get("id")))
+                self._space_registry.register(
+                    dept_id,
+                    name=dept_name,
+                    space_type="department",
+                    members=members,
+                    metadata={"platform": "wecom", "dept_id": str(d.get("id")), "parent_dept_id": str(d.get("parentid", ""))},
+                )
 
         # Write sidecar memory for each user
         os.makedirs(self._memory_dir, exist_ok=True)
@@ -144,4 +154,4 @@ class OrgSynchronizer:
             logger.debug("Sidecar memory written for %s", user_id)
 
         logger.info("Org sync: %d departments, %d users", len(depts), len(users))
-        return {"departments": len(depts), "users": len(users)}
+        return {"departments": len(depts), "users": len(users), "graph": graph_summary}

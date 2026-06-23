@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -87,7 +88,7 @@ def query_attendance(user_id: str, days: int = 7, start_date: str = "", end_date
                         import json
                         p = json.loads(l['payload_json'])
                         reason = p.get('sp_name', '') or ''
-                    except:
+                    except Exception:
                         reason = ''
                 lines.append(f"  {s}~{e}\t{type_cn}\t{dur}\t{reason}\t{status_cn}")
             return "\n".join(lines)
@@ -150,7 +151,7 @@ def query_attendance(user_id: str, days: int = 7, start_date: str = "", end_date
                     t = datetime.fromisoformat(str(val))
                     t_cn = t + timedelta(hours=8)
                     return t_cn.strftime("%H:%M")
-                except:
+                except Exception:
                     return str(val)[11:16] if len(str(val)) > 10 else str(val)
 
             check_in = _fmt_time(r["checkin_at"])
@@ -172,12 +173,14 @@ def query_attendance(user_id: str, days: int = 7, start_date: str = "", end_date
 
 
 _WECOM_API_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
-_WECOM_CORP_ID = "[corp-id]"
-_WECOM_SECRET = "zadqkUlK20kxQuacPRVitKQQ_pMywEvjS8GtSyZaVIk"
+_WECOM_CORP_ID = os.environ.get("WECOM_CORP_ID", "")
+_WECOM_SECRET = os.environ.get("WECOM_SECRET", "")
 
 
 def _wecom_access_token() -> str:
     import urllib.request, json
+    if not _WECOM_CORP_ID or not _WECOM_SECRET:
+        raise RuntimeError("WECOM_CORP_ID and WECOM_SECRET are required")
     url = f"{_WECOM_API_BASE}/gettoken?corpid={_WECOM_CORP_ID}&corpsecret={_WECOM_SECRET}"
     resp = json.loads(urllib.request.urlopen(urllib.request.Request(url), timeout=10).read())
     if resp.get("errcode") != 0:

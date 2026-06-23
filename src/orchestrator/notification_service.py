@@ -24,3 +24,12 @@ class NotificationService:
             body={"text": reminder.text},
             metadata={"task_id": reminder.task_id, "message_kind": "task_reminder"},
         )
+
+    def build_escalation_notification(self, task: Task, text: str, target_user_id: str) -> OutboundMessage:
+        return OutboundMessage(
+            target_id=target_user_id,
+            target_type="user",
+            content_type="text",
+            body={"text": text},
+            metadata={"task_id": task.id, "message_kind": "task_escalation"},
+        )

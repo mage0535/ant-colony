@@ -1,0 +1,14 @@
+[Unit]
+Description=Ant Colony WeCom AI Bot WebSocket Bridge
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ant-colony
+ExecStart=/usr/bin/python3 /opt/ant-colony/run_wecom_bot.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/ant-colony/infra/.env.wecom
+
+[Install]
+WantedBy=multi-user.target

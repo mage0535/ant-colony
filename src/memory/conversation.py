@@ -89,7 +89,7 @@ class ConversationStore:
         try:
             with open(self._index_path(agent_id)) as f:
                 return json.load(f)
-        except:
+        except Exception:
             return {"sessions": [], "active": 0}
 
     def _write_index(self, agent_id: str, idx: dict[str, Any]) -> None:
@@ -140,7 +140,7 @@ class ConversationStore:
             try:
                 data = json.load(open(path))
                 turn_count = len(data)
-            except:
+            except Exception:
                 pass
             sessions.append({"id": sid, "turns": turn_count, "active": sid == active})
         return sessions

@@ -88,8 +88,56 @@ class BatchFlusher:
                 text = f"[任务提醒] {reminder_text}"
                 if send_text(task.assignee_user_id, text):
                     logger.info("  WeCom notified %s for task %s", task.assignee_user_id, task_id)
+                self._fan_out_linked_space_notice(task.project_id, text)
+            elif task:
+                self._notify_department_leaders(task, reminder_text)
         except Exception:
             pass
+
+    def _notify_department_leaders(self, task: Any, reminder_text: str) -> None:
+        try:
+            from src.platform.org_graph import OrgGraphService
+            from src.rooms.space_registry import SpaceRegistry
+            from src.store.database import Database
+            from src.store.task_repo import TaskRepository
+
+            registry = SpaceRegistry(repo=TaskRepository(Database.get()))
+            record = registry.get(task.project_id)
+            dept_id = str(record.metadata.get("dept_id", "")) if record else ""
+            if not dept_id:
+                return
+            graph = OrgGraphService()
+            leaders = graph.get_department_leader_ids("wecom", dept_id)
+            text = f"[任务升级提醒] {reminder_text}"
+            delivered = False
+            for user_id in leaders:
+                if send_text(user_id, text):
+                    logger.info("  WeCom escalated %s to leader %s", task.id, user_id)
+                    delivered = True
+            if not delivered:
+                for user_id in graph.get_admin_ids("wecom"):
+                    if send_text(user_id, text):
+                        logger.info("  WeCom escalated %s to admin %s", task.id, user_id)
+            self._fan_out_linked_space_notice(task.project_id, text)
+        except Exception:
+            return
+
+    def _fan_out_linked_space_notice(self, source_space_id: str, text: str) -> None:
+        try:
+            from src.rooms.space_registry import SpaceRegistry
+            from src.store.database import Database
+            from src.store.task_repo import TaskRepository
+
+            registry = SpaceRegistry(repo=TaskRepository(Database.get()))
+            for linked_space_id in registry.get_linked_spaces(source_space_id):
+                record = registry.get(linked_space_id)
+                if not record:
+                    continue
+                for user_id in record.members[:5]:
+                    if send_text(user_id, f"[跨空间同步] {text}"):
+                        logger.info("  WeCom synced reminder from %s to linked space member %s", source_space_id, user_id)
+        except Exception:
+            return
 
     def _flush_all(self) -> None:
         space_ids = self.batch_processor.space_ids()

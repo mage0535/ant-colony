@@ -26,10 +26,12 @@ from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger(__name__)
 
-DB_URL = os.environ.get("GBRAIN_DB_URL", "postgresql://sidecar:sidecar123@localhost:5432/sidecar")
+DB_URL = os.environ.get("GBRAIN_DB_URL", "")
 
 
 def get_conn():
+    if not DB_URL:
+        raise RuntimeError("GBRAIN_DB_URL is required")
     return psycopg2.connect(DB_URL)
 
 

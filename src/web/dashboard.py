@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import os
+import time
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from src.analysis.role_analyzer import GroupMessageAnalyzer, RoleAnalyzer
@@ -20,19 +23,21 @@ from src.pool.agent_pool import AgentPool
 from src.rooms.space_registry import SpaceRegistry
 from src.store.database import Database
 from src.store.task_repo import TaskRepository
+from src.web.document_paths import resolve_document_download_path
 from src.web.middleware import add_request_id, check_rate_limit, require_auth
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Ant Colony API", version="0.3.0")
 
+_PUBLIC_PATHS = {"/", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
+MAX_UPLOAD_BYTES = int(os.environ.get("ANT_COLONY_MAX_FILE_BYTES", str(50 * 1024 * 1024)))
+
 
 @app.middleware("http")
 async def auth_and_rate_limit(request: Request, call_next):
     try:
-        if request.url.path in ("/", "/docs", "/openapi.json"):
-            pass  # public pages
-        elif request.method in ("PUT", "POST", "DELETE"):
+        if request.url.path not in _PUBLIC_PATHS:
             require_auth(request)
         check_rate_limit(request)
     except HTTPException as e:
@@ -74,14 +79,6 @@ def get_knowledge_repo() -> FtsKnowledgeRepository:
         r._conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
         r._conn.commit()
     return _knowledge_repo
-
-
-def get_repo() -> TaskRepository:
-    global repo
-    if repo is None:
-        db = Database.get("./data/ant-colony.db")
-        repo = TaskRepository(db)
-    return repo
 
 
 def get_group_analyzer() -> GroupMessageAnalyzer:
@@ -174,8 +171,7 @@ def search_tasks(q: str = "", space_id: str = "", limit: int = 50):
 
 # ---- System Health ----
 
-import time as _time
-_start_time = _time.time()
+_start_time = time.time()
 
 @app.get("/api/v1/health")
 def system_health():
@@ -187,13 +183,12 @@ def system_health():
     return {
         "status": "healthy",
         "service": "ant-colony-dashboard",
-        "uptime_seconds": round(_time.time() - _start_time, 1),
+        "uptime_seconds": round(time.time() - _start_time, 1),
         "db": "connected",
         "tasks": {"total": total_tasks, "blocked": blocked, "in_progress": in_progress},
         "spaces": get_space_registry().stats(),
         "knowledge": get_knowledge_repo().stats() if _knowledge_repo else {},
         "agents": agent_pool.stats(),
-        "tests_passed": 122,
     }
 
 @app.get("/api/v1/drafts")
@@ -428,10 +423,9 @@ def export_tasks(space_id: str = "", format: str = "json"):
     tasks = r.list_tasks(project_id=space_id)
     data = [_task_to_dict(t) for t in tasks]
     if format == "csv":
-        import io, csv as csv_mod
         output = io.StringIO()
         if data:
-            writer = csv_mod.DictWriter(output, fieldnames=data[0].keys())
+            writer = csv.DictWriter(output, fieldnames=data[0].keys())
             writer.writeheader()
             writer.writerows(data)
         return Response(content=output.getvalue(), media_type="text/csv",
@@ -525,20 +519,37 @@ def upload_file(
     file: UploadFile = File(...),
     user_id: str = Form(...),
     space_id: str = Form(...),
+    knowledge_owner_type: str = Form("project"),
+    knowledge_owner_id: str = Form(""),
 ):
+    content = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"File exceeds the {MAX_UPLOAD_BYTES}-byte upload limit")
     store = _get_file_store()
-    content = file.file.read()
     rel_path = store.write(user_id, space_id, file.filename or "unnamed", content)
+    owner_type, owner_id = _resolve_knowledge_owner(
+        knowledge_owner_type=knowledge_owner_type,
+        knowledge_owner_id=knowledge_owner_id,
+        user_id=user_id,
+        space_id=space_id,
+    )
     # Auto-index document into knowledge base
     try:
         fpath = os.path.join(store._base, rel_path)
         collector = KnowledgeCollector(FtsKnowledgeRepository(Database.get().connect()))
-        entry = collector.collect_file(fpath, owner_type="project", owner_id=space_id)
+        entry = collector.collect_file(fpath, owner_type=owner_type, owner_id=owner_id)
         indexed = entry.id if entry else None
     except Exception as e:
         logger.warning("File index failed: %s", e)
         indexed = None
-    return {"path": rel_path, "filename": file.filename, "size": len(content), "indexed": indexed}
+    return {
+        "path": rel_path,
+        "filename": file.filename,
+        "size": len(content),
+        "indexed": indexed,
+        "knowledge_owner_type": owner_type,
+        "knowledge_owner_id": owner_id,
+    }
 
 
 @app.get("/api/v1/files")
@@ -619,6 +630,35 @@ def _task_to_dict(t: Task) -> dict[str, Any]:
     return d
 
 
+def _resolve_knowledge_owner(
+    *,
+    knowledge_owner_type: Any,
+    knowledge_owner_id: Any,
+    user_id: str,
+    space_id: str,
+) -> tuple[str, str]:
+    raw_type = knowledge_owner_type if isinstance(knowledge_owner_type, str) else ""
+    raw_id = knowledge_owner_id if isinstance(knowledge_owner_id, str) else ""
+    normalized_type = (raw_type or "project").strip().lower()
+    valid_types = {
+        KnowledgeOwnerType.PERSONAL.value,
+        KnowledgeOwnerType.PROJECT.value,
+        KnowledgeOwnerType.DEPARTMENT.value,
+        KnowledgeOwnerType.ORGANIZATION.value,
+    }
+    if normalized_type not in valid_types:
+        raise HTTPException(400, f"Invalid knowledge_owner_type: {knowledge_owner_type}")
+
+    normalized_id = (raw_id or "").strip()
+    if normalized_type == KnowledgeOwnerType.PERSONAL.value:
+        return normalized_type, normalized_id or user_id
+    if normalized_type == KnowledgeOwnerType.ORGANIZATION.value:
+        return normalized_type, "*"
+    if normalized_type in {KnowledgeOwnerType.PROJECT.value, KnowledgeOwnerType.DEPARTMENT.value}:
+        return normalized_type, normalized_id or space_id
+    return normalized_type, normalized_id or space_id
+
+
 # ---- Root ----
 
 @app.get("/")
@@ -628,15 +668,12 @@ def root():
 
 # ---- Document Download ----
 
-import os as _doc_os
-from fastapi.responses import FileResponse as _FileResponse
-
 @app.get("/api/v1/documents/{filename:path}")
 def download_document(filename: str):
     """Download a generated document file."""
-    docs_dir = _doc_os.path.join(_doc_os.path.dirname(_doc_os.path.dirname(__file__)), "data", "documents")
-    filepath = _doc_os.path.join(docs_dir, filename)
-    if ".." in filename or not _doc_os.path.isfile(filepath):
-        from fastapi import HTTPException
+    docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "documents")
+    try:
+        filepath = resolve_document_download_path(docs_dir, filename)
+    except FileNotFoundError:
         raise HTTPException(404, "File not found")
-    return _FileResponse(filepath, filename=filename)
+    return FileResponse(filepath, filename=filename)

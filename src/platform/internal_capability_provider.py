@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import os
+
+from src.knowledge.fts_repo import FtsKnowledgeRepository
+from src.store.database import Database
+
+
+class InternalCapabilityProvider:
+    """Internal capability provider backed by existing local tools/integrations."""
+
+    def healthcheck(self) -> str | None:
+        return "internal-provider-ready"
+
+    def healthcheck_office(self) -> str | None:
+        from src.tools.document_tool import OFFICECLI
+
+        return "officecli-ready" if os.path.isfile(OFFICECLI) else None
+
+    def search_drive_docs(self, query: str) -> str | None:
+        from src.knowledge.cloud_drive import list_drives
+
+        listing = list_drives(user_id="")
+        if not listing:
+            return None
+        if not query:
+            return listing
+
+        lines = [line for line in listing.splitlines() if query.lower() in line.lower()]
+        if not lines:
+            return f"未找到与“{query}”匹配的网盘结果。当前可先检查云盘是否已注册并完成同步。"
+        return "\n".join(lines)
+
+    def read_drive_doc(self, query: str) -> str | None:
+        repo = FtsKnowledgeRepository(Database.get().connect())
+        results = repo.search(query, limit=1)
+        if not results:
+            return None
+        return results[0].content[:4000]
+
+    def list_drive_docs(self) -> str | None:
+        from src.knowledge.cloud_drive import list_drives
+
+        return list_drives(user_id="")
+
+    def sync_drive_docs(self, drive_id: str, remote_path: str, local_path: str = "") -> str | None:
+        from src.knowledge.cloud_drive import sync_from_cloud
+
+        return sync_from_cloud(drive_id=drive_id, remote_path=remote_path, local_path=local_path, user_id="")
+
+    def summarize_mailbox(self, query: str = "") -> str | None:
+        from src.tools.email_tool import list_inbox, search_emails
+
+        if query.strip():
+            return search_emails(query)
+        return list_inbox(limit=10)
+
+    def read_docs_document(self, query: str) -> str | None:
+        repo = FtsKnowledgeRepository(Database.get().connect())
+        results = repo.search(query, limit=1)
+        if not results:
+            return None
+        return results[0].content[:4000]
+
+    def list_mail_messages(self, limit: int = 10) -> str | None:
+        from src.tools.email_tool import list_inbox
+
+        return list_inbox(limit=limit)
+
+    def search_mail_messages(self, query: str) -> str | None:
+        from src.tools.email_tool import search_emails
+
+        return search_emails(query)
+
+    def get_mail_message(self, uid: str) -> str | None:
+        from src.tools.email_tool import get_email
+
+        return get_email(uid=uid)
+
+    def send_mail_message(self, to: str, subject: str, body: str, cc: str | None = None) -> str | None:
+        from src.tools.email_tool import send_email
+
+        return send_email(to=to, subject=subject, body=body, cc=cc)
+
+    def generate_docx_document(self, title: str, content: str, template_path: str | None = None) -> str | None:
+        from src.tools.document_tool import generate_report
+
+        return generate_report(title, content, "docx", template_path=template_path)
+
+    def generate_xlsx_document(self, title: str, content: str, template_path: str | None = None) -> str | None:
+        from src.tools.document_tool import generate_report
+
+        return generate_report(title, content, "xlsx", template_path=template_path)
+
+    def generate_pptx_document(self, title: str, content: str, template_path: str | None = None) -> str | None:
+        from src.tools.document_tool import generate_report
+
+        return generate_report(title, content, "pptx", template_path=template_path)
+
+    def extract_docx_template_outline(self, path: str) -> dict | None:
+        from src.tools.document_tool import extract_docx_template_outline
+
+        return extract_docx_template_outline(path)
+
+    def extract_xlsx_template_outline(self, path: str) -> dict | None:
+        from src.tools.document_tool import extract_xlsx_template_outline
+
+        return extract_xlsx_template_outline(path)
+
+    def extract_pptx_template_outline(self, path: str) -> dict | None:
+        from src.tools.document_tool import extract_pptx_template_outline
+
+        return extract_pptx_template_outline(path)
+
+    def read_docx_document(self, path: str) -> str | None:
+        from src.platform.officecli_provider import OfficeCliProvider
+
+        return OfficeCliProvider().read_docx_document(path)
+
+    def read_xlsx_document(self, path: str) -> str | None:
+        from src.platform.officecli_provider import OfficeCliProvider
+
+        return OfficeCliProvider().read_xlsx_document(path)
+
+    def read_pptx_document(self, path: str) -> str | None:
+        from src.platform.officecli_provider import OfficeCliProvider
+
+        return OfficeCliProvider().read_pptx_document(path)
+
+    def merge_pdf_documents(self, paths: list[str], output_path: str) -> str | None:
+        from src.tools.pdf_tool import merge_pdfs
+
+        return merge_pdfs(paths, output_path)
+
+    def split_pdf_document(self, path: str, pages: str, output_path: str) -> str | None:
+        from src.tools.pdf_tool import split_pdf
+
+        return split_pdf(path, pages, output_path)
+
+    def compress_pdf_document(self, path: str, output_path: str) -> str | None:
+        from src.tools.pdf_tool import compress_pdf
+
+        return compress_pdf(path, output_path)
+
+    def protect_pdf_document(self, path: str, password: str, output_path: str) -> str | None:
+        from src.tools.pdf_tool import protect_pdf
+
+        return protect_pdf(path, password, output_path)
+
+    def read_pdf_document(self, path: str) -> str | None:
+        from src.tools.pdf_tool import read_pdf
+
+        return read_pdf(path)
+
+    def extract_pdf_images(self, path: str, output_dir: str) -> str | None:
+        from src.tools.pdf_tool import extract_images
+
+        return extract_images(path, output_dir)
+
+    def watermark_pdf_document(self, path: str, watermark_text: str, output_path: str) -> str | None:
+        from src.tools.pdf_tool import add_watermark
+
+        return add_watermark(path, watermark_text, output_path)

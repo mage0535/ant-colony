@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 from datetime import datetime, timedelta
 
 from src.engine.base import AgentEngine
 from src.models.contracts import BlockedTask, Message, MessageContext, Reminder, Task, TaskDraft, TaskStatus
+from src.observability.langsmith_support import traceable_op
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,33 @@ def _parse_task_drafts(text: str, project_id: str, source_ids: list[str]) -> lis
     return drafts
 
 
+def _infer_assignee_from_org(project_id: str, message: Message) -> str | None:
+    try:
+        from src.platform.org_graph import OrgGraphService
+        from src.rooms.space_registry import SpaceRegistry
+        from src.store.database import Database
+        from src.store.task_repo import TaskRepository
+
+        registry = SpaceRegistry(repo=TaskRepository(Database.get()))
+        record = registry.get(project_id)
+        dept_id = ""
+        if record and record.metadata.get("dept_id"):
+            dept_id = str(record.metadata["dept_id"])
+        graph = OrgGraphService()
+        if record and record.members:
+            for user in graph.get_users_by_ids("wecom", record.members):
+                name = str(user.get("name", "")).strip()
+                if name and name in message.content and user["user_id"] != message.sender_user_id:
+                    return str(user["user_id"])
+        for name in re.findall(r"[\u4e00-\u9fff]{2,4}", message.content):
+            candidate = graph.find_user_by_name("wecom", name, dept_id=dept_id)
+            if candidate and candidate != message.sender_user_id:
+                return candidate
+    except Exception:
+        return None
+    return None
+
+
 class ProjectAgent:
     """Project-space agent contract for M1."""
 
@@ -65,6 +94,7 @@ class ProjectAgent:
         self.engine = engine
         self.task_repo = task_repo
 
+    @traceable_op("identify_project_tasks", run_type="chain")
     def identify_tasks(self, project_id: str, messages: list[Message]) -> list[TaskDraft]:
         if project_id != self.project_id:
             raise ValueError("project agent project_id mismatch")
@@ -77,13 +107,14 @@ class ProjectAgent:
         drafts: list[TaskDraft] = []
         for message in messages:
             if "TODO:" in message.content or "待办" in message.content:
+                assignee = _infer_assignee_from_org(project_id, message) or message.sender_user_id
                 drafts.append(
                     TaskDraft(
                         title=message.content[:40],
                         description=message.content,
                         project_id=project_id,
                         source_message_ids=[message.id],
-                        assignee_user_id=message.sender_user_id,
+                        assignee_user_id=assignee,
                         due_at=datetime.now() + timedelta(days=3),
                         confidence=0.5,
                     )

@@ -2,6 +2,40 @@
 
 ## 已采纳
 
+### 2026-06-22：`src/platform/__init__.py` 定位为兼容 facade，不再承载能力实现
+
+- **决策**：`src/platform/__init__.py` 保留为兼容门面，但默认只做三件事：
+  - provider 装配
+  - capability backend 薄包装
+  - 供旧调用方过渡的 facade
+- **新增约束**：
+  - 新的工具层代码优先走显式 capability ID
+  - 新的上下文与审计链路优先走 `invoke_capability(...)` / `invoke_capability_first(...)`
+- **原因**：
+  - 项目仍有较多历史调用点，直接删除 facade 风险大
+  - 但继续把能力逻辑堆在 facade 里，会重新回到“散函数入口”模式
+- **影响**：
+  - capability backend 继续作为真正执行面
+  - facade 被保留，但默认不再增长业务实现
+
+### 2026-06-22：能力调用开始记录统一身份上下文与审计
+
+- **决策**：在 capability backend 层新增统一调用上下文与集中式本地审计落点；当前实现为 SQLite，并保留 legacy JSONL 迁移能力
+- **上下文字段**：
+  - `user_id`
+  - `platform`
+  - `transport`
+  - `scope`
+  - `scope_id`
+  - `source_chat_id`
+- **原因**：
+  - 架构目标已明确要求“用户身份贯穿调用链”
+  - 审计不应散落在单个平台分支里
+- **影响**：
+  - 工具层可带上下文调用 capability backend
+  - 审计记录默认落在 `data/audit/capability_audit.sqlite3`
+  - 旧 JSONL 审计文件可由迁移逻辑导入 SQLite 后端
+
 ### ADR-001：AgentEngine 独立实现，不依赖 Hermes
 
 - **上下文**：Hermes `conversation_loop.py` 有 4892 行，深度耦合 17k 文件 Hermes 运行时
@@ -140,3 +174,106 @@
 - **Bug 2（模板文档生成）**
   - 已确认：当前问题的核心不在 prompt，而在 `.docx` 模板进入系统后已被降级为纯文本
   - 因此后续修复方向优先考虑“保留模板本体并提取结构”，而不是继续单独强化提示词
+# 技术决策记录
+
+## 2026-06-16 — 系统总方向切换为 Bot First, Capability Backend
+
+### 决策
+
+项目后续统一采用：
+
+- Bot 作为员工唯一前端入口
+- 平台应用 / 官方 API / 第三方连接器 / 插件作为 Bot 背后的能力后端
+
+不再继续把“每个平台都做一个独立前端应用”作为默认推进方向。
+
+### 原因
+
+- 项目最早定位是“企业多智能体协作系统”，不是单一工作台应用
+- 员工更容易接受“找 Bot 说话”，而不是“进入某个平台应用页面”
+- 平台应用更适合作为通讯录、审批、日历、在线文档、网盘、邮箱等能力来源
+- 这种模式更利于跨企微 / 飞书 / 钉钉统一架构
+
+### 影响
+
+- 交互层统一为 Bot
+- 编排层统一调度 Agent / Tool / Task / Memory / Knowledge
+- 能力层需要逐步抽象成统一能力协议
+- `src/platform/__init__.py` 的散函数聚合模式将逐步迁移到统一能力后端
+- 第一版统一能力后端已落到 `src/platform/capability_backend.py`
+
+### 后续执行约束
+
+后续新增功能时，优先判断：
+
+1. 能否作为 Bot 背后的能力层扩展？
+2. 能否归入统一能力域，而不是新增平台专属前端？
+3. 是否带上了用户身份和权限上下文？
+
+## 2026-06-17 — 企业文档处理默认采用本地私有部署
+
+### 决策
+
+对于 PDF / Office / OCR 等企业文档处理能力：
+
+- 默认优先本地服务器私有部署
+- 不将外部托管 API 作为主处理链路
+- 允许内部 provider 与本地部署服务 provider 并存
+
+### 原因
+
+- 企业文档数量大，存在持续同步和并发处理需求
+- 企业文档往往涉及敏感信息，不适合默认出域
+- 本地部署更适合高并发、批处理和流水线化接入
+- 更符合当前项目“Bot 前台 + 企业能力后端”的企业级定位
+
+### 影响
+
+- 当前 `pdf_tool.py` / internal provider 作为短期实现继续保留
+- 后续新增 `stirling_pdf_provider.py` 时，默认按本地私有部署方式接入
+- `OCRmyPDF` 若后续接入，也按本地 OCR provider 处理
+
+## 2026-06-17 — Office 文档主后端优先采用 OfficeCLI
+
+### 决策
+
+对于 `docx/xlsx/pptx` 本地文档处理能力：
+
+- 当前主后端优先采用 `OfficeCLI`
+- `ONLYOFFICE Docs` 作为后续协作式文档补充
+- Microsoft 官方 Office AI / Skills 仅作为研究参考
+
+### 原因
+
+- `OfficeCLI` 已与当前项目 `document_tool.py` 直接兼容
+- 更适合作为 Bot 背后的结构化 Office 文档处理后端
+- 比协作文档服务器更适合当前阶段的能力后端定位
+- 比云侧 Office AI 体系更符合本地私有部署约束
+
+### 影响
+
+- `files.office.service_status`、`files.docx.generate`、`files.xlsx.generate`、`files.pptx.generate`、`files.docx.template_outline` 默认围绕 OfficeCLI 演进
+- 后续若需要在线编辑与多人协作，再评估接入 `ONLYOFFICE Docs`
+
+## 2026-06-15 — docx 模板生成从“重建正文”切换为“克隆模板段落骨架”
+
+### 决策
+
+`src/tools/document_tool.py` 的 docx 模板生成逻辑不再以 `add_paragraph()` 为主重建正文，而是优先：
+
+1. 保留模板前言元素
+2. 克隆模板段落本体
+3. 在克隆段落上替换文本
+4. 对审批/修订类前置表格只做单元格回填
+
+### 原因
+
+- 仅复制样式名无法保留 Word 的段落级直接格式
+- 重新建段会丢失对齐、缩进、段前后距、编号骨架等关键信息
+- 之前前言节点被追加到 `sectPr` 后方，导致模板首页元素实际未进入正常正文流
+
+### 影响
+
+- 模板版式延续性显著提升
+- 审批表不再重复追加
+- 后续可继续往“结构锚点原位替换”演进

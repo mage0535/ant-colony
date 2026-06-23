@@ -11,6 +11,7 @@ from src.config.contracts import (
     PlatformSettingsRecord,
     PlatformType,
 )
+from src.config.file_permissions import restrict_to_owner
 from src.config.repository import InMemorySettingsRepository
 
 
@@ -97,6 +98,7 @@ class JsonFileSettingsRepository(InMemorySettingsRepository):
             "platforms": [self._dump_enum_dataclass(record) for record in self.list_platform_settings()],
         }
         self.file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        restrict_to_owner(self.file_path)
 
     @staticmethod
     def _dump_enum_dataclass(record: object | None) -> dict | None:

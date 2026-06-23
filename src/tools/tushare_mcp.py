@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.request
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-TUSHARE_TOKEN = "24d3ed6fe2fdb826c89622a5859133d24a285b9230ac651fdfd27663"
+TUSHARE_TOKEN = os.environ.get("TUSHARE_TOKEN", "")
 TUSHARE_API = "https://api.tushare.pro"
 
 
 def call_tushare(method: str, params: dict[str, Any] | None = None) -> str:
+    if not TUSHARE_TOKEN:
+        return "Tushare 未配置：请设置 TUSHARE_TOKEN 环境变量"
     if not params:
         params = {}
     

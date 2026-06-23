@@ -1,13 +1,43 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "ant-colony"
 version = "0.1.0"
 description = "Enterprise multi-agent collaboration system"
 requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=41.0.0",
+    "defusedxml>=0.7.1",
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "langsmith>=0.9.0",
+    "openpyxl>=3.1.0",
+    "PyMuPDF>=1.24.0",
+    "pydantic>=2.0.0",
+    "python-docx>=1.1.0",
+    "python-multipart>=0.0.9",
+    "python-pptx>=1.0.0",
+    "qrcode>=7.4.2",
+    "requests>=2.31.0",
+    "uvicorn>=0.30.0",
+    "websockets>=13.0",
+]
+
+[project.scripts]
+ant-colony-gateway = "run_gateway:main"
+ant-colony-callback = "run_callback:main"
+ant-colony-dashboard = "run_dashboard:main"
+ant-colony-wecom-bot = "run_wecom_bot:main"
+
+[tool.setuptools]
+py-modules = ["run_gateway", "run_callback", "run_dashboard", "run_wecom_bot"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src/*"]
+include = ["src", "src.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["external", "scratchpad", ".pytest_cache", "data", "images"]

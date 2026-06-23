@@ -253,6 +253,9 @@ class DingTalkClient:
 
         return "\n".join(lines) if lines else None
 
+    def read_docs_document(self, query: str) -> str | None:
+        return self.search_docs(query)
+
     def list_approvals(self, status: str = "pending") -> str | None:
         """List approval process instances by status.
 
@@ -302,6 +305,9 @@ class DingTalkClient:
 
         return "\n".join(lines) if lines else None
 
+    def get_approval_detail(self, query: str) -> str | None:
+        return self.list_approvals(query or "pending")
+
     def create_event(self, summary: str, start_at: str, end_at: str) -> str | None:
         """Create a calendar event.
 
@@ -332,6 +338,12 @@ class DingTalkClient:
         event = result.get("result") or {}
         event_id = event.get("event_id", "")
         return f"事件已创建: {summary} (ID: {event_id})"
+
+    def get_event_detail(self, query: str) -> str | None:
+        return self.get_agenda(days=30)
+
+    def get_meeting_detail(self, query: str) -> str | None:
+        return None
 
     def get_admin_users(self) -> str | None:
         result = self._request("POST", "/topapi/org/admin/list", body={})

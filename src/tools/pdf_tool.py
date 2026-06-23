@@ -48,6 +48,25 @@ class PdfTool:
     # ------------------------------------------------------------------ #
     #  API
     # ------------------------------------------------------------------ #
+    def read_pdf(self, path: str) -> str:
+        try:
+            self._lazy_import()
+            doc = self._open_doc(path)
+            chunks: list[str] = []
+            for page_num in range(doc.page_count):
+                page = doc[page_num]
+                text = (page.get_text("text") or "").strip()
+                if text:
+                    chunks.append(f"[Page {page_num + 1}]\n{text}")
+            doc.close()
+            if not chunks:
+                return f"No extractable text found in {path}"
+            logger.info("Read text from %s (%d pages)", path, len(chunks))
+            return "\n\n".join(chunks)
+        except Exception as e:
+            logger.exception("read_pdf failed")
+            return f"Read PDF failed: {e}"
+
     def merge_pdfs(self, paths: List[str], output_path: str) -> str:
         try:
             self._lazy_import()
@@ -187,6 +206,7 @@ class PdfTool:
 # ------------------------------------------------------------------ #
 _tool = PdfTool()
 
+read_pdf = _tool.read_pdf
 merge_pdfs = _tool.merge_pdfs
 split_pdf = _tool.split_pdf
 compress_pdf = _tool.compress_pdf

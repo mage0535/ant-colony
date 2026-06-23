@@ -4,1312 +4,150 @@ from __future__ import annotations
 
 import json
 
-from datetime import datetime, timedelta
-
 from typing import Any
 
 
 
 import logging
-from src.models.contracts import Task, TaskDraft, TaskStatus as _TaskStatus
 
 logger = logging.getLogger(__name__)
 
 from src.tools.registry import ToolSpec
+from src.tools.platform_capability_tools import (
+    approval_detail_tool as _approval_detail_tool,
+    approval_list_tool as _approval_list_tool,
+    calendar_detail_tool as _calendar_detail_tool,
+    calendar_create_tool as _calendar_create_tool,
+    compress_pdf_tool as _compress_pdf_tool,
+    create_doc_tool as _create_doc_tool,
+    create_meeting_tool as _create_meeting_tool,
+    doc_search_tool as _doc_search_tool,
+    read_docs_tool as _read_docs_tool,
+    docx_template_outline_tool as _docx_template_outline_tool,
+    drive_search_tool as _drive_search_tool,
+    read_drive_tool as _read_drive_tool,
+    extract_pdf_images_tool as _extract_pdf_images_tool,
+    list_capabilities_tool as _list_capabilities_tool,
+    list_meetings_tool as _list_meetings_tool,
+    meeting_detail_tool as _meeting_detail_tool,
+    mail_summary_tool as _mail_summary_tool,
+    merge_pdfs_tool as _merge_pdfs_tool,
+    ocr_pdf_tool as _ocr_pdf_tool,
+    office_service_status_tool as _office_service_status_tool,
+    pdf_service_status_tool as _pdf_service_status_tool,
+    pptx_template_outline_tool as _pptx_template_outline_tool,
+    protect_pdf_tool as _protect_pdf_tool,
+    read_docx_tool as _read_docx_tool,
+    read_pdf_tool as _read_pdf_tool,
+    read_pptx_tool as _read_pptx_tool,
+    read_xlsx_tool as _read_xlsx_tool,
+    split_pdf_tool as _split_pdf_tool,
+    watermark_pdf_tool as _watermark_pdf_tool,
+    who_is_admin_tool as _who_is_admin_tool,
+    who_is_leader_tool as _who_is_leader_tool,
+    xlsx_template_outline_tool as _xlsx_template_outline_tool,
+)
+from src.tools.task_tools import (
+    create_draft_tool as _create_draft_tool,
+    list_spaces_tool as _list_spaces_tool,
+    query_tasks_tool as _query_tasks_tool,
+    search_tasks_tool as _search_tasks_tool,
+    set_priority_tool as _set_priority_tool,
+    task_analytics_tool as _task_analytics_tool,
+    transition_task_tool as _transition_task_tool,
+    work_journal_tool as _work_journal_tool,
+)
+from src.tools.knowledge_tools import (
+    add_document_tool as _add_document_tool,
+    delete_cloud_drive_tool as _delete_cloud_drive_tool,
+    list_cloud_drives_tool as _list_cloud_drives_tool,
+    list_knowledge_tool as _list_knowledge_tool,
+    promote_knowledge_tool as _promote_knowledge_tool,
+    register_cloud_drive_tool as _register_cloud_drive_tool,
+    search_knowledge_tool as _search_knowledge_tool,
+    sync_from_cloud_tool as _sync_from_cloud_tool,
+)
+from src.tools.memory_scope_tools import (
+    promote_scoped_memory_tool as _promote_scoped_memory_tool,
+    write_scoped_memory_tool as _write_scoped_memory_tool,
+)
+from src.tools.org_admin_tools import (
+    add_admin_tool as _add_admin_tool,
+    attendance_tool as _attendance_tool,
+    dept_attendance_tool as _dept_attendance_tool,
+    leave_balance_tool as _leave_balance_tool,
+    leave_tool as _leave_tool,
+    remove_admin_tool as _remove_admin_tool,
+    subordinate_balance_tool as _subordinate_balance_tool,
+    subordinate_tool as _subordinate_tool,
+)
+from src.tools.email_capability_tools import (
+    get_email_tool as _get_email_tool,
+    list_emails_tool as _list_emails_tool,
+    search_emails_tool as _search_emails_tool,
+    send_email_tool as _send_email_tool,
+)
+from src.tools.role_methodology_tools import (
+    investigate_tool as _investigate_tool,
+    list_roles_tool as _list_roles_tool,
+    office_hours_tool as _office_hours_tool,
+    retro_tool as _retro_tool,
+    review_doc_tool as _review_doc_tool,
+    select_role_tool as _select_role_tool,
+    set_role_tool as _set_role_tool,
+    spec_tool_handler as _spec_tool,
+)
+from src.tools.document_prompt_helpers import (
+    build_policy_fallback_content_helper as _build_policy_fallback_content,
+    build_requirement_spec_helper as _build_requirement_spec,
+    build_template_excerpt_helper as _build_template_excerpt,
+    build_template_prompt_block_helper as _build_template_prompt_block,
+    canonical_policy_section_heading_helper as _canonical_policy_section_heading,
+    formalize_policy_item_helper as _formalize_policy_item,
+    formalize_policy_spec_item_helper as _formalize_policy_spec_item,
+    is_policy_primary_item_helper as _is_policy_primary_item,
+    is_policy_section_heading_helper as _is_policy_section_heading,
+    is_policy_sub_item_helper as _is_policy_sub_item,
+    normalize_request_lines_helper as _normalize_request_lines,
+    split_template_and_request_helper as _split_template_and_request,
+    strip_policy_marker_helper as _strip_policy_marker,
+)
+from src.tools.basic_tool_modules import (
+    calendar_agenda_tool as _calendar_agenda_tool,
+    contact_search_tool as _contact_search_tool,
+    ddg_search_tool as _ddg_search_tool,
+    echo_tool as _echo_tool,
+    humanize_tool as _humanize_tool,
+    now_tool as _now_tool,
+    tushare_tool as _tushare_tool,
+)
 
 
 
 
 
-def _now_tool(args: dict[str, Any]) -> str:
 
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 
 
-
-def _echo_tool(args: dict[str, Any]) -> str:
-
-    return str(args.get("text", ""))
-
-
-
-
-
-def _create_draft_tool(args: dict[str, Any]) -> str:
-
-    from src.store.database import Database
-
-    from src.store.task_repo import TaskRepository
-
-    repo = TaskRepository(Database.get())
-
-    draft = TaskDraft(
-
-        title=args.get("title", "未命名任务"),
-
-        description=args.get("description", ""),
-
-        project_id=args.get("project_id", "default"),
-
-        assignee_user_id=args.get("assignee"),
-
-        confidence=0.8,
-
-        source_message_ids=[],
-
-    )
-
-    draft_id = repo.save_draft(draft)
-
-    if repo.confirm_draft(draft_id):
-
-        return f"任务已创建并自动确认：{draft.title}"
-
-    return f"任务已创建：{draft.title}（草稿#{draft_id}）"
-
-
-
-
-
-def _search_knowledge_tool(args: dict[str, Any]) -> str:
-
-    from src.knowledge.gbrain_repo import GbrainKnowledgeRepository
-
-    repo = GbrainKnowledgeRepository()
-
-    query = str(args.get("query", ""))
-
-    if not query:
-
-        return "请提供搜索关键词 (query)"
-
-    user_id = args.get("user_id", "*")
-
-    results = repo.search_accessible(query, user_id, limit=5) if user_id and user_id != "*" else repo.search(query, limit=5)
-
-    if not results:
-
-        return f"未找到关于 '{query}' 的知识条目"
-
-    lines = [f"搜索 '{query}' 找到 {len(results)} 条结果:"]
-
-    for r in results:
-
-        lines.append(f"  [{r.owner_type.value}] {r.content[:120]}")
-
-    return "\n".join(lines)
-
-
-
-
-
-def _query_tasks_tool(args: dict[str, Any]) -> str:
-
-    from src.store.database import Database
-
-    from src.store.task_repo import TaskRepository
-
-    repo = TaskRepository(Database.get())
-
-    project_id = str(args.get("project_id", ""))
-
-    tasks = repo.list_tasks(project_id=project_id) if project_id else repo.list_tasks()
-
-    if not tasks:
-
-        return "当前无任务" if not project_id else f"空间 {project_id} 中暂无任务"
-
-    lines = [f"任务列表 ({len(tasks)} 个):" if not project_id else f"空间 {project_id} 任务列表 ({len(tasks)} 个):"]
-
-    for t in tasks[:20]:
-
-        extra = ""
-
-        if t.blocked_reason:
-
-            extra = f" [阻塞: {t.blocked_reason}]"
-
-        if t.blocked_by_task_id:
-
-            extra += f" [依赖: {t.blocked_by_task_id}]"
-
-        lines.append(f"  {t.id}: [{t.status.value}] {t.title} @{t.assignee_user_id or '-'}{extra}")
-
-    return "\n".join(lines)
-
-
-
-
-
-def _attendance_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.attendance_tool import query_attendance
-
-    from src.store.database import Database
-
-    from src.store.task_repo import TaskRepository
-
-    days = int(args.get("days", 7))
-
-    user_id = args.get("user_id", "")
-
-    return query_attendance(user_id, days)
-
-
-
-
-
-def _leave_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.attendance_tool import query_attendance
-
-    user_id = args.get("user_id", "")
-
-    days = int(args.get("days", 30))
-
-    return query_attendance(user_id, days, query_type="leave")
-
-
-
-
-
-def _leave_balance_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.attendance_tool import query_leave_balance
-
-    return query_leave_balance(args.get("user_id", ""))
-
-
-
-
-
-def _dept_attendance_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.dept_tool import query_subordinates
-
-    return query_subordinates(args.get("user_id", ""), "all", int(args.get("days", 7)))
-
-
-
-
-
-def _subordinate_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.dept_tool import query_subordinate_by_name
-
-    return query_subordinate_by_name(
-
-        args.get("user_id", ""), args.get("name", ""),
-
-        args.get("type", "all"), int(args.get("days", 7))
-
-    )
-
-
-
-
-
-def _subordinate_balance_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.dept_tool import query_subordinate_balance
-
-    return query_subordinate_balance(args.get("user_id", ""), args.get("name", ""))
-
-
-
-
-
-def _tushare_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.tushare_mcp import call_tushare
-
-    method = args.get("method", "daily")
-
-    params = {}
-
-    if args.get("code"):
-
-        params["ts_code"] = args["code"]
-
-    if args.get("start"):
-
-        params["start_date"] = args["start"]
-
-    if args.get("end"):
-
-        params["end_date"] = args["end"]
-
-    return call_tushare(method, params)
-
-
-
-
-
-def _transition_task_tool(args: dict[str, Any]) -> str:
-
-    from src.store.database import Database
-
-    from src.store.task_repo import TaskRepository
-
-    from src.models.contracts import TaskStatus
-
-    repo = TaskRepository(Database.get())
-
-    task_id = args.get("task_id", "")
-
-    status_str = args.get("status", "")
-
-    try:
-
-        status = TaskStatus(status_str)
-
-    except ValueError:
-
-        return f"无效状态：{status_str}，有效值：in_progress/done/blocked/cancelled"
-
-    blocked_reason = args.get("blocked_reason")
-
-    repo.update_task_status(task_id, status, blocked_reason=blocked_reason)
-
-    extra = f" 原因：{blocked_reason}" if blocked_reason else ""
-
-    return f"任务 {task_id} 状态已更新为 {status.value}{extra}"
-
-
-
-
-
-def _search_tasks_tool(args: dict[str, Any]) -> str:
-
-    from src.store.database import Database
-
-    from src.store.task_repo import TaskRepository
-
-    repo = TaskRepository(Database.get())
-
-    keyword = args.get("keyword", "")
-
-    project_id = args.get("project_id", "")
-
-    limit = int(args.get("limit", 20))
-
-    tasks = repo.search_tasks(keyword=keyword, project_id=project_id, limit=limit)
-
-    if not tasks:
-
-        return f"未找到匹配的任务"
-
-    lines = [f"搜索 '{keyword}' 找到 {len(tasks)} 条结果:"]
-
-    for t in tasks[:limit]:
-
-        lines.append(f"  {t.id}: [{t.status.value}] {t.title} @{t.assignee_user_id or '-'}")
-
-    return "\n".join(lines)
-
-
-
-
-
-def _task_analytics_tool(args: dict[str, Any]) -> str:
-
-    from src.store.database import Database
-
-    from src.store.task_repo import TaskRepository
-
-    from src.orchestrator.task_analytics import TaskAnalytics
-
-    repo = TaskRepository(Database.get())
-
-    ta = TaskAnalytics(repo)
-
-    space_id = args.get("project_id", "")
-
-    data = ta.project_stats(space_id=space_id) if space_id else ta.dashboard_summary()
-
-    return json.dumps(data, ensure_ascii=False, indent=2)
-
-
-
-
-
-def _work_journal_tool(args: dict[str, Any]) -> str:
-
-    from src.store.database import Database
-
-    from src.store.task_repo import TaskRepository
-
-    from src.agents.work_journal import WorkJournal
-
-    repo = TaskRepository(Database.get())
-
-    user_id = args.get("user_id", "")
-
-    if not user_id:
-
-        return "请提供用户ID"
-
-    journal = WorkJournal(repo)
-
-    summary = journal.get_summary(user_id)
-
-    return json.dumps(summary, ensure_ascii=False, indent=2)
-
-
-
-
-
-def _list_spaces_tool(args: dict[str, Any]) -> str:
-
-    from src.store.database import Database
-
-    from src.store.task_repo import TaskRepository
-
-    from src.rooms.space_registry import SpaceRegistry
-
-    repo = TaskRepository(Database.get())
-
-    sr = SpaceRegistry(repo=repo)
-
-    stats = sr.stats()
-
-    return json.dumps(stats, ensure_ascii=False, indent=2)
-
-
-
-
-
-def _list_knowledge_tool(args: dict[str, Any]) -> str:
-
-    from src.knowledge.gbrain_repo import GbrainKnowledgeRepository
-
-    from src.knowledge.contracts import KnowledgeOwnerType
-
-    kr = GbrainKnowledgeRepository()
-
-    user_id = args.get("user_id", "")
-
-    owner_type = args.get("owner_type", "")
-
-    owner_id = args.get("owner_id", "")
-
-    if user_id:
-
-        results = kr.list_accessible(user_id)
-
-    elif owner_type and owner_id:
-
-        try:
-
-            ot = KnowledgeOwnerType(owner_type)
-
-        except ValueError:
-
-            return f"无效 owner_type: {owner_type}"
-
-        results = kr.list_for_owner(ot, owner_id)
-
-    else:
-
-        results = kr.list_for_owner(KnowledgeOwnerType.ORGANIZATION, "*")
-
-    if not results:
-
-        return "知识库为空"
-
-    lines = [f"知识条目 ({len(results)} 条):"]
-
-    for r in results[:20]:
-
-        lines.append(f"  [{r.owner_type.value}] {r.content[:100]}")
-
-    return "\n".join(lines)
-
-
-
-
-
-def _add_document_tool(args: dict[str, Any]) -> str:
-
-    """声明文档归属 — add a document to the knowledge base with scope-based ownership."""
-
-    from src.knowledge.acl import resolve_role, Role
-
-    from src.knowledge.gbrain_repo import GbrainKnowledgeRepository
-
-    from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
-
-    import uuid
-
-
-
-    scope = args.get("scope", "personal")
-
-    user_id = args.get("user_id", "")
-
-    title = args.get("title", "未命名文档")
-
-    content = args.get("content", "")
-
-    owner_id = args.get("owner_id", "")
-
-
-
-    if not user_id:
-
-        return "请提供用户ID"
-
-    if not content:
-
-        return "请提供文档内容"
-
-
-
-    role = resolve_role(user_id)
-
-
-
-    scope_requirements: dict[str, Role] = {
-
-        "company": Role.leader,
-
-        "department": Role.leader,
-
-        "project": Role.member,
-
-        "personal": Role.self,
-
-    }
-
-    required_role = scope_requirements.get(scope, Role.self)
-
-    if role < required_role:
-
-        return f"权限不足：当前角色 {role.name}，添加 '{scope}' 范围文档需要 {required_role.name} 权限"
-
-
-
-    scope_type_map = {
-
-        "company": "organization",
-
-        "department": "department",
-
-        "project": "project",
-
-        "personal": "personal",
-
-    }
-
-    owner_type_str = scope_type_map.get(scope, "personal")
-
-    owner_type = KnowledgeOwnerType(owner_type_str)
-
-    resolved_owner_id = owner_id or (user_id if scope == "personal" else "*")
-
-
-
-    # Get default ACL from the collector's helper
-
-    from src.knowledge.collector import _acl_for_owner_type
-
-    read_roles, write_roles = _acl_for_owner_type(owner_type_str)
-
-
-
-    repo = GbrainKnowledgeRepository()
-
-    entry = KnowledgeEntry(
-
-        id=str(uuid.uuid4()),
-
-        owner_type=owner_type,
-
-        owner_id=resolved_owner_id,
-
-        content=content,
-
-        tags=[title],
-
-        metadata={"title": title, "added_by": user_id, "scope": scope},
-
-        read_roles=read_roles,
-
-        write_roles=write_roles,
-
-    )
-
-    repo.save(entry)
-
-
-
-    return f"文档 '{title}' 已添加到知识库（归属：{scope}）"
-
-
-
-
-
-def _register_cloud_drive_tool(args: dict[str, Any]) -> str:
-
-    from src.knowledge.cloud_drive import register_drive
-
-    config = args.get("config", "{}")
-
-    if isinstance(config, str):
-
-        import json
-
-        try:
-
-            config = json.loads(config)
-
-        except json.JSONDecodeError:
-
-            config = {}
-
-    try:
-
-        did = register_drive(
-
-            name=args.get("name", ""),
-
-            driver_type=args.get("driver_type", ""),
-
-            config=config,
-
-            scope=args.get("scope", "organization"),
-
-            scope_id=args.get("scope_id", "*"),
-
-            rclone_remote=args.get("rclone_remote", ""),
-
-            user_id=args.get("user_id", ""),
-
-        )
-
-        return f"云盘 '{args.get('name')}' 已注册 (ID: {did})"
-
-    except (PermissionError, ValueError) as e:
-
-        return str(e)
-
-
-
-
-
-def _list_cloud_drives_tool(args: dict[str, Any]) -> str:
-
-    from src.knowledge.cloud_drive import list_drives
-
-    return list_drives(
-
-        scope=args.get("scope", ""),
-
-        user_id=args.get("user_id", ""),
-
-    )
-
-
-
-
-
-def _sync_from_cloud_tool(args: dict[str, Any]) -> str:
-
-    from src.knowledge.cloud_drive import sync_from_cloud
-
-    return sync_from_cloud(
-
-        drive_id=args.get("drive_id", ""),
-
-        remote_path=args.get("remote_path", ""),
-
-        local_path=args.get("local_path", ""),
-
-        user_id=args.get("user_id", ""),
-
-    )
-
-
-
-
-
-def _delete_cloud_drive_tool(args: dict[str, Any]) -> str:
-
-    from src.knowledge.cloud_drive import delete_drive
-
-    try:
-
-        ok = delete_drive(args.get("drive_id", ""), user_id=args.get("user_id", ""))
-
-        return "云盘已删除" if ok else "云盘不存在"
-
-    except PermissionError as e:
-
-        return str(e)
-
-
-
-
-
-def _select_role_tool(args: dict[str, Any]) -> str:
-    try:
-        from src.platform.role_manager import select_role
-        query = args.get("query", "")
-        if not query:
-            return ""
-        result = select_role(query)
-        role = result["role"]
-        out = role.name
-        if role.content:
-            out += "\n\n" + role.content[:2000]
-        return out
-    except Exception as e:
-        return ""
-
-
-
-
-
-def _list_roles_tool(args: dict[str, Any]) -> str:
-
-    from src.platform.role_manager import list_roles, list_categories
-
-    category = args.get("category", "")
-
-    if category:
-
-        roles = list_roles(category)
-
-        title = f"{category} 类角色 ({len(roles)} 个):"
-
-    else:
-
-        cats = list_categories()
-
-        roles = list_roles()
-
-        title = f"全部 {len(roles)} 个角色（按领域分类）:"
-
-    lines = [title]
-
-    for r in roles:
-
-        tags = ", ".join(r.tags[:4])
-
-        lines.append(f"  **{r.name}** — {r.description} [{tags}]")
-
-    if not category:
-
-        lines.append(f"\n领域: {', '.join(cats)}")
-
-    return "\n".join(lines)
-
-
-
-
-
-def _set_role_tool(args: dict[str, Any]) -> str:
-
-    from src.platform.role_manager import get_role
-
-    name = args.get("name", "")
-
-    if not name:
-
-        return "请指定角色名称"
-
-    role = get_role(name)
-
-    if not role:
-
-        return f"未找到角色 '{name}'，请使用 list_roles 查看可用角色"
-
-    lines = [f"已切换到 **{role.name}** ({role.category})"]
-
-    if role.content:
-
-        lines.append(f"\n=== 角色定义: {role.name} ===\n{role.content[:2000]}")
-
-    return "\n".join(lines)
-
-
-
-
-
-def _office_hours_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.gstack_skills import office_hours
-
-    return office_hours(goal=args.get("goal", ""), context=args.get("context", ""))
-
-
-
-
-
-def _review_doc_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.gstack_skills import review_doc
-
-    return review_doc(doc_type=args.get("type", "general"), content=args.get("content", ""))
-
-
-
-
-
-def _investigate_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.gstack_skills import investigate
-
-    return investigate(issue=args.get("issue", ""), context=args.get("context", ""))
-
-
-
-
-
-def _spec_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.gstack_skills import spec_tool
-
-    return spec_tool(goal=args.get("goal", ""))
-
-
-
-
-
-def _retro_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.gstack_skills import retro_tool
-
-    return retro_tool(period=args.get("period", "本周"), data=args.get("data", ""))
-
-
-
-
-
-
-
-
-
-def _add_admin_tool(args):
-
-    name = args.get("name", "")
-
-    platform = args.get("platform", "wecom")
-
-    from_user = args.get("from", "")
-
-    if not name:
-
-        return "请提供要添加的管理员姓名"
-
-    from src.knowledge.acl import resolve_role, Role
-
-    from src.platform.admin_registry import add_admin, get_admin_ids
-
-    from src.platform.api_wecom import _get
-
-
-
-    current_admins = get_admin_ids(platform)
-
-    role = resolve_role(from_user)
-
-    if current_admins and role < Role.admin:
-
-        return "权限不足：仅管理员可添加管理员。请先联系现有管理员添加。"
-
-
-
-    try:
-
-        dept_resp = _get("department/list")
-
-        for d in dept_resp.get("department", []):
-
-            users = _get("user/list", f"department_id={d['id']}&fetch_child=1")
-
-            for u in users.get("userlist", []):
-
-                if u.get("name", "") == name:
-
-                    add_admin(platform, u["userid"], name, from_user)
-
-                    return f"已添加 {name} 为企业管理员"
-
-        return f"未找到员工: {name}"
-
-    except Exception as e:
-
-        return f"添加失败: {e}"
-
-
-
-
-
-def _remove_admin_tool(args):
-
-    name = args.get('name', '')
-
-    platform = args.get('platform', 'wecom')
-
-    if not name:
-
-        return '请提供要移除的管理员姓名'
-
-    from src.platform.admin_registry import remove_admin, list_admins
-
-    for a in list_admins(platform):
-
-        if a['name'] == name or a['user_id'] == name:
-
-            remove_admin(platform, a['user_id'])
-
-            return '已移除管理员: %s' % name
-
-    return '未找到管理员: %s' % name
-
-
-
-
-
-
-def _humanize_tool(args):
-    from src.tools.humanizer import humanize, analyze_text_style
-    text = args.get("text", "")
-    if not text:
-        return "请提供要处理的文本"
-    result = humanize(text)
-    style = analyze_text_style(text)
-    out = ["去AI味处理结果:", result]
-    if style.get("ai_patterns"):
-        out.append("")
-        out.append("检测到AI模式: " + ", ".join(style["ai_patterns"].keys()))
-    return "\n".join(out)
+def _extract_policy_sections(request_text: str) -> list[tuple[str, list[str]]]:
+    spec = _build_requirement_spec('', '', request_text)
+    return [
+        (section['raw_title'], [item['main'] for item in section['items']])
+        for section in spec['sections']
+    ]
 
 
 def _generate_report_handler(args):
-    from src.tools.document_tool import generate_report
-    title = args.get("title", "文档")
-    content = args.get("content", "")
-    fmt = args.get("format", "docx")
-    user_id = args.get("from", "")
-    context_text = args.pop("_context_text", "")
+    from src.tools.document_generation_service import generate_document
 
-    if len(content.strip()) < 100 and context_text:
-        content = context_text
-    # Strip the Agent's own tool_call XML from context to get clean user input
-    import re as _re
-    content = _re.sub(r"<tool_call>.*?</tool_call>", "", content, flags=_re.DOTALL).strip()
-    if not content.strip():
-        return "请提供文档内容后再生成。请告诉我文档的具体内容、章节和需要包含的信息。"
+    return generate_document(args)
 
-    _original_len = len(content)
-    _enriched = False
-    _err = ""
-    try:
-        from src.config.bootstrap import build_settings_service
-        snap = None
-        try:
-            svc = build_settings_service()
-            snap = svc.build_runtime_snapshot()
-        except Exception as e:
-            _err = f"settings: {e}"
-        if snap and snap.llm_profiles:
-            for p in snap.llm_profiles:
-                if p.enabled:
-                    api_base = (p.api_base or "").rstrip("/")
-                    if not api_base or not p.api_key:
-                        continue
-                    import httpx as _httpx
-                    # Split content: first big chunk is template, last lines are user instructions
-                    _parts = content.strip().split("\n\n")
-                    _template = "\n\n".join(_parts[:-1]) if len(_parts) > 1 else content
-                    _request = _parts[-1] if len(_parts) > 1 else ""
-                    _template_block = _template if len(_template) > 50 else content
-                    prompt_text = (
-                        "你是企业文档撰写专家。下面包含两部分：\n"
-                        "【模板】一份文档模板/草稿，规定了章节结构、标题层级、编号格式、签字栏等框架\n"
-                        "【要求】用户的具体需求\n\n"
-                        "你的任务：完全按照【模板】的章节结构和格式框架，根据【要求】将内容充实为一篇可直接使用的正式文档。\n\n"
-                        "规则：\n"
-                        "1. 章节结构、标题层级、编号格式（1. / 1.1 / 第一条 等）、表格、签字栏 —— 全部继承自【模板】，一个都不要丢\n"
-                        "2. 模板中的空章节、占位符、简短标题 —— 展开为有实质内容的完整段落\n"
-                        "3. 如果【要求】中有具体的补充内容或修改指示，优先响应，覆盖模板中的占位内容\n"
-                        "4. 语言正式、条款式，符合企业规章制度格式\n"
-                        "5. 输出完整文档正文（含标题），不要任何额外说明、不要对话\n\n"
-                        "=== 【模板】===\n" + _template_block + "\n\n"
-                        "=== 【要求】===\n" + _request
-                    )
-                    _resp = _httpx.post(api_base + "/chat/completions",
-                        headers={"Authorization": "Bearer " + p.api_key},
-                        json={"model": p.model_name, "messages": [{"role": "user", "content": prompt_text}], "max_tokens": 16384},
-                        timeout=120)
-                    if _resp.status_code == 200:
-                        enriched = _resp.json()["choices"][0]["message"]["content"]
-                        if enriched and len(enriched.strip()) >= 20:
-                            content = enriched
-                            _enriched = True
-                    else:
-                        _err = f"API {_resp.status_code}: {_resp.text[:200]}"
-                    break
-    except Exception as e:
-        _err = str(e)
-    if _enriched:
-        logger.info("Content enriched: %d -> %d chars", _original_len, len(content))
-    elif _err:
-        logger.warning("Content enrichment skipped: %s", _err)
 
-    result = generate_report(title, content, fmt)
-    if result.startswith("文档生成失败") or result.startswith("OfficeCLI"):
-        return result
-    import os as _os2
-    _fn = _os2.path.basename(result)
-    _pushed = False
-    import sys as _sys
-    _printd = lambda msg: print("[builtin]", msg, file=_sys.stderr, flush=True)
-    _download_url = f"http://10.12.254.122:18092/api/v1/documents/{_fn}"
-    if user_id:
-        _printd("send_file: user_id=%s file=%s" % (user_id, _fn))
-        try:
-            from src.gateway.wecom_outbound import send_file_card, send_file
-            _pushed = send_file_card(user_id, _fn, _download_url)
-            _printd("send_file_card -> %s" % _pushed)
-            if _pushed:
-                send_file(user_id, result)
-        except Exception as _e:
-            _printd("send_file ERROR: %s" % _e)
-    if _pushed:
-        return f"文档已生成，请在聊天中查收文件。\n如果未收到，也可点击下载：http://10.12.254.122:18092/api/v1/documents/{_fn}"
-    return f"文档已生成，点击下载：http://10.12.254.122:18092/api/v1/documents/{_fn}"
 
 
-def _set_priority_tool(args: dict[str, Any]) -> str:
 
-    from src.store.database import Database
-
-    from src.store.task_repo import TaskRepository
-
-    repo = TaskRepository(Database.get())
-
-    task_id = args.get("task_id", "")
-
-    priority = args.get("priority", "medium")
-
-    if priority not in ("high", "medium", "low"):
-
-        return "优先级必须为 high/medium/low"
-
-    repo.set_priority(task_id, priority)
-
-    return f"任务 {task_id} 优先级已设为 {priority}"
-
-
-
-
-
-def _send_email_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.email_tool import send_email
-
-    to = args.get("to", "")
-
-    subject = args.get("subject", "")
-
-    body = args.get("body", "")
-
-    cc = args.get("cc")
-
-    return send_email(to=to, subject=subject, body=body, cc=cc)
-
-
-
-
-
-def _list_emails_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.email_tool import list_inbox
-
-    limit = int(args.get("limit", 10))
-
-    return list_inbox(limit=limit)
-
-
-
-
-
-def _search_emails_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.email_tool import search_emails
-
-    query = args.get("query", "")
-
-    return search_emails(query=query)
-
-
-
-
-
-def _get_email_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.email_tool import get_email
-
-    uid = args.get("uid", "")
-
-    return get_email(uid=uid)
-
-
-
-
-
-def _merge_pdfs_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.pdf_tool import merge_pdfs
-
-    paths = args.get("paths", "").split(",")
-
-    output = args.get("output", "merged.pdf")
-
-    return merge_pdfs([p.strip() for p in paths], output)
-
-
-
-
-
-def _split_pdf_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.pdf_tool import split_pdf
-
-    path = args.get("path", "")
-
-    pages = args.get("pages", "")
-
-    output = args.get("output", "split.pdf")
-
-    return split_pdf(path, pages, output)
-
-
-
-
-
-def _compress_pdf_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.pdf_tool import compress_pdf
-
-    path = args.get("path", "")
-
-    output = args.get("output", "compressed.pdf")
-
-    return compress_pdf(path, output)
-
-
-
-
-
-def _protect_pdf_tool(args: dict[str, Any]) -> str:
-
-    from src.tools.pdf_tool import protect_pdf
-
-    path = args.get("path", "")
-
-    password = args.get("password", "")
-
-    output = args.get("output", "protected.pdf")
-
-    return protect_pdf(path, password, output)
-
-
-
-
-
-def _ddg_search_tool(args: dict[str, Any]) -> str:
-
-    import urllib.request, urllib.parse, json
-
-    query = args.get("query", "")
-
-    if not query:
-
-        return "请提供搜索关键词"
-
-    try:
-
-        url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_html=1"
-
-        resp = json.loads(urllib.request.urlopen(url, timeout=15).read())
-
-        abstract = resp.get("AbstractText", "")
-
-        results = resp.get("Results", []) or resp.get("RelatedTopics", [])
-
-        lines = [f"DuckDuckGo 搜索结果: {query}"]
-
-        if abstract:
-
-            lines.append(f"摘要: {abstract}")
-
-        for r in results[:8]:
-
-            if isinstance(r, dict) and "Text" in r:
-
-                lines.append(f"  - {r.get('Text','')}")
-
-            elif isinstance(r, dict) and "Result" in r:
-
-                lines.append(f"  - {r.get('Result','')}")
-
-        return "\n".join(lines) if len(lines) > 1 else f"未找到关于 '{query}' 的结果"
-
-    except Exception as e:
-
-        return f"DuckDuckGo 搜索失败: {e}"
-
-
-
-
-
-def _contact_search_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import contact_search
-
-    query = args.get("query", "")
-
-    if not query:
-
-        return "请提供搜索关键词，如姓名、手机号"
-
-    return contact_search(query)
-
-
-
-
-
-def _calendar_agenda_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import calendar_agenda
-
-    days = int(args.get("days", 7))
-
-    return calendar_agenda(days)
-
-
-
-
-
-def _doc_search_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import doc_search
-
-    query = args.get("query", "")
-
-    if not query:
-
-        return "请提供搜索关键词"
-
-    return doc_search(query)
-
-
-
-
-
-def _approval_list_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import approval_list
-
-    status = args.get("status", "pending")
-
-    return approval_list(status)
-
-
-
-
-
-def _calendar_create_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import calendar_create
-
-    summary = args.get("summary", "")
-
-    start = args.get("start", "")
-
-    end = args.get("end", "")
-
-    if not summary or not start or not end:
-
-        return "请提供日程标题、开始时间和结束时间"
-
-    return calendar_create(summary, start, end)
-
-
-
-
-
-def _create_doc_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import create_doc
-
-    title = args.get("title", "")
-
-    content = args.get("content", "")
-
-    if not title:
-
-        return "请提供文档标题"
-
-    return create_doc(title, content)
-
-
-
-
-
-def _list_meetings_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import list_meetings
-
-    return list_meetings()
-
-
-
-
-
-def _create_meeting_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import create_meeting
-
-    title = args.get("title", "")
-
-    start = args.get("start", "")
-
-    end = args.get("end", "")
-
-    attendees = args.get("attendees", "")
-
-    if not title or not start or not end:
-
-        return "请提供会议标题、开始时间和结束时间"
-
-    return create_meeting(title, start, end, attendees)
-
-
-
-
-
-def _who_is_admin_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import who_is_admin
-
-    return who_is_admin()
-
-
-
-
-
-def _who_is_leader_tool(args: dict[str, Any]) -> str:
-
-    from src.platform import who_is_leader
-
-    return who_is_leader()
 
 
 
@@ -1867,6 +705,87 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
     ToolSpec(
 
+        id="builtin:promote_knowledge",
+
+        name="升级知识条目作用域",
+
+        category="knowledge",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="将知识条目从个人/项目作用域升级到部门或企业公共作用域，用于沉淀可复用经验。",
+
+        parameters={
+
+            "entry_id": {"type": "string", "description": "知识条目ID（必填）"},
+            "target_scope": {"type": "string", "description": "目标作用域：personal/project/department/organization"},
+            "target_id": {"type": "string", "description": "目标作用域ID（必填）"},
+
+        },
+
+        handler=_promote_knowledge_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:write_scoped_memory",
+
+        name="写入作用域记忆",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="向个人/部门/项目/群组作用域写入一条结构化记忆，用于后续协作检索。",
+
+        parameters={
+
+            "scope_type": {"type": "string", "description": "作用域：personal/department/project/group"},
+            "scope_id": {"type": "string", "description": "作用域ID（必填）"},
+            "content": {"type": "string", "description": "记忆内容（必填）"},
+            "source": {"type": "string", "description": "来源标记（可选）"},
+
+        },
+
+        handler=_write_scoped_memory_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:promote_scoped_memory",
+
+        name="升级作用域记忆",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="将作用域记忆从个人提升到项目/部门等更高层作用域，支持经验沉淀。",
+
+        parameters={
+
+            "source_scope_type": {"type": "string", "description": "源作用域：personal/department/project/group"},
+            "source_scope_id": {"type": "string", "description": "源作用域ID（必填）"},
+            "target_scope_type": {"type": "string", "description": "目标作用域：personal/department/project/group"},
+            "target_scope_id": {"type": "string", "description": "目标作用域ID（必填）"},
+            "query": {"type": "string", "description": "用于选择要升级记忆的关键词（必填）"},
+
+        },
+
+        handler=_promote_scoped_memory_tool,
+
+    ),
+
+    ToolSpec(
+
         id="builtin:add_document",
 
         name="添加文档到知识库（声明归属）",
@@ -2135,6 +1054,346 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
     ToolSpec(
 
+        id="builtin:read_pdf",
+
+        name="读取PDF文本",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="提取 PDF 文本内容。当用户说'读取PDF'、'查看PDF内容'、'提取PDF文字'时使用。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "PDF文件路径（必填）"},
+
+        },
+
+        handler=_read_pdf_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:extract_pdf_images",
+
+        name="提取PDF图片",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="提取 PDF 中的图片资源。当用户说'提取PDF图片'、'导出PDF图片'时使用。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "PDF文件路径（必填）"},
+
+            "output_dir": {"type": "string", "description": "输出目录（可选，默认pdf_images）"},
+
+        },
+
+        handler=_extract_pdf_images_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:watermark_pdf",
+
+        name="添加PDF水印",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="为 PDF 添加文字水印。当用户说'给PDF加水印'、'PDF水印'时使用。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "PDF文件路径（必填）"},
+
+            "watermark": {"type": "string", "description": "水印文字（必填）"},
+
+            "output": {"type": "string", "description": "输出文件名（可选，默认watermarked.pdf）"},
+
+        },
+
+        handler=_watermark_pdf_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:read_pdf",
+
+        name="读取PDF文本",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="读取并提取 PDF 文本内容。当用户说'读取PDF'、'查看PDF文字'时使用。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "PDF文件路径（必填）"},
+
+        },
+
+        handler=_read_pdf_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:extract_pdf_images",
+
+        name="提取PDF图片",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="提取 PDF 中的图片资源。当用户说'提取PDF图片'、'导出PDF图片'时使用。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "PDF文件路径（必填）"},
+
+            "output_dir": {"type": "string", "description": "输出目录（可选，默认pdf_images）"},
+
+        },
+
+        handler=_extract_pdf_images_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:pdf_service_status",
+
+        name="查看PDF服务状态",
+
+        category="system",
+
+        risk_level="none",
+
+        allowed_roles=["personal", "project"],
+
+        description="查看当前本地 PDF 处理后端的可用状态，用于排查 PDF 能力是否已就绪。",
+
+        parameters={},
+
+        handler=_pdf_service_status_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:office_service_status",
+
+        name="查看Office服务状态",
+
+        category="system",
+
+        risk_level="none",
+
+        allowed_roles=["personal", "project"],
+
+        description="查看当前本地 Office 文档处理后端的可用状态，用于排查 docx/xlsx/pptx 能力是否已就绪。",
+
+        parameters={},
+
+        handler=_office_service_status_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:docx_template_outline",
+
+        name="提取DOCX模板结构",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="提取 DOCX 模板结构摘要，用于模板调试、排查和后续结构化填充。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "DOCX模板路径（必填）"},
+
+        },
+
+        handler=_docx_template_outline_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:xlsx_template_outline",
+
+        name="提取XLSX模板结构",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="提取 XLSX 模板结构摘要，用于表格模板调试、排查和后续结构化填充。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "XLSX模板路径（必填）"},
+
+        },
+
+        handler=_xlsx_template_outline_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:pptx_template_outline",
+
+        name="提取PPTX模板结构",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="提取 PPTX 模板结构摘要，用于演示文稿模板调试、排查和后续结构化填充。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "PPTX模板路径（必填）"},
+
+        },
+
+        handler=_pptx_template_outline_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:read_docx",
+
+        name="读取DOCX文本",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="读取 DOCX 文本内容。当用户说'读取docx'、'查看word内容'时使用。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "DOCX文件路径（必填）"},
+
+        },
+
+        handler=_read_docx_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:read_xlsx",
+
+        name="读取XLSX内容",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="读取 XLSX 表格内容。当用户说'读取xlsx'、'查看表格内容'时使用。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "XLSX文件路径（必填）"},
+
+        },
+
+        handler=_read_xlsx_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:read_pptx",
+
+        name="读取PPTX内容",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="读取 PPTX 幻灯片文本内容。当用户说'读取pptx'、'查看PPT内容'时使用。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "PPTX文件路径（必填）"},
+
+        },
+
+        handler=_read_pptx_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:ocr_pdf",
+
+        name="OCR识别PDF",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="对扫描型 PDF 执行 OCR 识别并生成可搜索 PDF。当用户说'OCR PDF'、'识别扫描PDF'时使用。",
+
+        parameters={
+
+            "path": {"type": "string", "description": "输入PDF路径（必填）"},
+
+            "output": {"type": "string", "description": "输出文件名（可选，默认ocr.pdf）"},
+
+            "language": {"type": "string", "description": "OCR语言（可选，默认chi_sim+eng）"},
+
+        },
+
+        handler=_ocr_pdf_tool,
+
+    ),
+
+    ToolSpec(
+
         id="builtin:ddg_search",
 
         name="DuckDuckGo搜索（备选搜索引擎）",
@@ -2231,6 +1490,122 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
     ToolSpec(
 
+        id="builtin:read_docs",
+
+        name="读取企业文档内容",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="读取企业文档或在线文档的正文摘要。当用户说'打开文档'、'读取文档内容'、'看看这份文档写了什么'时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "文档标题或关键词（必填）"},
+
+        },
+
+        handler=_read_docs_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:drive_search",
+
+        name="搜索企业网盘",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="搜索企业网盘或云盘中的文件。当用户说'搜索网盘'、'找网盘文件'、'查共享盘资料'时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "网盘搜索关键词（必填）"},
+
+        },
+
+        handler=_drive_search_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:read_drive",
+
+        name="读取网盘文件内容",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="读取已同步到系统的网盘文件正文摘要。当用户说'打开网盘文件'、'读取共享盘内容'时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "网盘文件名称或关键词（必填）"},
+
+        },
+
+        handler=_read_drive_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:mail_summary",
+
+        name="汇总企业邮箱",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="汇总企业邮箱中的邮件信息。当用户说'汇总邮件'、'看看今天的邮件'、'总结邮箱消息'时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "邮箱筛选关键词（可选）"},
+
+        },
+
+        handler=_mail_summary_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:list_capabilities",
+
+        name="查看当前可用能力协议",
+
+        category="system",
+
+        risk_level="none",
+
+        allowed_roles=["personal", "project"],
+
+        description="查看当前 Bot 后端已接入的能力协议、对应方法和提供者，用于调试、交接或能力盘点。",
+
+        parameters={},
+
+        handler=_list_capabilities_tool,
+
+    ),
+
+    ToolSpec(
+
         id="builtin:approval_list",
 
         name="查看审批待办",
@@ -2250,6 +1625,30 @@ BUILTIN_TOOLS: list[ToolSpec] = [
         },
 
         handler=_approval_list_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:approval_detail",
+
+        name="查看审批详情",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="查看审批单详情或更细的审批信息。当用户说'审批详情'、'打开审批单'时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "审批单关键词或状态（可选）"},
+
+        },
+
+        handler=_approval_detail_tool,
 
     ),
 
@@ -2329,6 +1728,30 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
     ToolSpec(
 
+        id="builtin:meeting_detail",
+
+        name="查看会议详情",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="查看会议详情。当用户说'会议详情'、'打开这个会议'时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "会议标题或关键词（可选）"},
+
+        },
+
+        handler=_meeting_detail_tool,
+
+    ),
+
+    ToolSpec(
+
         id="builtin:create_meeting",
 
         name="创建会议",
@@ -2354,6 +1777,30 @@ BUILTIN_TOOLS: list[ToolSpec] = [
         },
 
         handler=_create_meeting_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:calendar_detail",
+
+        name="查看日程详情",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="查看日程详情或更大范围的日程信息。当用户说'日程详情'、'打开这个日程'时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "日程关键词（可选）"},
+
+        },
+
+        handler=_calendar_detail_tool,
 
     ),
 

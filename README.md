@@ -1,287 +1,195 @@
-# Ant Colony 🐜 — 企业多智能体协作系统
+# Ant Colony
+
+企业多智能体协作系统，采用 **Bot First, Capability Backend** 架构。
 
 > [English](README.en.md) · [安装指南](docs/installation-guide.md) · [使用手册](docs/user-manual.md)
 
-<p align="center">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/platform-WeCom%20%7C%20Feishu%20%7C%20DingTalk%20%7C%20Telegram-brightgreen" alt="Platforms">
-  <img src="https://img.shields.io/badge/agents-215%20expert%20roles-orange" alt="215 Expert Roles">
-  <img src="https://img.shields.io/badge/tools-57%20integrated-yellow" alt="57 Tools">
-</p>
+---
+
+## 项目是什么
+
+Ant Colony 不是一个单纯的聊天机器人，也不是一个单独的工作台应用。
+
+它是一个面向企业协作场景的多智能体系统，核心目标是：
+
+- 员工只需要在企业 IM 中找 Bot
+- Bot 负责理解意图、调度 Agent、调用企业能力
+- 平台应用、开放 API、第三方连接器和内部系统都作为 Bot 背后的能力后端
+
+一句话：
+
+**用户只与 Bot 交互，Bot 再替用户调用企业能力。**
 
 ---
 
-## 📋 项目简介
+## 当前架构方向
 
-**Ant Colony（蚁群）** 是一个企业级多智能体协作系统。它不是简单的聊天机器人，而是一个**完整的 AI 劳动力平台**——每个员工拥有自己的 AI 助手，每个项目有专属的项目 Agent，所有助手在聊天中协同工作。
+项目已正式收敛为：
 
-### 🎯 核心理念
+**Bot First, Capability Backend**
+
+### 前端
+
+- WeCom Bot
+- Feishu Bot
+- DingTalk Bot
+
+员工主入口统一是 Bot，而不是多个平台分别做前端页面。
+
+### 中间编排层
+
+- Gateway / Dispatcher
+- PersonalAgent / ProjectAgent / 专家角色
+- Tool Orchestrator
+- Task / Memory / Knowledge
+- File & Document Pipeline
+
+### 后端能力层
+
+- 平台官方 API
+- 平台应用能力
+- 第三方连接器
+- 本地内部能力（如云盘、邮箱）
+- 后续内部业务系统
+
+---
+
+## 核心理念
 
 | 传统模式 | Ant Colony 模式 |
-|---------|----------------|
-| 员工在各个系统间切换操作 | 🤖 在聊天中一句话完成所有操作 |
-| 知识散落在文档、网盘、邮件里 | 🧠 统一知识库，按权限分级访问 |
-| 任务靠人工跟踪推进 | 📋 AI 自动识别任务、催办、关阻塞 |
-| 每个平台需要单独学习 | 🔌 统一 API 接入企微/飞书/钉钉/Telegram |
-
-### 🏗 架构
-
-```
-用户 → 企业微信/飞书/钉钉/Telegram
-         │
-         ▼
-   消息网关 (Gateway) :18090
-         │
-    ┌────┴────┐
-    ▼         ▼
-  LLM 引擎  工具注册表 (57 工具)
-    │         │
-    ▼         ▼
-  记忆体 ──→ 知识库 (PostgreSQL + ACL)
-   (gbrain)   │
-              ├─ 公司知识库 (全员可读)
-              ├─ 部门知识库 (部门可读)
-              ├─ 项目知识库 (成员可读)
-              └─ 个人知识库 (仅本人+管理员)
-```
+|------|------|
+| 员工在多个系统间切换 | 员工只找 Bot |
+| 平台应用直接面向用户 | 平台能力退到 Bot 后端 |
+| 文件、审批、通讯录、日程分散 | 统一由 Bot 调用能力层 |
+| 知识、任务、沟通分离 | 聊天、任务、知识、文件在同一协作流里 |
 
 ---
 
-## ✨ 功能总览
+## 当前能力面
 
-### 🤖 215 个 AI 专家角色
+### Agent 层
 
-系统内置 **215 个即插即用的 AI 专家角色**，覆盖工程、设计、营销、产品、安全、金融等 18 个领域。AI 助手会根据你的问题**自动匹配**最合适的专家身份。
+- 个人 Agent
+- 项目 Agent
+- 专家角色 Agent
 
+### 文件与文档
+
+- 上传模板
+- 解析附件
+- 结构化文档生成
+- 模板保留与格式继承
+
+### 企业能力域
+
+当前统一能力协议已开始落地：
+
+- `contacts.search`
+- `calendar.list`
+- `calendar.create`
+- `docs.search`
+- `docs.create`
+- `approval.list`
+- `meeting.list`
+- `meeting.create`
+- `org.admins`
+- `org.leaders`
+- `drive.search`
+- `mail.summary`
+
+对应入口代码：
+
+- `src/platform/capability_backend.py`
+- `src/platform/internal_capability_provider.py`
+- `src/platform/__init__.py`
+
+---
+
+## 当前目录重点
+
+```text
+src/
+├── agents/                Agent 实现
+├── gateway/               消息入口、路由、Bot/回调桥接
+├── engine/                LLM 引擎
+├── orchestrator/          编排、批处理、任务推进
+├── memory/                会话记忆与多层记忆
+├── knowledge/             知识库、文档、云盘
+├── tools/                 Bot 可调用工具
+├── platform/              统一能力后端
+├── store/                 持久层
+├── models/                数据模型
+└── web/                   保留的后端接口
 ```
-你：帮我写一篇小红书种草笔记
-AI：我将以 **小红书运营专家** 的身份来协助你...
-```
 
-如果角色不合适，说"换一个角色"即可切换。
+特别说明：
 
-> 角色库源自 [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh)（MIT 协议）并深度集成。
+- `web/` 当前不是主前端
+- 主交互面应理解为企业 IM 中的 Bot
 
-### 🛠 57 个内置工具（完整清单）
+---
 
-<details>
-<summary><b>📋 任务管理 (8个)</b></summary>
+## 运行与服务
 
-| 工具 | 触发语句 |
-|------|---------|
-| `create_draft` | 创建任务 [标题] |
-| `query_tasks` | 查看我的任务 |
-| `search_tasks` | 搜索任务 [关键词] |
-| `transition_task` | 完成任务 / 开始任务 / 阻塞任务 |
-| `task_analytics` | 查看任务统计 |
-| `work_journal` | 查看工作日志 |
-| `list_spaces` | 查看项目空间 |
-| `set_priority` | 把[任务]设为高优先级 |
-</details>
+测试服务器当前主要服务：
 
-<details>
-<summary><b>🧠 知识库 (3个) — ACL 分级权限</b></summary>
-
-| 范围 | 可读 | 可写 |
+| 服务 | 端口 | 说明 |
 |------|------|------|
-| 公司 (organization) | 全员 | admin + 公司负责人 |
-| 部门 (department) | 部门成员 | admin + 部门负责人 |
-| 项目 (project) | 项目成员 | admin + 项目成员 |
-| 个人 (personal) | 本人 + admin | 本人 + admin |
-
-| 工具 | 触发语句 |
-|------|---------|
-| `search_knowledge` | 搜索知识 [关键词] |
-| `list_knowledge` | 查看知识库 |
-| `add_document` | 添加文档 归属:公司 标题:xxx 内容:xxx |
-</details>
-
-<details>
-<summary><b>👥 平台工具 (8个) — 跨企微/飞书/钉钉</b></summary>
-
-| 工具 | 触发语句 | 企微 | 飞书 | 钉钉 |
-|------|---------|------|------|------|
-| `contact_search` | 查找联系人 [姓名] | ✅ | ✅ | ✅ |
-| `calendar_agenda` | 查看日程 | ✅ | ✅ | ✅ |
-| `calendar_create` | 创建日程 [标题] [时间] | ✅ | ✅ | ✅ |
-| `doc_search` | 搜索文档 [关键词] | ✅ | ✅ | ✅ |
-| `create_doc` | 创建文档 [标题] | ✅ | — | — |
-| `approval_list` | 查看待审批 | — | ✅ | ✅ |
-| `who_is_admin` | 谁是平台管理员？ | ✅ | ✅ | ✅ |
-| `who_is_leader` | 谁是部门负责人？ | ✅ | — | — |
-</details>
-
-<details>
-<summary><b>📄 文档与生产力 (9个)</b></summary>
-
-| 工具 | 触发语句 |
-|------|---------|
-| `send_email` | 发送邮件到 [地址] 主题 [主题] |
-| `list_emails` | 查看收件箱 |
-| `search_emails` | 搜索邮件 [关键词] |
-| `get_email` | 查看邮件详情 [UID] |
-| `merge_pdfs` | 合并PDF [文件列表] |
-| `split_pdf` | 拆分PDF [文件] 页数 [范围] |
-| `compress_pdf` | 压缩PDF [文件] |
-| `protect_pdf` | 加密PDF [文件] 密码 [密码] |
-| `generate_document` | 生成报告 [标题] [内容] |
-</details>
-
-<details>
-<summary><b>🔍 搜索 (3个)</b></summary>
-
-| 工具 | 触发语句 | 说明 |
-|------|---------|------|
-| `anysearch` | 搜索 [关键词] | 互联网搜索（主搜索引擎） |
-| `ddg_search` | 用DuckDuckGo搜索 [关键词] | 备选搜索引擎 |
-| `weather` | 天气 [城市] | 实时天气查询 |
-</details>
-
-<details>
-<summary><b>🎭 AI 角色系统 (3个)</b></summary>
-
-| 工具 | 触发语句 |
-|------|---------|
-| `select_role` | 自动调用（根据请求匹配最佳角色） |
-| `list_roles` | 有哪些角色？ |
-| `set_role` | 切换到 [角色名] |
-</details>
-
-<details>
-<summary><b>🔧 GStack 方法论 (5个)</b></summary>
-
-| 工具 | 触发语句 | 来源 |
-|------|---------|------|
-| `office_hours` | 帮我分析需求 [描述] | YC Office Hours |
-| `review_doc` | 审查 [内容] | Staff Engineer Review |
-| `investigate` | 排查 [问题] | 根因排查协议 |
-| `spec` | 写需求文档 [目标] | 规格化方法论 |
-| `retro` | 做回顾 | 团队回顾框架 |
-</details>
-
-<details>
-<summary><b>☁️ 云盘同步 (4个) — ACL 分级</b></summary>
-
-| 范围 | 谁可以配置 | 支持的云盘 |
-|------|-----------|-----------|
-| 公司级 | admin + 公司负责人 | OneDrive / Google Drive / 阿里云盘 / 百度云盘 |
-| 部门级 | admin + 部门负责人 | Dropbox / Mega / 坚果云 / Nextcloud |
-| 项目级 | admin | iCloud / 天翼云盘 / 115 / 夸克网盘 |
-
-| 工具 | 触发语句 |
-|------|---------|
-| `register_cloud_drive` | 添加云盘 [名称] [类型] |
-| `list_cloud_drives` | 查看云盘 |
-| `sync_from_cloud` | 同步云盘 |
-| `delete_cloud_drive` | 删除云盘 [ID] |
-</details>
-
-<details>
-<summary><b>📊 考勤查询 (6个)</b></summary>
-
-| 工具 | 触发语句 |
-|------|---------|
-| `query_attendance` | 查看考勤 |
-| `query_leave` | 查看请假记录 |
-| `leave_balance` | 年假还剩几天？ |
-| `query_dept` | 查看部门考勤 |
-| `query_subordinate` | 查[姓名]的考勤 |
-| `query_subordinate_balance` | 查[姓名]的假期余额 |
-</details>
-
-<details>
-<summary><b>💰 金融与系统 (10个)</b></summary>
-
-| 工具 | 触发语句 |
-|------|---------|
-| `tushare` | 查股票 [代码] |
-| `now` | 现在几点？ |
-| `echo` | 回声测试 |
-| `cron_list` | 查看定时任务 |
-| `add_admin` | 添加管理员 [姓名] |
-| `remove_admin` | 移除管理员 [姓名] |
-| `who_is_leader` | 谁是部门负责人？ |
-| `who_is_admin` | 谁是平台管理员？ |
-| `list_roles` | 有哪些角色？ |
-| `select_role` | 自动调用（角色匹配） |
-</details>
+| `ant-colony-gateway` | 18090 | 主网关 + Agent 编排 |
+| `ant-colony-callback` | 18091 | 旧 WeCom callback 通道（兼容保留） |
+| `ant-colony-dashboard` | 18092 | REST / 文件访问接口 |
+| `gbrain-bridge` | 8787 | 知识图谱 |
+| `hindsight-bridge` | 8890 | 事实记忆 |
+| `embed-service` | 8766 | 向量服务 |
 
 ---
 
-## 🧩 借鉴的开源项目
-
-Ant Colony 站在巨人的肩膀上。以下开源项目为本项目提供了关键能力：
-
-| 项目 | 用途 | 协议 |
-|------|------|------|
-| [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh) | 215 个 AI 专家角色定义 | MIT |
-| [gstack](https://github.com/garrytan/gstack) | YC Office Hours / Review / Investigate / Spec / Retro 方法论 | MIT |
-| [crew44](https://github.com/getcrew44/crew44) | 多 Agent 编排与 Handover 协议架构参考 | MIT |
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | OCR/文档提取、邮件、PDF 工具架构参考 | MIT |
-| [SkillsBot](https://www.skillsbot.cn) | 技能定义格式参考 | — |
-
-致谢所有维护者和贡献者 🙏
-
----
-
-## 🚀 快速开始
+## 快速开始
 
 ```bash
 git clone https://github.com/[your]/ant-colony.git
 cd ant-colony
-python scripts/setup.py      # 交互式安装引导
-python run_gateway.py        # 启动系统
+python scripts/setup.py
+python run_gateway.py
 ```
 
-首次安装请参考 [安装引导文档](docs/installation-guide.md)。
+首次安装请先阅读：
 
-### 前置要求
-
-- Python 3.10+
-- PostgreSQL 16+（含 pgvector 扩展）
-- 至少一个 IM 平台的开发者账号（企微/飞书/钉钉/Telegram）
+- [安装指南](docs/installation-guide.md)
+- [使用手册](docs/user-manual.md)
 
 ---
 
-## 📖 文档
+## 后续同事先看哪些文档
 
-| 文档 | 语言 | 说明 |
-|------|------|------|
-| [安装引导](docs/installation-guide.md) | 中文 | 小白向的详细安装步骤 |
-| [使用手册](docs/user-manual.md) | 中文 | 员工使用指南 |
-| [Installation Guide](docs/installation-guide.en.md) | English | Beginner-friendly setup |
-| [AGENTS.md](AGENTS.md) | 中文 | 开发者/维护者文档 |
-| [handoff.md](docs/handoff.md) | 中文 | 项目交接状态 |
+建议顺序：
 
----
+1. `README.md`
+2. `AGENTS.md`
+3. `docs/handoff.md`
+4. `docs/decisions.md`
+5. `docs/architecture.md`
 
-## 🔑 环境变量
+如果你接手开发，请优先接受这条项目主线：
 
-| 变量 | 平台 | 说明 |
-|------|------|------|
-| `WECOM_CORP_ID` | 企业微信 | CorpID |
-| `WECOM_AGENT_ID` | 企业微信 | 应用 AgentId |
-| `WECOM_SECRET` | 企业微信 | 应用 Secret |
-| `WECOM_CALLBACK_TOKEN` | 企业微信 | 回调 Token（可选） |
-| `WECOM_CALLBACK_AES_KEY` | 企业微信 | 回调 AES Key（可选） |
-| `WECOM_CONTACT_SECRET` | 企业微信 | 通讯录同步 Secret |
-| `FEISHU_APP_ID` | 飞书 | App ID |
-| `FEISHU_APP_SECRET` | 飞书 | App Secret |
-| `FEISHU_DOMAIN` | 飞书 | cn=中国版 / intl=国际版Lark |
-| `DINGTALK_CLIENT_ID` | 钉钉 | Client ID (AppKey) |
-| `DINGTALK_CLIENT_SECRET` | 钉钉 | Client Secret (AppSecret) |
-| `TELEGRAM_BOT_TOKEN` | Telegram | Bot Token |
-| `GBRAIN_DB_URL` | PostgreSQL | 数据库连接（默认 `postgresql://sidecar:[db-password]@localhost:5432/sidecar`） |
+**不要新增新的前端入口，优先把能力接到 Bot 后端。**
 
 ---
 
-## 📄 许可证
+## 相关文档
 
-[MIT License](LICENSE)
+- [AGENTS.md](AGENTS.md)
+- [docs/handoff.md](docs/handoff.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/decisions.md](docs/decisions.md)
+- [docs/user-manual.md](docs/user-manual.md)
+- [docs/wecom-ai-assistant-activation-guide.md](docs/wecom-ai-assistant-activation-guide.md)
+- [docs/wecom-ai-assistant-feature-guide.md](docs/wecom-ai-assistant-feature-guide.md)
+- [docs/knowledge-base-operations-guide.md](docs/knowledge-base-operations-guide.md)
+- [docs/installation-guide.md](docs/installation-guide.md)
 
 ---
 
-## 🔗 SEO 关键词
+## License
 
-`企业AI助手` `多智能体协作` `企业微信AI` `飞书机器人` `钉钉AI` `AI Agent` `Multi-Agent System` `Enterprise AI` `知识库ACL` `AI专家角色` `企业级AI平台` `智能体编排` `Multi-Agent Orchestration` `AI助理` `企业知识管理` `LLM应用` `AI工作流` `Chatbot Enterprise` `AI Collaboration` `Agent Platform`
+MIT

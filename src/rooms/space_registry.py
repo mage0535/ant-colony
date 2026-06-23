@@ -31,13 +31,16 @@ class SpaceRegistry:
         self._cache: dict[str, SpaceRecord] = {}
 
     def register(self, space_id: str, name: str = "", space_type: str = "project",
-                 description: str = "", members: list[str] | None = None) -> SpaceRecord:
+                 description: str = "", members: list[str] | None = None,
+                 metadata: dict[str, Any] | None = None) -> SpaceRecord:
         existing = self._cache.get(space_id)
         if existing:
             if name:
                 existing.name = name
             if members:
                 existing.members = list(dict.fromkeys(existing.members + members))
+            if metadata:
+                existing.metadata.update(metadata)
             self._persist(existing)
             return existing
         record = SpaceRecord(
@@ -46,6 +49,7 @@ class SpaceRegistry:
             space_type=space_type,
             description=description,
             members=members or [],
+            metadata=metadata or {},
         )
         self._cache[space_id] = record
         self._persist(record)
@@ -71,6 +75,23 @@ class SpaceRegistry:
             self._persist(record)
         return record
 
+    def link_spaces(self, source_space_id: str, target_space_id: str) -> SpaceRecord | None:
+        record = self.get(source_space_id)
+        if record is None:
+            record = self.register(source_space_id)
+        linked = list(record.metadata.get("linked_spaces", []))
+        if target_space_id not in linked:
+            linked.append(target_space_id)
+            record.metadata["linked_spaces"] = linked
+            self._persist(record)
+        return record
+
+    def get_linked_spaces(self, space_id: str) -> list[str]:
+        record = self.get(space_id)
+        if record is None:
+            return []
+        return list(record.metadata.get("linked_spaces", []))
+
     def delete(self, space_id: str) -> bool:
         if space_id in self._cache:
             del self._cache[space_id]
@@ -91,6 +112,7 @@ class SpaceRegistry:
                     "type": r.space_type,
                     "members": len(r.members),
                     "description": r.description,
+                    "metadata": r.metadata,
                 }
                 for r in records
             ],
@@ -100,10 +122,16 @@ class SpaceRegistry:
         if self._repo is None:
             return
         self._repo._conn.execute(
-            """INSERT OR REPLACE INTO space_meta (space_id, name, space_type, description, members)
-               VALUES (?, ?, ?, ?, ?)""",
-            (record.space_id, record.name, record.space_type, record.description,
-             json.dumps(record.members, ensure_ascii=False)),
+            """INSERT OR REPLACE INTO space_meta (space_id, name, space_type, description, members, metadata_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                record.space_id,
+                record.name,
+                record.space_type,
+                record.description,
+                json.dumps(record.members, ensure_ascii=False),
+                json.dumps(record.metadata, ensure_ascii=False),
+            ),
         )
         self._repo._conn.commit()
 
@@ -120,6 +148,7 @@ class SpaceRegistry:
                 space_type=row["space_type"],
                 description=row["description"],
                 members=json.loads(row["members"]),
+                metadata=json.loads(row["metadata_json"] or "{}"),
             )
 
     def _load_all_from_db(self) -> None:
@@ -135,4 +164,5 @@ class SpaceRegistry:
                     space_type=row["space_type"],
                     description=row["description"],
                     members=json.loads(row["members"]),
+                    metadata=json.loads(row["metadata_json"] or "{}"),
                 )

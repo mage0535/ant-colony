@@ -4,13 +4,17 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
+import re
 import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
-from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+ALLOWED_NO_AGENT_CALLABLES = {
+    "src.orchestrator.cron_scheduler._health_check",
+    "src.orchestrator.cron_scheduler._org_sync",
+}
 
 
 @dataclass
@@ -76,10 +80,13 @@ class CronJobRegistry:
             with open(self._db_path, "r") as f:
                 data = json.load(f)
             for d in data:
-                d["_last_run"] = d.pop("last_run", 0)
-                d["_next_run"] = d.pop("next_run", 0)
-                d["_run_count"] = d.pop("run_count", 0)
-                d["_last_status"] = d.pop("last_status", "")
+                for field_name, default in (
+                    ("last_run", 0),
+                    ("next_run", 0),
+                    ("run_count", 0),
+                    ("last_status", ""),
+                ):
+                    d.setdefault(field_name, d.pop(f"_{field_name}", default))
                 j = CronJob(**{k: v for k, v in d.items() if k in CronJob.__dataclass_fields__})
                 self._jobs[j.id] = j
         except Exception as e:
@@ -96,62 +103,79 @@ class CronJobRegistry:
 
 def _parse_schedule(expr: str, base: float | None = None) -> float:
     """Parse schedule expression and return next run timestamp."""
-    now = base or time.time()
+    now = time.time() if base is None else base
     expr = expr.strip().lower()
 
-    if expr.startswith("every "):
-        parts = expr.removeprefix("every ").split()
-        if len(parts) >= 2:
-            try:
-                n = int(parts[0])
-                unit = parts[1]
-                multipliers = {"h": 3600, "hour": 3600, "hours": 3600,
-                               "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
-                               "d": 86400, "day": 86400, "days": 86400}
-                seconds = n * multipliers.get(unit, 3600)
-                return now + seconds
-            except (ValueError, KeyError):
-                pass
+    interval = re.fullmatch(
+        r"every\s+(\d+)\s*(m|min|mins|minute|minutes|h|hour|hours|d|day|days)",
+        expr,
+    )
+    if interval:
+        amount = int(interval.group(1))
+        unit = interval.group(2)
+        multiplier = {
+            "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
+            "h": 3600, "hour": 3600, "hours": 3600,
+            "d": 86400, "day": 86400, "days": 86400,
+        }[unit]
+        return now + amount * multiplier
 
-    if expr.startswith("0 ") or expr[0].isdigit():
-        parts = expr.split()
-        if len(parts) >= 5:
-            try:
-                minute = int(parts[0])
-                hour = int(parts[1])
-                day = int(parts[2]) if parts[2] != "*" else None
-                month = int(parts[3]) if parts[3] != "*" else None
-                weekday = int(parts[4]) if parts[4] != "*" else None
-                dt = datetime.fromtimestamp(now)
-                if hour < dt.hour or (hour == dt.hour and minute <= dt.minute):
-                    dt = dt + timedelta(days=1)
-                next_dt = dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                if day:
-                    next_dt = next_dt.replace(day=day)
-                return next_dt.timestamp()
-            except (ValueError, IndexError):
-                pass
+    parts = expr.split()
+    if len(parts) == 5:
+        try:
+            minute = _parse_cron_field(parts[0], 0, 59)
+            hour = _parse_cron_field(parts[1], 0, 23)
+            day = _parse_cron_field(parts[2], 1, 31)
+            month = _parse_cron_field(parts[3], 1, 12)
+            weekday = _parse_cron_field(parts[4], 0, 7)
+        except ValueError:
+            pass
+        else:
+            candidate = datetime.fromtimestamp(now).replace(second=0, microsecond=0) + timedelta(minutes=1)
+            for _ in range(366 * 24 * 60):
+                cron_weekday = (candidate.weekday() + 1) % 7
+                normalized_weekday = 0 if weekday == 7 else weekday
+                day_matches = day is None or candidate.day == day
+                weekday_matches = normalized_weekday is None or cron_weekday == normalized_weekday
+                if day is not None and normalized_weekday is not None:
+                    date_matches = day_matches or weekday_matches
+                else:
+                    date_matches = day_matches and weekday_matches
+                if (
+                    (minute is None or candidate.minute == minute)
+                    and (hour is None or candidate.hour == hour)
+                    and (month is None or candidate.month == month)
+                    and date_matches
+                ):
+                    return candidate.timestamp()
+                candidate += timedelta(minutes=1)
 
     return now + 3600  # default: retry in 1 hour
 
 
+def _parse_cron_field(value: str, minimum: int, maximum: int) -> int | None:
+    if value == "*":
+        return None
+    parsed = int(value)
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"cron field out of range: {value}")
+    return parsed
+
+
 def run_no_agent(command: str) -> str:
-    """Execute a no_agent job: import python module or run shell command."""
+    """Execute an explicitly allowed internal no-agent callable."""
+    if not command.startswith("python:"):
+        return "REJECTED: command is not an allowed internal cron callable"
+    mod_path = command.removeprefix("python:")
+    if mod_path not in ALLOWED_NO_AGENT_CALLABLES:
+        return "REJECTED: command is not an allowed internal cron callable"
     try:
-        if command.startswith("python:"):
-            mod_path = command.removeprefix("python:")
-            mod_parts = mod_path.rsplit(".", 1)
-            if len(mod_parts) == 2:
-                mod_name, func_name = mod_parts
-                import importlib
-                mod = importlib.import_module(mod_name)
-                func = getattr(mod, func_name)
-                result = func()
-                return str(result)[:2000]
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)
-        if result.returncode != 0:
-            return f"FAILED (exit {result.returncode}): {result.stderr[:500]}"
-        return result.stdout[:2000] or "OK (no output)"
+        mod_name, func_name = mod_path.rsplit(".", 1)
+        import importlib
+
+        mod = importlib.import_module(mod_name)
+        func = getattr(mod, func_name)
+        return str(func())[:2000]
     except Exception as e:
         return f"EXCEPTION: {e}"
 

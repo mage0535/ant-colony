@@ -1,8 +1,9 @@
 #!/bin/bash
 # Database backup script for ant-colony
 set -e
-BACKUP_DIR="/home/codexcheck/ant-colony-probe/data/backups"
-DB_PATH="/home/codexcheck/ant-colony-probe/data/ant-colony.db"
+BASE_DIR="${ANT_COLONY_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+BACKUP_DIR="${ANT_COLONY_BACKUP_DIR:-$BASE_DIR/data/backups}"
+DB_PATH="${ANT_COLONY_DB_PATH:-$BASE_DIR/data/ant-colony.db}"
 MAX_BACKUPS=7
 
 mkdir -p "$BACKUP_DIR"

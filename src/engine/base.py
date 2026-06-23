@@ -8,11 +8,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.models.contracts import AgentResponse, MessageContext
+from src.observability.langsmith_support import wrap_anthropic_client, wrap_openai_client
 
 logger = logging.getLogger(__name__)
 
 _LLM_MAX_RETRIES = 3
 _LLM_RETRY_BASE = 1.0
+_TOOL_CALL_RE = re.compile(r"<tool_call>([^(\s]+)\((.*?)\)</tool_call>", re.DOTALL)
 
 
 def _retry_llm(fn, max_retries: int = _LLM_MAX_RETRIES) -> str:
@@ -103,6 +105,7 @@ class AgentEngine:
         self.tool_registry = tool_registry
         self._latest_user_text = ""
         self._latest_user_id = ""
+        self._latest_context_metadata: dict[str, Any] = {}
 
     def process_text(self, text: str, context: MessageContext, knowledge_prefix: str = "",
                      conversation_context: str = "", user_identity: str = "") -> AgentResponse:
@@ -209,6 +212,13 @@ class AgentEngine:
         tools = self.tool_registry.get_for_agent(self.config.agent_role)
         for name, raw_args in calls:
             args: dict[str, Any] = _lenient_parse_args(name, raw_args) if raw_args else {}
+            if raw_args and not args and raw_args.strip() not in ("", "{}"):
+                replacement = "[参数解析失败]"
+                result = result.replace(
+                    f"<tool_call>{name}({raw_args})</tool_call>",
+                    replacement,
+                )
+                continue
             if name.endswith("generate_document"):
                 import sys as _sys
                 print("[BASE] generate_document: content_len=%d, from=%s, latest_user_id=%s" % (
@@ -220,6 +230,11 @@ class AgentEngine:
                     args["_context_text"] = getattr(self, "_latest_user_text", text)
                 if not args.get("from"):
                     args["from"] = getattr(self, "_latest_user_id", "")
+                meta = getattr(self, "_latest_context_metadata", {}) or {}
+                if meta.get("provider"):
+                    args["_source_provider"] = meta.get("provider")
+                if meta.get("transport"):
+                    args["_source_transport"] = meta.get("transport")
                 print("[BASE] after inject: from=%s" % args.get("from"), file=_sys.stderr, flush=True)
             replacement = self._dispatch_tool(name, args, tools)
             result = result.replace(
@@ -254,7 +269,7 @@ class AgentEngine:
 
     def _openai_inner(self, client_kwargs: dict, system: str, user_text: str) -> str:
         from openai import OpenAI
-        client = OpenAI(**client_kwargs)
+        client = wrap_openai_client(OpenAI(**client_kwargs))
         resp = client.chat.completions.create(
             model=self.config.model_name or "gpt-4o-mini",
             messages=[
@@ -281,7 +296,7 @@ class AgentEngine:
     def _anthropic_inner(self, system: str, user_text: str) -> str:
         import anthropic
         kwargs = {"api_key": self.config.api_key}
-        client = anthropic.Anthropic(**kwargs)
+        client = wrap_anthropic_client(anthropic.Anthropic(**kwargs))
         resp = client.messages.create(
             model=self.config.model_name or "claude-sonnet-4-20250514",
             max_tokens=self.config.max_tokens,

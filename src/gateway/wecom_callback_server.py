@@ -10,11 +10,12 @@ import socket
 import string
 import struct
 import time
-import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import urlparse, parse_qs
+
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from defusedxml import ElementTree as ET
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class WeComCrypto:
 
     def verify_signature(self, signature: str, timestamp: str, nonce: str, echostr: str = "") -> bool:
         items = sorted([self.token, timestamp, nonce, echostr])
-        sha1 = hashlib.sha1("".join(items).encode()).hexdigest()
+        sha1 = hashlib.sha1("".join(items).encode(), usedforsecurity=False).hexdigest()
         return sha1 == signature
 
     def decrypt(self, encrypted: str) -> str:
@@ -60,7 +61,7 @@ class WeComCrypto:
 
     def generate_signature(self, encrypted: str, timestamp: str, nonce: str) -> str:
         items = sorted([self.token, timestamp, nonce, encrypted])
-        return hashlib.sha1("".join(items).encode()).hexdigest()
+        return hashlib.sha1("".join(items).encode(), usedforsecurity=False).hexdigest()
 
     def decrypt_callback(self, xml_text: str, msg_signature: str, timestamp: str, nonce: str) -> dict[str, str]:
         root = ET.fromstring(xml_text)
@@ -140,25 +141,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
     def _forward_and_reply(self, msg_dict: dict[str, str]) -> str | None:
         import httpx
         from src.gateway.wecom_outbound import send_text
-        msg_type = msg_dict.get("MsgType", "text")
-        payload: dict[str, Any] = {
-            "content": msg_dict.get("Content", ""),
-            "from_user_id": msg_dict.get("FromUserName", ""),
-            "msg_id": msg_dict.get("MsgId", ""),
-            "msg_type": msg_type,
-            "created_at": int(time.time()),
-        }
-        if msg_type == "file":
-            payload["media_id"] = msg_dict.get("MediaId", "")
-            payload["file_key"] = msg_dict.get("FileKey", "")
-            payload["file_size"] = msg_dict.get("FileSize", "0")
-            payload["file_md5"] = msg_dict.get("Md5", "")
-        conversation_type = msg_dict.get("ConversationType", "")
-        if conversation_type == "group":
-            payload["space_id"] = msg_dict.get("ChatId") or msg_dict.get("FromUserName", "")
-            payload["is_direct"] = False
-        else:
-            payload["is_direct"] = True
+        payload = build_gateway_payload(msg_dict)
         try:
             with httpx.Client(base_url=self.gateway_url, timeout=60) as client:
                 resp = client.post("/", json=payload)
@@ -187,6 +170,37 @@ class CallbackHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         logger.info("wecom-callback: %s", fmt % args)
+
+
+def build_gateway_payload(msg_dict: dict[str, str]) -> dict[str, Any]:
+    msg_type = (msg_dict.get("MsgType", "text") or "text").strip().lower()
+    filename = (
+        msg_dict.get("FileName")
+        or msg_dict.get("Title")
+        or msg_dict.get("Content")
+        or ""
+    )
+    payload: dict[str, Any] = {
+        "content": filename if msg_type == "file" else msg_dict.get("Content", ""),
+        "from_user_id": msg_dict.get("FromUserName", ""),
+        "msg_id": msg_dict.get("MsgId", ""),
+        "msg_type": msg_type,
+        "created_at": int(time.time()),
+    }
+    if msg_type == "file":
+        payload["media_id"] = msg_dict.get("MediaId", "")
+        payload["file_key"] = msg_dict.get("FileKey", "")
+        payload["file_size"] = msg_dict.get("FileSize", "0")
+        payload["file_md5"] = msg_dict.get("Md5", "")
+        if filename:
+            payload["file_name"] = filename
+    conversation_type = (msg_dict.get("ConversationType", "") or "").strip().lower()
+    if conversation_type == "group":
+        payload["space_id"] = msg_dict.get("ChatId") or msg_dict.get("FromUserName", "")
+        payload["is_direct"] = False
+    else:
+        payload["is_direct"] = True
+    return payload
 
 
 def load_crypto_from_env(prefix: str = "WECOM_") -> WeComCrypto | None:

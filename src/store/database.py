@@ -61,7 +61,38 @@ CREATE TABLE IF NOT EXISTS space_meta (
     space_type TEXT NOT NULL DEFAULT 'project',
     description TEXT NOT NULL DEFAULT '',
     members TEXT NOT NULL DEFAULT '[]',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS org_departments (
+    platform TEXT NOT NULL,
+    dept_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    parent_dept_id TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL DEFAULT (cast(strftime('%s','now') as real)),
+    PRIMARY KEY (platform, dept_id)
+);
+
+CREATE TABLE IF NOT EXISTS org_users (
+    platform TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    mobile TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    updated_at REAL NOT NULL DEFAULT (cast(strftime('%s','now') as real)),
+    PRIMARY KEY (platform, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS org_memberships (
+    platform TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    dept_id TEXT NOT NULL,
+    is_leader INTEGER NOT NULL DEFAULT 0,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL DEFAULT (cast(strftime('%s','now') as real)),
+    PRIMARY KEY (platform, user_id, dept_id)
 );
 """
 
@@ -121,10 +152,16 @@ class Database:
                     space_type TEXT NOT NULL DEFAULT 'project',
                     description TEXT NOT NULL DEFAULT '',
                     members TEXT NOT NULL DEFAULT '[]',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )"""
             )
             logger.info("Migration: created space_meta table")
+        else:
+            space_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(space_meta)").fetchall()}
+            if "metadata_json" not in space_cols:
+                self._conn.execute("ALTER TABLE space_meta ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
+                logger.info("Migration: added metadata_json to space_meta")
         if "knowledge_items" not in tables:
             self._conn.execute(
                 """CREATE TABLE knowledge_items (

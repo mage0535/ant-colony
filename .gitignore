@@ -4,11 +4,15 @@ data/memory/
 data/files/
 data/backups/
 data/cloud_sync/
+data/audit/
 data/runtime_settings.json
 data/cron_jobs.json
 data/heartbeat-state.json
+data/conversations/
+data/openvort_runtime.env
+src/data/documents/
 
-# Environment & credentials
+# Environment and credentials
 infra/.env*
 .env
 .env.local
@@ -21,37 +25,21 @@ __pycache__/
 dist/
 build/
 
-# Temp files
+# Temporary and external files
 *.bak
 *.swp
 /tmp/
 /scratchpad/
 /external/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.sublime-*
-
-
-# Scratch / dev files
+external/
+scratchpad/
 check_parser*.py
 debug_*.py
 *.log
 
-# Conversations
-data/conversations/
-
-# Runtime env
-data/openvort_runtime.env
-
-# External dependencies
-external/
-scratchpad/
-
-# macOS
+# OS and IDE
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.sublime-*

@@ -1,0 +1,45 @@
+{
+  "inbounds": [
+    {
+      "port": 1080,
+      "protocol": "socks",
+      "settings": {
+        "auth": "no",
+        "udp": true
+      },
+      "tag": "socks-in"
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "v4.magicma.xyz",
+            "port": 443,
+            "users": [
+              {
+                "id": "77a242f7-e277-484e-8fe2-a5894f274e01",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "wsSettings": {
+          "path": "/77a242f7-e277-484e-8fe2-a5894f274e01",
+          "headers": {
+            "Host": "v4.magicma.xyz"
+          }
+        },
+        "tlsSettings": {
+          "allowInsecure": false
+        }
+      }
+    }
+  ]
+}

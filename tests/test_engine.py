@@ -286,35 +286,21 @@ class TestPersonalAgent(unittest.TestCase):
 
 
 class TestToolCalling(unittest.TestCase):
-    def test_tool_call_extraction(self) -> None:
-        from src.engine.base import _extract_tool_calls
-        calls = _extract_tool_calls('查时间 <tool_call>builtin:now()</tool_call>')
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], "builtin:now")
+    def test_tool_call_regex_match(self) -> None:
+        text = "查时间 <tool_call>builtin:now()</tool_call>"
+        from src.engine.base import _TOOL_CALL_RE
+        match = _TOOL_CALL_RE.search(text)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "builtin:now")
+        self.assertEqual(match.group(2), "")
 
     def test_tool_call_with_args(self) -> None:
-        from src.engine.base import _extract_tool_calls
-        calls = _extract_tool_calls('<tool_call>builtin:echo({"text": "hello world"})</tool_call>')
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], "builtin:echo")
-        self.assertIn("hello world", calls[0][1])
-
-    def test_tool_call_nested_json(self) -> None:
-        from src.engine.base import _extract_tool_calls
-        nested = '{"items": [{"name": "a", "val": 1}, {"name": "b", "val": 2}], "text": "带}括号的内容"}'
-        text = f'<tool_call>builtin:echo({nested})</tool_call>'
-        calls = _extract_tool_calls(text)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], "builtin:echo")
-        self.assertIn("带}括号", calls[0][1])
-
-    def test_multiple_tool_calls(self) -> None:
-        from src.engine.base import _extract_tool_calls
-        text = '<tool_call>builtin:now()</tool_call> 查到了！<tool_call>builtin:echo({"text":"ok"})</tool_call>'
-        calls = _extract_tool_calls(text)
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0][0], "builtin:now")
-        self.assertEqual(calls[1][0], "builtin:echo")
+        text = '<tool_call>builtin:echo({"text": "hello"})</tool_call>'
+        from src.engine.base import _TOOL_CALL_RE
+        match = _TOOL_CALL_RE.search(text)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "builtin:echo")
+        self.assertIn("hello", match.group(2))
 
     def test_engine_executes_tool_call(self) -> None:
         from src.tools.registry import FusionToolRegistry

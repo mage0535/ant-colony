@@ -1,0 +1,14 @@
+services:
+  stirling-pdf:
+    image: stirlingtools/stirling-pdf:latest
+    container_name: ant-colony-stirling-pdf
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      DISABLE_ADDITIONAL_FEATURES: "false"
+      LANGS: "zh_CN,en_GB"
+    volumes:
+      - ./data/stirling-pdf/trainingData:/usr/share/tessdata
+      - ./data/stirling-pdf/extraConfigs:/configs
+      - ./data/stirling-pdf/logs:/logs

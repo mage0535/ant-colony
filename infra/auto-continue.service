@@ -3,6 +3,6 @@ Description=Ant Colony Auto-Continue Check
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /home/codexcheck/ant-colony-probe/scripts/auto_continue.py
-WorkingDirectory=/home/codexcheck/ant-colony-probe
-User=codexcheck
+ExecStart=/usr/bin/python3 /opt/ant-colony/scripts/auto_continue.py
+WorkingDirectory=/opt/ant-colony
+User=antcolony

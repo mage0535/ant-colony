@@ -202,6 +202,9 @@ class FeishuClient:
             lines.append(f"[{title}]({url})")
         return "\n".join(lines)
 
+    def read_docs_document(self, query: str) -> str | None:
+        return self.search_docs(query)
+
     def list_approvals(self, status: str = "pending") -> str | None:
         """List approval instances by status.
 
@@ -225,6 +228,12 @@ class FeishuClient:
             start_time = inst.get("start_time", "")
             lines.append(f"{title} | {applicant} | {start_time}")
         return "\n".join(lines)
+
+    def get_approval_detail(self, query: str) -> str | None:
+        return self.list_approvals(query or "pending")
+
+    def get_event_detail(self, query: str) -> str | None:
+        return self.get_agenda(days=30)
 
     def create_event(self, summary: str, start_at: str, end_at: str) -> str | None:
         """Create a calendar event.

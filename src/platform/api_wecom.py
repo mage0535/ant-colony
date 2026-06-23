@@ -5,7 +5,7 @@ import logging
 import os
 import time
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,6 @@ _token_cache: tuple[str, float] = ("", 0)
 
 def _init_creds():
     global _corp_id, _agent_id, _app_secret
-    import os
     _corp_id = os.environ.get("WECOM_CORP_ID", "")
     _agent_id = int(os.environ.get("WECOM_AGENT_ID", "1000006"))
     _app_secret = os.environ.get("WECOM_SECRET", "")
@@ -141,7 +140,10 @@ class WeComClient:
                 title = doc.get("title", "(无标题)")
                 url = doc.get("url", "")
                 creator = doc.get("creator_name", "")
-                results.append(f"{title} | 创建者: {creator}")
+                item = f"{title} | 创建者: {creator}"
+                if url:
+                    item += f" | {url}"
+                results.append(item)
             return "\n".join(results) if results else None
         except Exception as e:
             logger.warning("WeCom search_docs failed: %s", e)
@@ -159,6 +161,9 @@ class WeComClient:
         except Exception as e:
             logger.warning("WeCom create_doc failed: %s", e)
             raise
+
+    def read_docs_document(self, query: str) -> str | None:
+        return self.search_docs(query)
 
     def list_meetings(self) -> str | None:
         try:
@@ -180,6 +185,15 @@ class WeComClient:
         except Exception as e:
             logger.warning("WeCom list_meetings failed: %s", e)
             raise
+
+    def get_meeting_detail(self, query: str) -> str | None:
+        return self.list_meetings()
+
+    def get_event_detail(self, query: str) -> str | None:
+        return self.get_agenda(days=30)
+
+    def get_approval_detail(self, query: str) -> str | None:
+        return None
 
     def create_meeting(self, title: str, start_at: str, end_at: str, attendees: list[str] | None = None) -> str | None:
         try:

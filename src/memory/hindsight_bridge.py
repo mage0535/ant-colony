@@ -24,11 +24,13 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger(__name__)
-DB_URL = os.environ.get("HINDSIGHT_DB_URL", "postgresql://sidecar:sidecar123@localhost:5432/sidecar")
+DB_URL = os.environ.get("HINDSIGHT_DB_URL", "")
 BANK = "hermes"
 
 
 def get_conn():
+    if not DB_URL:
+        raise RuntimeError("HINDSIGHT_DB_URL is required")
     return psycopg2.connect(DB_URL)
 
 

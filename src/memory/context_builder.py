@@ -9,6 +9,10 @@ import logging
 import urllib.request
 from typing import Any
 
+from src.memory.scoped_store import ScopedMemoryStore
+from src.observability.langsmith_support import traceable_op
+from src.store.database import Database
+
 logger = logging.getLogger(__name__)
 
 HINDSIGHT_URL = "http://127.0.0.1:8890"
@@ -22,10 +26,24 @@ class MemoryContextBuilder:
     def __init__(self, enabled: bool = True) -> None:
         self.enabled = enabled
 
-    def build_context(self, user_query: str, max_chars: int = 3000) -> str:
+    @traceable_op("build_memory_context", run_type="retriever")
+    def build_context(self, user_query: str, max_chars: int = 3000, scopes: list[tuple[str, str]] | None = None) -> str:
         if not self.enabled:
             return ""
         parts: list[str] = []
+        scopes = scopes or []
+
+        # Scoped memory layer
+        try:
+            scoped_store = ScopedMemoryStore(Database.get().connect())
+            scoped = scoped_store.recall(user_query, scopes=scopes, limit=5) if scopes else []
+            if scoped:
+                lines = ["## 作用域记忆"]
+                for item in scoped[:5]:
+                    lines.append(f"- [{item['scope_type']}:{item['scope_id']}] {item['content'][:150]}")
+                parts.append("\n".join(lines))
+        except Exception:
+            pass
 
         # Warm layer: Hindsight
         try:
