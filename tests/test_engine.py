@@ -295,9 +295,20 @@ class TestPersonalAgent(unittest.TestCase):
         agent = PersonalAgent("u1", engine)
         context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
 
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        entry = KnowledgeEntry(
+            id="company-guide-wecom-activation",
+            owner_type=KnowledgeOwnerType.ORGANIZATION,
+            owner_id="*",
+            content="企业微信 AI 助手激活说明书\n\n第一步 打开企业微信\n第二步 找到机器人",
+            tags=["guide"],
+            metadata={"title": "企业微信 AI 助手激活说明书"},
+        )
+
         with patch(
-            "src.agents.personal_agent._prefetch_accessible_knowledge",
-            return_value="【公司知识】企业微信 AI 助手激活说明书\n打开查看：http://127.0.0.1:18092/api/v1/knowledge/company-guide-wecom-activation/open\n第一步 打开企业微信\n第二步 找到机器人",
+            "src.agents.personal_agent._prefetch_accessible_entries",
+            return_value=[entry],
         ):
             response = agent.process_message("u1", "我想让其他同事也激活类似你的员工企微机器人，应该怎么操作", context)
 
@@ -317,18 +328,59 @@ class TestPersonalAgent(unittest.TestCase):
         agent = PersonalAgent("u1", engine)
         context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
 
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        entry = KnowledgeEntry(
+            id="company-guide-wecom-activation",
+            owner_type=KnowledgeOwnerType.ORGANIZATION,
+            owner_id="*",
+            content="企业微信 AI 助手激活说明书\n\n第一步 打开企业微信\n第二步 找到机器人",
+            tags=["guide"],
+            metadata={"title": "企业微信 AI 助手激活说明书"},
+        )
+
         with patch(
-            "src.agents.personal_agent._prefetch_accessible_knowledge",
-            side_effect=[
-                "【公司知识】企业微信 AI 助手激活说明书\n打开查看：http://127.0.0.1:18092/api/v1/knowledge/company-guide-wecom-activation/open\n第一步 打开企业微信\n第二步 找到机器人",
-                "",
-            ],
+            "src.agents.personal_agent._prefetch_accessible_entries",
+            side_effect=[[entry], []],
         ):
             first = agent.process_message("u1", "我要激活ai机器人", context)
             second = agent.process_message("u1", "引导我操作", context)
 
         self.assertIn("企业微信 AI 助手激活说明书", first.text)
         self.assertIn("第一步 打开企业微信", second.text)
+
+    def test_personal_agent_returns_bot_file_for_single_knowledge_file_on_wecom(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        engine = AgentEngine(config)
+        agent = PersonalAgent("u1", engine)
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+        context = MessageContext(
+            space_type=SpaceType.DEPARTMENT,
+            space_id="dept-1",
+            dept_id="dept-1",
+            metadata={"provider": "wecom_bot"},
+        )
+
+        entry = KnowledgeEntry(
+            id="company-guide-wecom-activation",
+            owner_type=KnowledgeOwnerType.ORGANIZATION,
+            owner_id="*",
+            content="企业微信 AI 助手激活说明书\n\n正文",
+            tags=["guide"],
+            metadata={"title": "企业微信 AI 助手激活说明书", "source_path": "docs/wecom-ai-assistant-activation-guide.md"},
+        )
+
+        with patch("src.agents.personal_agent._prefetch_accessible_entries", return_value=[entry]), \
+             patch("pathlib.Path.is_file", return_value=True):
+            response = agent.process_message("u1", "我要激活ai机器人", context)
+
+        self.assertTrue(response.text.startswith("[BOT_FILE]"))
+        self.assertIn("企业微信 AI 助手激活说明书", response.text)
 
 
 class TestToolCalling(unittest.TestCase):

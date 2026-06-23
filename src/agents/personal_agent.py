@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from src.engine.base import AgentEngine
+from src.knowledge.contracts import KnowledgeEntry
 from src.memory.sidecar import SidecarMemory
 from src.models.contracts import AgentResponse, MessageContext
 
@@ -30,6 +32,7 @@ class PersonalAgent:
         self.engine = engine
         self.memory = SidecarMemory(user_id, base_dir=memory_dir)
         self._last_knowledge_answer = ""
+        self._last_knowledge_entries: list[KnowledgeEntry] = []
 
     def process_message(self, user_id: str, text: str, context: MessageContext,
                          memory_context: str = "", conversation_context: str = "") -> AgentResponse:
@@ -38,9 +41,11 @@ class PersonalAgent:
         knowledge_block = self.memory.build_context_block()
         user_name = _resolve_user_name(user_id)
         identity = f"你的微信ID(userid)：{self.user_id}。当你查询考勤、打卡等个人数据时，请用此userid调用相关工具。"
-        prefetched_knowledge = _prefetch_accessible_knowledge(user_id, text, context)
+        prefetched_entries = _prefetch_accessible_entries(user_id, text, context)
+        prefetched_knowledge = _render_prefetched_knowledge(prefetched_entries)
         if not prefetched_knowledge and _looks_knowledge_followup_query(text):
             prefetched_knowledge = self._last_knowledge_answer
+            prefetched_entries = self._last_knowledge_entries
         full_knowledge = identity + "\n" + knowledge_block if knowledge_block else identity
         if prefetched_knowledge:
             full_knowledge = (
@@ -52,9 +57,10 @@ class PersonalAgent:
         self.engine._latest_user_id = self.user_id
         self.engine._latest_context_metadata = dict(context.metadata or {})
         self.engine._latest_context_metadata["knowledge_prefetched"] = bool(prefetched_knowledge)
-        shortcut_response = _build_prefetched_answer(text, prefetched_knowledge)
+        shortcut_response = _build_prefetched_answer(text, prefetched_entries, prefetched_knowledge, context)
         if shortcut_response:
             self._last_knowledge_answer = prefetched_knowledge
+            self._last_knowledge_entries = list(prefetched_entries)
             return AgentResponse(text=shortcut_response)
         return self.engine.process_text(text, context, knowledge_prefix=full_knowledge,
                                         conversation_context=conversation_context, user_identity=user_name)
@@ -71,36 +77,69 @@ def _looks_knowledge_followup_query(text: str) -> bool:
     return any(item in normalized for item in followups)
 
 
-def _prefetch_accessible_knowledge(user_id: str, text: str, context: MessageContext) -> str:
+def _prefetch_accessible_entries(user_id: str, text: str, context: MessageContext) -> list[KnowledgeEntry]:
     if not text.strip() or text.strip().startswith("/"):
-        return ""
+        return []
     try:
         from src.tools.knowledge_tools import search_knowledge_entries
-        from src.tools.knowledge_tools import owner_type_label
-        from src.knowledge.linking import build_knowledge_open_url
 
         space_id = context.project_id or context.dept_id or context.space_id
-        results = search_knowledge_entries(text, user_id=user_id, space_id=space_id or "", limit=3)
-        if not results:
-            return ""
-        lines = []
-        for item in results:
-            title = str(item.metadata.get("title", "")).strip() or item.content.splitlines()[0][:80]
-            content = item.content
-            if content.startswith(title):
-                content = content[len(title):].lstrip()
-            lines.append(
-                f"【{owner_type_label(item.owner_type.value)}知识】{title}\n"
-                f"打开查看：{build_knowledge_open_url(item.id)}\n"
-                f"{content[:1200]}"
-            )
-        return "\n\n".join(lines)
+        return search_knowledge_entries(text, user_id=user_id, space_id=space_id or "", limit=3)
     except Exception as exc:
         logger.warning("Knowledge prefetch failed for %s: %s", user_id, exc)
+        return []
+
+def _render_prefetched_knowledge(entries: list[KnowledgeEntry]) -> str:
+    if not entries:
         return ""
+    from src.tools.knowledge_tools import owner_type_label
+    from src.knowledge.linking import build_knowledge_open_url
+
+    lines = []
+    for item in entries:
+        title = str(item.metadata.get("title", "")).strip() or item.content.splitlines()[0][:80]
+        content = item.content
+        if content.startswith(title):
+            content = content[len(title):].lstrip()
+        lines.append(
+            f"【{owner_type_label(item.owner_type.value)}知识】{title}\n"
+            f"打开查看：{build_knowledge_open_url(item.id)}\n"
+            f"{content[:1200]}"
+        )
+    return "\n\n".join(lines)
 
 
-def _build_prefetched_answer(text: str, prefetched_knowledge: str) -> str:
+def _build_prefetched_answer(text: str, entries: list[KnowledgeEntry], prefetched_knowledge: str, context: MessageContext) -> str:
     if not prefetched_knowledge or not (_looks_knowledge_first_query(text) or _looks_knowledge_followup_query(text)):
         return ""
+    if str(context.metadata.get("provider", "")) == "wecom_bot":
+        bot_file = _build_bot_file_payload(entries)
+        if bot_file:
+            return bot_file
     return "我先从你有权限访问的知识库里找到了相关内容，你可以直接打开查看：\n\n" + prefetched_knowledge[:1500]
+
+
+def _build_bot_file_payload(entries: list[KnowledgeEntry]) -> str:
+    if len(entries) != 1:
+        return ""
+    entry = entries[0]
+    source_path = str(entry.metadata.get("source_path", "")).strip()
+    if not source_path:
+        return ""
+    resolved = Path(source_path)
+    if not resolved.is_absolute():
+        repo_root = Path(__file__).resolve().parents[2]
+        resolved = (repo_root / source_path).resolve()
+    if not resolved.is_file():
+        return ""
+    import json
+
+    title = str(entry.metadata.get("title", "")).strip() or resolved.name
+    return "[BOT_FILE]" + json.dumps(
+        {
+            "path": str(resolved),
+            "filename": resolved.name,
+            "caption": f"已为你推送知识库文件：{title}",
+        },
+        ensure_ascii=False,
+    )
