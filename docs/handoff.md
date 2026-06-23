@@ -252,10 +252,34 @@
   - 机器人搜索、后台管理、文件索引、说明书导入统一走同一套仓库接口
 - 新增后台知识库管理能力：
   - `GET /api/v1/knowledge/accessible`
+  - `GET /api/v1/knowledge/permissions`
   - `PUT /api/v1/knowledge/{entry_id}`
   - `POST /api/v1/knowledge/promote`
   - `POST /api/v1/knowledge/import/company-guides`
   - `GET /knowledge/manage`
+- 管理页现在会按用户ID上下文显示：
+  - 当前角色
+  - 可见范围
+  - 是否可管理公司/部门/项目知识
+  - 条目级是否可更新/删除
+
+### 2026-06-23 collaboration observation and trace quality analysis
+
+本轮继续推进三块验证能力：
+
+- WeCom 多人协作/权限/跨空间联动观测脚本：
+  - `scripts/validate_wecom_collaboration_observation.py`
+- Feishu / DingTalk 更深本地模拟覆盖：
+  - 群 @ 正向转发
+  - 非 @ 群消息忽略
+  - 文件消息忽略
+  - 直聊文本回复
+- LangSmith traces 质量分析脚本：
+  - `scripts/langsmith_quality_report.py`
+  - 支持识别：
+    - 慢链路
+    - 失败链路
+    - 低质量文档生成候选
 
 ## 最新验证证据
 

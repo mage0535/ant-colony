@@ -41,6 +41,22 @@ def simulate_feishu_contract() -> dict[str, Any]:
     }
     adapter._handle_event(direct_event, json.dumps(direct_event, ensure_ascii=False))
 
+    group_with_mention = {
+        "header": {"event_type": "im.message.receive_v1"},
+        "event": {
+            "message": {
+                "message_id": "fs-m1b",
+                "message_type": "text",
+                "chat_type": "group",
+                "chat_id": "fs-chat-1g",
+                "content": json.dumps({"text": "@AI 请总结"}, ensure_ascii=False),
+                "mentions": [{"name": "AI"}],
+            },
+            "sender": {"sender_id": {"user_id": "fs-user-2"}},
+        },
+    }
+    adapter._handle_event(group_with_mention, json.dumps(group_with_mention, ensure_ascii=False))
+
     ignored_group = {
         "header": {"event_type": "im.message.receive_v1"},
         "event": {
@@ -58,17 +74,39 @@ def simulate_feishu_contract() -> dict[str, Any]:
     before_ignored = len(forwards)
     adapter._handle_event(ignored_group, json.dumps(ignored_group, ensure_ascii=False))
 
+    before_file = len(forwards)
+    ignored_file = {
+        "header": {"event_type": "im.message.receive_v1"},
+        "event": {
+            "message": {
+                "message_id": "fs-m3",
+                "message_type": "file",
+                "chat_type": "p2p",
+                "chat_id": "fs-chat-3",
+            },
+            "sender": {"sender_id": {"user_id": "fs-user-1"}},
+        },
+    }
+    adapter._handle_event(ignored_file, json.dumps(ignored_file, ensure_ascii=False))
+
     return {
         "platform": "feishu",
-        "ok": len(forwards) == 1 and len(sent) == 1 and len(forwards) == before_ignored,
+        "ok": len(forwards) == 2 and len(sent) == 2 and len(forwards) == before_ignored and len(forwards) == before_file,
         "scenarios": [
             _scenario(
                 "direct_text_forward_and_reply",
-                len(forwards) == 1 and forwards[0]["text"] == "hello" and len(sent) == 1,
+                len(forwards) >= 1 and forwards[0]["text"] == "hello" and len(sent) >= 1,
                 forwarded=forwards[0] if forwards else {},
                 sent=sent[0] if sent else {},
             ),
+            _scenario(
+                "group_with_mention_forward_and_reply",
+                len(forwards) >= 2 and forwards[1]["chat_type"] == "group" and len(sent) >= 2,
+                forwarded=forwards[1] if len(forwards) > 1 else {},
+                sent=sent[1] if len(sent) > 1 else {},
+            ),
             _scenario("group_without_mention_ignored", len(forwards) == before_ignored),
+            _scenario("file_message_ignored", len(forwards) == before_file),
         ],
     }
 
@@ -101,6 +139,17 @@ def simulate_dingtalk_contract() -> dict[str, Any]:
     }
     adapter._handle_event(direct_event, json.dumps(direct_event, ensure_ascii=False))
 
+    group_with_mention = {
+        "conversationType": "group",
+        "conversationId": "dt-chat-1g",
+        "senderStaffId": "dt-user-2",
+        "msgtype": "text",
+        "text": {"content": "@AI 请总结"},
+        "msgId": "dt-m1b",
+        "atUsers": [{"dingtalkId": "bot"}],
+    }
+    adapter._handle_event(group_with_mention, json.dumps(group_with_mention, ensure_ascii=False))
+
     ignored_group = {
         "conversationType": "group",
         "conversationId": "dt-chat-2",
@@ -113,17 +162,34 @@ def simulate_dingtalk_contract() -> dict[str, Any]:
     before_ignored = len(forwards)
     adapter._handle_event(ignored_group, json.dumps(ignored_group, ensure_ascii=False))
 
+    before_file = len(forwards)
+    ignored_file = {
+        "conversationType": "single",
+        "conversationId": "dt-chat-3",
+        "senderStaffId": "dt-user-1",
+        "msgtype": "file",
+        "msgId": "dt-m3",
+    }
+    adapter._handle_event(ignored_file, json.dumps(ignored_file, ensure_ascii=False))
+
     return {
         "platform": "dingtalk",
-        "ok": len(forwards) == 1 and len(sent) == 1 and len(forwards) == before_ignored,
+        "ok": len(forwards) == 2 and len(sent) == 2 and len(forwards) == before_ignored and len(forwards) == before_file,
         "scenarios": [
             _scenario(
                 "direct_text_forward_and_reply",
-                len(forwards) == 1 and forwards[0]["text"] == "hello" and len(sent) == 1,
+                len(forwards) >= 1 and forwards[0]["text"] == "hello" and len(sent) >= 1,
                 forwarded=forwards[0] if forwards else {},
                 sent=sent[0] if sent else {},
             ),
+            _scenario(
+                "group_with_mention_forward_and_reply",
+                len(forwards) >= 2 and forwards[1]["chat_type"] == "group" and len(sent) >= 2,
+                forwarded=forwards[1] if len(forwards) > 1 else {},
+                sent=sent[1] if len(sent) > 1 else {},
+            ),
             _scenario("group_without_mention_ignored", len(forwards) == before_ignored),
+            _scenario("file_message_ignored", len(forwards) == before_file),
         ],
     }
 

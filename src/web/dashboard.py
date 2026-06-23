@@ -116,6 +116,11 @@ class SpaceMemberRequest(BaseModel):
     space_id: str
     user_id: str
 
+
+class SpaceLinkRequest(BaseModel):
+    source_space_id: str
+    target_space_id: str
+
 class KnowledgeCreateRequest(BaseModel):
     id: str
     owner_type: str
@@ -304,6 +309,20 @@ def add_space_member(req: SpaceMemberRequest):
         raise HTTPException(404, f"Space {req.space_id} not found")
     return {"space_id": record.space_id, "members": record.members}
 
+
+@app.put("/api/v1/spaces/link")
+def link_space(req: SpaceLinkRequest):
+    sr = get_space_registry()
+    record = sr.link_spaces(req.source_space_id, req.target_space_id)
+    if record is None:
+        raise HTTPException(404, f"Space {req.source_space_id} not found")
+    return {"space_id": record.space_id, "linked_spaces": record.metadata.get("linked_spaces", [])}
+
+
+@app.get("/api/v1/spaces/{space_id}/links")
+def list_space_links(space_id: str):
+    return {"space_id": space_id, "linked_spaces": get_space_registry().get_linked_spaces(space_id)}
+
 @app.delete("/api/v1/spaces/{space_id}")
 def delete_space(space_id: str):
     sr = get_space_registry()
@@ -330,7 +349,7 @@ def search_knowledge(query: str, user_id: str = "", space_id: str = "", limit: i
     kr = get_knowledge_repo()
     results = kr.search_accessible(query, user_id=user_id, space_id=space_id, limit=limit) if user_id else kr.search(query, limit=limit)
     return {"results": [
-        _knowledge_entry_to_dict(e)
+        _knowledge_entry_to_dict(e, user_id=user_id, space_id=space_id)
         for e in results
     ]}
 
@@ -347,14 +366,37 @@ def list_knowledge(owner_type: str = "", owner_id: str = "", user_id: str = "", 
         results = kr.list_for_owner(ot, owner_id)
     else:
         results = kr.list_for_owner(KnowledgeOwnerType.ORGANIZATION, "*")
-    return {"entries": [_knowledge_entry_to_dict(e) for e in results[:limit]]}
+    return {"entries": [_knowledge_entry_to_dict(e, user_id=user_id) for e in results[:limit]]}
 
 
 @app.get("/api/v1/knowledge/accessible")
 def list_accessible_knowledge(user_id: str, query: str = "", space_id: str = "", limit: int = 50):
     kr = get_knowledge_repo()
     results = kr.search_accessible(query, user_id=user_id, space_id=space_id, limit=limit) if query else kr.list_accessible(user_id=user_id, limit=limit)
-    return {"entries": [_knowledge_entry_to_dict(e) for e in results]}
+    return {"entries": [_knowledge_entry_to_dict(e, user_id=user_id, space_id=space_id) for e in results]}
+
+
+@app.get("/api/v1/knowledge/permissions")
+def knowledge_permissions(user_id: str, space_id: str = ""):
+    from src.knowledge.acl import resolve_role, visible_scopes
+    from src.platform.org_graph import OrgGraphService
+
+    role = resolve_role(user_id, space_id)
+    graph = OrgGraphService()
+    profile = graph.get_user_profile("wecom", user_id) or {}
+    return {
+        "user_id": user_id,
+        "space_id": space_id,
+        "role": role.name,
+        "visible_scopes": [{"owner_type": owner_type, "owner_id": owner_id} for owner_type, owner_id in visible_scopes(role, user_id)],
+        "managed_departments": profile.get("leader_departments", []),
+        "departments": profile.get("departments", []),
+        "is_admin": bool(profile.get("is_admin")),
+        "can_manage_organization": role.value >= 3,
+        "can_manage_department": role.value >= 3,
+        "can_manage_project": role.value >= 2,
+        "can_manage_personal": role.value >= 1,
+    }
 
 @app.delete("/api/v1/knowledge/{entry_id}")
 def delete_knowledge(entry_id: str, user_id: str = ""):
@@ -412,11 +454,15 @@ def promote_knowledge(req: KnowledgePromoteRequest):
 
 
 @app.post("/api/v1/knowledge/import/company-guides")
-def import_company_guides_api():
+def import_company_guides_api(user_id: str = ""):
+    from src.knowledge.acl import resolve_role
     from src.knowledge.company_guides import import_company_guides
 
+    role = resolve_role(user_id, "")
+    if user_id and role.value < 3:
+        raise HTTPException(403, "Permission denied")
     entries = import_company_guides(get_knowledge_repo())
-    return {"imported": len(entries), "entries": [_knowledge_entry_to_dict(e) for e in entries]}
+    return {"imported": len(entries), "entries": [_knowledge_entry_to_dict(e, user_id=user_id) for e in entries]}
 
 @app.post("/api/v1/knowledge/collect")
 def collect_knowledge(req: KnowledgeCollectRequest):
@@ -753,6 +799,7 @@ def knowledge_management_page():
 <body class="bg-light">
   <div class="container py-4">
     <h1 class="h3 mb-3">知识库管理</h1>
+    <div id="perm" class="alert alert-secondary">请先输入用户ID，再查看权限与知识条目。</div>
     <div class="row g-3 mb-3">
       <div class="col-md-3"><input id="userId" class="form-control" placeholder="用户ID"></div>
       <div class="col-md-5"><input id="query" class="form-control" placeholder="关键词"></div>
@@ -777,6 +824,11 @@ def knowledge_management_page():
     async function loadEntries() {
       const userId = document.getElementById('userId').value.trim();
       const query = document.getElementById('query').value.trim();
+      const perm = await fetch(`/api/v1/knowledge/permissions?user_id=${encodeURIComponent(userId)}`, {headers: {'Accept': 'application/json'}}).then(r => r.json());
+      document.getElementById('perm').textContent =
+        `当前角色: ${perm.role} | 可见范围: ${perm.visible_scopes.map(v => `${v.owner_type}/${v.owner_id}`).join(', ') || '无'} | ` +
+        `公司管理: ${perm.can_manage_organization ? '是' : '否'} | 部门管理: ${perm.can_manage_department ? '是' : '否'} | 项目管理: ${perm.can_manage_project ? '是' : '否'}`;
+      document.querySelector('button[onclick="importGuides()"]').disabled = !perm.can_manage_organization;
       const url = query
         ? `/api/v1/knowledge/accessible?user_id=${encodeURIComponent(userId)}&query=${encodeURIComponent(query)}`
         : `/api/v1/knowledge?user_id=${encodeURIComponent(userId)}`;
@@ -792,12 +844,15 @@ def knowledge_management_page():
           document.getElementById('title').value = item.title || '';
           document.getElementById('tags').value = (item.tags || []).join(', ');
           document.getElementById('editor').value = item.content || '';
+          document.querySelector('button[onclick="updateEntry()"]').disabled = !item.can_write;
+          document.querySelector('button[onclick="deleteEntry()"]').disabled = !item.can_write;
         };
         root.appendChild(btn);
       }
     }
     async function importGuides() {
-      await fetch('/api/v1/knowledge/import/company-guides', {method: 'POST'});
+      const userId = document.getElementById('userId').value.trim();
+      await fetch(`/api/v1/knowledge/import/company-guides?user_id=${encodeURIComponent(userId)}`, {method: 'POST'});
       await loadEntries();
     }
     async function updateEntry() {
@@ -841,7 +896,15 @@ def download_document(filename: str):
     return FileResponse(filepath, filename=filename)
 
 
-def _knowledge_entry_to_dict(entry: KnowledgeEntry) -> dict[str, Any]:
+def _knowledge_entry_to_dict(entry: KnowledgeEntry, *, user_id: str = "", space_id: str = "") -> dict[str, Any]:
+    can_read = True
+    can_write = False
+    if user_id:
+        from src.knowledge.acl import may_read, may_write, resolve_role
+
+        role = resolve_role(user_id, space_id)
+        can_read = may_read(role, entry.owner_type.value, entry.owner_id, user_id)
+        can_write = may_write(role, entry.owner_type.value, entry.owner_id, user_id)
     return {
         "id": entry.id,
         "owner_type": entry.owner_type.value,
@@ -850,4 +913,6 @@ def _knowledge_entry_to_dict(entry: KnowledgeEntry) -> dict[str, Any]:
         "content": entry.content,
         "tags": entry.tags,
         "metadata": entry.metadata,
+        "can_read": can_read,
+        "can_write": can_write,
     }
