@@ -124,6 +124,14 @@ class SpaceLinkRequest(BaseModel):
     source_space_id: str
     target_space_id: str
 
+
+class PlatformBotActivationRequest(BaseModel):
+    credentials: dict[str, str]
+    activated_by: str = ""
+    display_name: str = ""
+    visibility_scope: str = "all"
+    auto_permissions: list[str] = []
+
 class KnowledgeCreateRequest(BaseModel):
     id: str
     owner_type: str
@@ -285,6 +293,36 @@ def list_roles(space_id: str = ""):
 @app.get("/api/v1/agents")
 def list_agents():
     return {"stats": agent_pool.stats(), "agents": agent_pool.list_agents()}
+
+
+@app.get("/api/v1/platform/bots")
+def list_platform_bots():
+    from src.platform.activation_service import list_platform_bot_statuses
+
+    return {"platforms": list_platform_bot_statuses()}
+
+
+@app.post("/api/v1/platform/bots/{platform}/activate")
+def activate_platform_bot_api(platform: str, req: PlatformBotActivationRequest):
+    from src.platform.activation_service import activate_platform_bot
+
+    result = activate_platform_bot(
+        platform=platform,
+        credentials=req.credentials,
+        activated_by=req.activated_by,
+        display_name=req.display_name,
+        visibility_scope=req.visibility_scope,
+        auto_permissions=req.auto_permissions,
+    )
+    return {
+        "platform": result.platform,
+        "enabled": result.enabled,
+        "managed_by_platform": result.managed_by_platform,
+        "configured_keys": result.configured_keys,
+        "visibility_scope": result.visibility_scope,
+        "display_name": result.display_name,
+        "auto_permissions": result.auto_permissions,
+    }
 
 # ---- Spaces ----
 
@@ -888,6 +926,84 @@ def knowledge_management_page():
       await fetch(`/api/v1/knowledge/${encodeURIComponent(entryId)}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
       await loadEntries();
     }
+  </script>
+</body>
+</html>
+        """
+    )
+
+
+@app.get("/platform/bots/manage", response_class=HTMLResponse)
+def platform_bot_management_page():
+    return HTMLResponse(
+        """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Platform Bot Manager</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem auto; max-width: 1080px; padding: 0 1rem; color: #222; }
+    textarea, input, select { width: 100%; padding: .75rem; margin-top: .5rem; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
+    button { padding: .75rem 1rem; margin-top: .75rem; cursor: pointer; }
+    pre { background: #f6f8fa; padding: 1rem; border-radius: 8px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>平台机器人管理</h1>
+  <p>这里是管理员或负责人使用的平台统一开通入口。普通员工不需要自行创建机器人、不需要配置回调地址、不需要填写 Token 或 AESKey。</p>
+  <div id="status"></div>
+  <div class="grid">
+    <div class="card">
+      <h2>企业微信 BOT</h2>
+      <input id="wecomDisplayName" placeholder="显示名称，默认 企业 AI 助手">
+      <textarea id="wecomCredentials" rows="8" placeholder='JSON 格式，例如 { "bot_id": "...", "bot_secret": "...", "corp_id": "...", "agent_id": "...", "secret": "...", "callback_token": "...", "callback_aes_key": "..." }'></textarea>
+      <button onclick="activate('wecom', 'wecomCredentials', 'wecomDisplayName')">保存并接管</button>
+    </div>
+    <div class="card">
+      <h2>飞书 BOT</h2>
+      <input id="feishuDisplayName" placeholder="显示名称，默认 飞书 AI 助手">
+      <textarea id="feishuCredentials" rows="8" placeholder='JSON 格式，例如 { "app_id": "...", "app_secret": "...", "domain": "feishu" }'></textarea>
+      <button onclick="activate('feishu', 'feishuCredentials', 'feishuDisplayName')">保存并接管</button>
+    </div>
+    <div class="card">
+      <h2>钉钉 BOT</h2>
+      <input id="dingtalkDisplayName" placeholder="显示名称，默认 钉钉 AI 助手">
+      <textarea id="dingtalkCredentials" rows="8" placeholder='JSON 格式，例如 { "client_id": "...", "client_secret": "...", "robot_code": "..." }'></textarea>
+      <button onclick="activate('dingtalk', 'dingtalkCredentials', 'dingtalkDisplayName')">保存并接管</button>
+    </div>
+  </div>
+  <pre id="result"></pre>
+  <script>
+    async function refresh() {
+      const data = await fetch('/api/v1/platform/bots').then(r => r.json());
+      document.getElementById('status').innerHTML = data.platforms.map(p =>
+        `<div class="card"><strong>${p.platform}</strong> | 启用: ${p.enabled} | 平台接管: ${p.managed_by_platform} | 显示名: ${p.display_name} | 可见范围: ${p.visibility_scope || '-'} | 已配置: ${(p.configured_keys || []).join(', ') || '-'}</div>`
+      ).join('');
+    }
+    async function activate(platform, credId, displayId) {
+      const credentials = JSON.parse(document.getElementById(credId).value || '{}');
+      const displayName = document.getElementById(displayId).value || '';
+      const payload = {
+        credentials,
+        activated_by: 'platform-admin',
+        display_name: displayName,
+        visibility_scope: 'all',
+        auto_permissions: ['docs.full', 'knowledge.readwrite', 'contacts.read']
+      };
+      const resp = await fetch(`/api/v1/platform/bots/${platform}/activate`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await resp.json();
+      document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      await refresh();
+    }
+    refresh();
   </script>
 </body>
 </html>

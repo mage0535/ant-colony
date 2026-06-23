@@ -281,6 +281,25 @@
     - 失败链路
     - 低质量文档生成候选
 
+### 2026-06-23 centralized bot activation and direct knowledge file delivery
+
+本轮继续补齐两块企业可用性能力：
+
+- 平台统一开通 BOT：
+  - 新增 `src/platform/activation_service.py`
+  - 新增后台入口 `GET /platform/bots/manage`
+  - 新增接口：
+    - `GET /api/v1/platform/bots`
+    - `POST /api/v1/platform/bots/{platform}/activate`
+  - 当前原则：
+    - 普通员工不自行创建 BOT
+    - 不让员工自己配置回调 URL / Token / AESKey
+    - 企微 / 飞书 / 钉钉 BOT 由平台统一接管和配置
+- 知识命中文件直接推送：
+  - 当 WeCom Bot 命中单个知识条目且条目有源文件时
+  - 机器人直接返回 `BOT_FILE`
+  - 会话中直接推送文件，而不是只给链接
+
 ## 最新验证证据
 
 - 全量本地单测：
