@@ -21,6 +21,10 @@ def test_bot_e2e_regression_script_is_safe_to_import() -> None:
     _assert_script_safe_to_import("scripts/run_bot_e2e_regression.py", "bot_e2e_regression_module")
 
 
+def test_create_admin_console_link_script_is_safe_to_import() -> None:
+    _assert_script_safe_to_import("scripts/create_admin_console_link.py", "create_admin_console_link_module")
+
+
 def test_gateway_entrypoint_is_safe_to_import() -> None:
     _assert_service_entrypoint_safe_to_import(
         "run_gateway.py",

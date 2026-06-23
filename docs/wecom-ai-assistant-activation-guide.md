@@ -123,12 +123,26 @@
 
 平台管理入口：
 
+- `GET /admin/console`
 - `GET /platform/bots/manage`
 
 后台接口：
 
+- `GET /api/v1/admin/profile`
+- `GET /api/v1/admin/platform/bots`
+- `POST /api/v1/admin/platform/bots/{platform}/activate`
 - `GET /api/v1/platform/bots`
 - `POST /api/v1/platform/bots/{platform}/activate`
+
+推荐管理员优先使用 `/admin/console`。
+
+该页面会通过企业 IM 用户身份和短期签名令牌确认管理员权限，并把以下功能集中在一个页面：
+
+1. 管理员身份确认
+2. 企微 / 飞书 / 钉钉 BOT 统一开通
+3. 公司说明书导入
+4. 知识库管理入口
+5. 服务运行验证
 
 ### 管理员操作步骤
 
@@ -136,7 +150,17 @@
 
 进入：
 
-- `/platform/bots/manage`
+- `/admin/console`
+
+页面链接通常由系统生成，格式类似：
+
+- `/admin/console?platform=wecom&user_id=企业IM用户ID&admin_token=短期签名令牌`
+
+如果页面显示“验证失败”，说明：
+
+1. 链接过期
+2. 用户不是对应平台管理员
+3. `platform`、`user_id` 或 `admin_token` 不匹配
 
 #### 步骤 2：选择平台
 

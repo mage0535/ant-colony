@@ -28,20 +28,22 @@ from src.rooms.space_registry import SpaceRegistry
 from src.store.database import Database
 from src.store.task_repo import TaskRepository
 from src.web.document_paths import resolve_document_download_path
+from src.web.admin_auth import require_admin_context_from_request
 from src.web.middleware import add_request_id, check_rate_limit, require_auth
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Ant Colony API", version="0.3.0")
 
-_PUBLIC_PATHS = {"/", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
+_PUBLIC_PATHS = {"/", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/admin/console"}
+_ADMIN_API_PREFIX = "/api/v1/admin/"
 MAX_UPLOAD_BYTES = int(os.environ.get("ANT_COLONY_MAX_FILE_BYTES", str(50 * 1024 * 1024)))
 
 
 @app.middleware("http")
 async def auth_and_rate_limit(request: Request, call_next):
     try:
-        if request.url.path not in _PUBLIC_PATHS:
+        if request.url.path not in _PUBLIC_PATHS and not request.url.path.startswith(_ADMIN_API_PREFIX):
             require_auth(request)
         check_rate_limit(request)
     except HTTPException as e:
@@ -327,6 +329,61 @@ def activate_platform_bot_api(platform: str, req: PlatformBotActivationRequest):
         "auto_permissions": result.auto_permissions,
         "restart_required": result.restart_required,
         "next_action": result.next_action,
+    }
+
+
+@app.get("/api/v1/admin/profile")
+def admin_profile(request: Request):
+    context = require_admin_context_from_request(request)
+    from src.knowledge.acl import resolve_role, visible_scopes
+    from src.platform.org_graph import OrgGraphService
+
+    role = resolve_role(context["user_id"], platform=context["platform"])
+    graph = OrgGraphService()
+    profile = graph.get_user_profile(context["platform"], context["user_id"]) or {}
+    return {
+        **context,
+        "role": role.name,
+        "name": profile.get("name", ""),
+        "departments": profile.get("departments", []),
+        "leader_departments": profile.get("leader_departments", []),
+        "visible_scopes": [
+            {"owner_type": owner_type, "owner_id": owner_id}
+            for owner_type, owner_id in visible_scopes(role, context["user_id"], platform=context["platform"])
+        ],
+        "can_activate_bots": True,
+        "can_import_company_guides": True,
+        "can_manage_knowledge": True,
+    }
+
+
+@app.get("/api/v1/admin/platform/bots")
+def admin_list_platform_bots(request: Request):
+    require_admin_context_from_request(request)
+    return list_platform_bots()
+
+
+@app.post("/api/v1/admin/platform/bots/{platform}/activate")
+def admin_activate_platform_bot(platform: str, req: PlatformBotActivationRequest, request: Request):
+    context = require_admin_context_from_request(request)
+    req.activated_by = req.activated_by or context["user_id"]
+    return activate_platform_bot_api(platform, req)
+
+
+@app.post("/api/v1/admin/knowledge/import/company-guides")
+def admin_import_company_guides(request: Request):
+    context = require_admin_context_from_request(request)
+    return import_company_guides_api(user_id=context["user_id"])
+
+
+@app.get("/api/v1/admin/runtime/status")
+def admin_runtime_status(request: Request):
+    require_admin_context_from_request(request)
+    from scripts.validate_external_runtime import collect_runtime_validation_report
+
+    return {
+        "health": system_health(),
+        "runtime": collect_runtime_validation_report(),
     }
 
 # ---- Spaces ----
@@ -931,6 +988,210 @@ def knowledge_management_page():
       await fetch(`/api/v1/knowledge/${encodeURIComponent(entryId)}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
       await loadEntries();
     }
+  </script>
+</body>
+</html>
+        """
+    )
+
+
+@app.get("/admin/console", response_class=HTMLResponse)
+def admin_console_page():
+    return HTMLResponse(
+        """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管理员控制台</title>
+  <style>
+    :root { --bg:#FFFFFF; --line:#D8DDE5; --text:#111827; --muted:#5B6472; --accent:#E4002B; --ok:#0F766E; --warn:#B45309; --bad:#B91C1C; --soft:#F7F7F8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: "Helvetica Neue", "Arial", sans-serif; line-height: 1.45; }
+    header { border-bottom: 1px solid var(--line); padding: 28px 32px 18px; display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: end; }
+    h1 { margin: 0; font-size: clamp(30px, 4vw, 56px); font-weight: 700; letter-spacing: 0; }
+    h2 { margin: 0 0 12px; font-size: 20px; }
+    h3 { margin: 0 0 10px; font-size: 16px; }
+    p { margin: 0 0 12px; color: var(--muted); }
+    main { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 104px); }
+    nav { border-right: 1px solid var(--line); padding: 24px; background: var(--soft); }
+    nav button { width: 100%; text-align: left; border: 1px solid var(--line); background: #fff; padding: 12px; margin-bottom: 8px; cursor: pointer; }
+    nav button.active { border-color: var(--accent); color: var(--accent); }
+    section { display: none; padding: 24px 32px 40px; }
+    section.active { display: block; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .panel { border: 1px solid var(--line); padding: 16px; background: #fff; }
+    .span { grid-column: 1 / -1; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 6px; }
+    input, textarea, select { width: 100%; border: 1px solid var(--line); padding: 10px; font: inherit; background: #fff; }
+    textarea { min-height: 150px; font-family: "Courier New", monospace; }
+    button { border: 1px solid var(--text); background: var(--text); color: #fff; padding: 10px 14px; cursor: pointer; font: inherit; }
+    button.secondary { background: #fff; color: var(--text); border-color: var(--line); }
+    button.danger { background: var(--bad); border-color: var(--bad); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 10px; text-align: left; vertical-align: top; }
+    code, pre { font-family: "Courier New", monospace; }
+    pre { background: var(--soft); border: 1px solid var(--line); padding: 12px; white-space: pre-wrap; overflow: auto; }
+    .status { display: inline-block; padding: 2px 7px; border: 1px solid var(--line); color: var(--muted); }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    @media (max-width: 900px) { header, main, .grid, .two { display: block; } nav { border-right: 0; border-bottom: 1px solid var(--line); } section { padding: 20px; } .panel { margin-bottom: 12px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>管理员控制台</h1>
+      <p>通过企业 IM 用户身份校验管理员权限后，集中开通机器人、导入公司说明书、查看运行状态。</p>
+    </div>
+    <div id="identity" class="status">未验证</div>
+  </header>
+  <main>
+    <nav>
+      <button class="active" onclick="showTab('overview', this)">总览</button>
+      <button onclick="showTab('bots', this)">平台 Bot 开通</button>
+      <button onclick="showTab('knowledge', this)">知识库开通</button>
+      <button onclick="showTab('runtime', this)">运行验证</button>
+      <button onclick="showTab('help', this)">操作说明</button>
+    </nav>
+    <div>
+      <section id="overview" class="active">
+        <div class="grid">
+          <div class="panel"><h3>管理员身份</h3><pre id="profileBox">等待验证</pre></div>
+          <div class="panel"><h3>平台状态</h3><pre id="platformSummary">等待加载</pre></div>
+          <div class="panel"><h3>运行状态</h3><pre id="runtimeSummary">等待加载</pre></div>
+        </div>
+      </section>
+      <section id="bots">
+        <div class="grid">
+          <div class="panel span">
+            <h2>平台 Bot 统一开通</h2>
+            <p>普通员工不自行创建 Bot，不配置回调。管理员在这里保存平台凭据，由系统统一接管。</p>
+            <div id="botStatus"></div>
+          </div>
+          <div class="panel">
+            <h3>企业微信</h3>
+            <label>显示名称</label><input id="wecomName" placeholder="企业 AI 助手">
+            <label>凭据 JSON</label><textarea id="wecomCreds" placeholder='{"bot_id":"","bot_secret":"","corp_id":"","agent_id":"","secret":""}'></textarea>
+            <div class="actions"><button onclick="activateBot('wecom')">保存并接管企业微信</button></div>
+          </div>
+          <div class="panel">
+            <h3>飞书</h3>
+            <label>显示名称</label><input id="feishuName" placeholder="飞书 AI 助手">
+            <label>凭据 JSON</label><textarea id="feishuCreds" placeholder='{"app_id":"","app_secret":"","domain":"feishu"}'></textarea>
+            <div class="actions"><button onclick="activateBot('feishu')">保存并接管飞书</button></div>
+          </div>
+          <div class="panel">
+            <h3>钉钉</h3>
+            <label>显示名称</label><input id="dingtalkName" placeholder="钉钉 AI 助手">
+            <label>凭据 JSON</label><textarea id="dingtalkCreds" placeholder='{"client_id":"","client_secret":"","robot_code":""}'></textarea>
+            <div class="actions"><button onclick="activateBot('dingtalk')">保存并接管钉钉</button></div>
+          </div>
+          <div class="panel span"><h3>开通结果</h3><pre id="botResult">暂无操作</pre></div>
+        </div>
+      </section>
+      <section id="knowledge">
+        <div class="grid two">
+          <div class="panel">
+            <h2>公司说明书导入</h2>
+            <p>将激活说明书、功能说明书、知识库管理说明书导入 organization/company 级知识库。</p>
+            <button onclick="importGuides()">导入或更新公司说明书</button>
+            <pre id="guideResult">暂无操作</pre>
+          </div>
+          <div class="panel">
+            <h2>知识库管理入口</h2>
+            <p>按当前管理员身份打开知识库管理页，用于查看、更新、删除和升级有权限的知识条目。</p>
+            <button class="secondary" onclick="openKnowledgeManager()">打开知识库管理页</button>
+            <pre>/knowledge/manage</pre>
+          </div>
+        </div>
+      </section>
+      <section id="runtime">
+        <div class="panel">
+          <h2>运行验证</h2>
+          <p>查看服务端口、平台环境变量和健康状态。保存新凭据后如提示需要重启，应重启对应服务后再验证。</p>
+          <button onclick="loadRuntime()">刷新运行状态</button>
+          <pre id="runtimeResult">等待加载</pre>
+        </div>
+      </section>
+      <section id="help">
+        <div class="panel">
+          <h2>页面操作说明</h2>
+          <table>
+            <tbody>
+              <tr><th>总览</th><td>确认当前企业 IM 用户是否通过管理员校验，快速查看平台与运行状态。</td></tr>
+              <tr><th>平台 Bot 开通</th><td>分别填写企微、飞书、钉钉凭据 JSON，点击保存并接管。重点检查返回的缺少配置、是否需要重启和下一步。</td></tr>
+              <tr><th>知识库开通</th><td>导入或更新公司级说明书，保证员工询问激活、功能、知识库管理时优先命中本地知识库。</td></tr>
+              <tr><th>运行验证</th><td>检查端口和平台环境变量是否就绪。飞书、钉钉没有真实账号时只能看模拟或缺凭据状态。</td></tr>
+              <tr><th>管理员身份</th><td>页面 URL 必须包含 platform、user_id、admin_token。后端会校验令牌签名和该用户是否是对应 IM 平台管理员。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const authQuery = () => `platform=${encodeURIComponent(params.get('platform') || 'wecom')}&user_id=${encodeURIComponent(params.get('user_id') || '')}&admin_token=${encodeURIComponent(params.get('admin_token') || '')}`;
+    function showTab(id, btn) {
+      document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      btn.classList.add('active');
+    }
+    async function api(path, options = {}) {
+      const joiner = path.includes('?') ? '&' : '?';
+      const resp = await fetch(`${path}${joiner}${authQuery()}`, options);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || data.error || JSON.stringify(data));
+      return data;
+    }
+    function renderJson(id, data) { document.getElementById(id).textContent = JSON.stringify(data, null, 2); }
+    async function loadProfile() {
+      const profile = await api('/api/v1/admin/profile');
+      document.getElementById('identity').textContent = `${profile.platform} / ${profile.user_id} / ${profile.role}`;
+      renderJson('profileBox', profile);
+    }
+    async function loadBots() {
+      const data = await api('/api/v1/admin/platform/bots');
+      renderJson('platformSummary', data);
+      const rows = (data.platforms || []).map(p => `<tr><td>${p.platform_label || p.platform}</td><td>${p.enabled ? '<span class="ok">已启用</span>' : '<span class="warn">未启用</span>'}</td><td>${(p.configured_keys || []).join(', ') || '-'}</td><td>${(p.missing_keys || []).join(', ') || '-'}</td><td>${p.restart_required ? '<span class="bad">需要</span>' : '不需要'}</td><td>${p.next_action || '-'}</td></tr>`).join('');
+      document.getElementById('botStatus').innerHTML = `<table><thead><tr><th>平台</th><th>状态</th><th>已配置</th><th>缺少配置</th><th>重启</th><th>下一步</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    async function activateBot(platform) {
+      const ids = {wecom:['wecomCreds','wecomName'], feishu:['feishuCreds','feishuName'], dingtalk:['dingtalkCreds','dingtalkName']}[platform];
+      const credentials = JSON.parse(document.getElementById(ids[0]).value || '{}');
+      const payload = {credentials, display_name: document.getElementById(ids[1]).value || '', visibility_scope: 'all', auto_permissions: ['docs.full','knowledge.readwrite','contacts.read']};
+      const data = await api(`/api/v1/admin/platform/bots/${platform}/activate`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+      renderJson('botResult', data);
+      await loadBots();
+    }
+    async function importGuides() {
+      const data = await api('/api/v1/admin/knowledge/import/company-guides', {method:'POST'});
+      renderJson('guideResult', data);
+    }
+    function openKnowledgeManager() {
+      window.open(`/knowledge/manage?user_id=${encodeURIComponent(params.get('user_id') || '')}`, '_blank');
+    }
+    async function loadRuntime() {
+      const data = await api('/api/v1/admin/runtime/status');
+      renderJson('runtimeSummary', data);
+      renderJson('runtimeResult', data);
+    }
+    (async function init() {
+      try {
+        await loadProfile();
+        await loadBots();
+        await loadRuntime();
+      } catch (err) {
+        document.getElementById('identity').textContent = '验证失败';
+        renderJson('profileBox', {error: String(err.message || err)});
+      }
+    })();
   </script>
 </body>
 </html>

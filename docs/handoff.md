@@ -287,14 +287,26 @@
 
 - 平台统一开通 BOT：
   - 新增 `src/platform/activation_service.py`
+  - 新增 `src/web/admin_auth.py`
+  - 新增管理员控制台 `GET /admin/console`
+  - 新增管理员签名链接脚本 `scripts/create_admin_console_link.py`
   - 新增后台入口 `GET /platform/bots/manage`
   - 新增接口：
+    - `GET /api/v1/admin/profile`
+    - `GET /api/v1/admin/platform/bots`
+    - `POST /api/v1/admin/platform/bots/{platform}/activate`
+    - `POST /api/v1/admin/knowledge/import/company-guides`
+    - `GET /api/v1/admin/runtime/status`
     - `GET /api/v1/platform/bots`
     - `POST /api/v1/platform/bots/{platform}/activate`
   - 当前原则：
     - 普通员工不自行创建 BOT
     - 不让员工自己配置回调 URL / Token / AESKey
     - 企微 / 飞书 / 钉钉 BOT 由平台统一接管和配置
+  - 管理员控制台鉴权：
+    - 页面 URL 携带 `platform/user_id/admin_token`
+    - `admin_token` 由服务端 HMAC 签名并带过期时间
+    - API 层会二次校验企业 IM 用户是否在组织图谱或管理员注册表中具备管理员权限
   - 统一开通已补充必填凭据校验：
     - 企微：`bot_id`、`bot_secret`
     - 飞书：`app_id`、`app_secret`
