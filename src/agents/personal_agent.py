@@ -77,6 +77,7 @@ def _prefetch_accessible_knowledge(user_id: str, text: str, context: MessageCont
     try:
         from src.tools.knowledge_tools import search_knowledge_entries
         from src.tools.knowledge_tools import owner_type_label
+        from src.knowledge.linking import build_knowledge_open_url
 
         space_id = context.project_id or context.dept_id or context.space_id
         results = search_knowledge_entries(text, user_id=user_id, space_id=space_id or "", limit=3)
@@ -88,7 +89,11 @@ def _prefetch_accessible_knowledge(user_id: str, text: str, context: MessageCont
             content = item.content
             if content.startswith(title):
                 content = content[len(title):].lstrip()
-            lines.append(f"【{owner_type_label(item.owner_type.value)}知识】{title}\n{content[:1200]}")
+            lines.append(
+                f"【{owner_type_label(item.owner_type.value)}知识】{title}\n"
+                f"打开查看：{build_knowledge_open_url(item.id)}\n"
+                f"{content[:1200]}"
+            )
         return "\n\n".join(lines)
     except Exception as exc:
         logger.warning("Knowledge prefetch failed for %s: %s", user_id, exc)
@@ -98,4 +103,4 @@ def _prefetch_accessible_knowledge(user_id: str, text: str, context: MessageCont
 def _build_prefetched_answer(text: str, prefetched_knowledge: str) -> str:
     if not prefetched_knowledge or not (_looks_knowledge_first_query(text) or _looks_knowledge_followup_query(text)):
         return ""
-    return "我先从你有权限访问的知识库里找到了相关内容：\n\n" + prefetched_knowledge[:1500]
+    return "我先从你有权限访问的知识库里找到了相关内容，你可以直接打开查看：\n\n" + prefetched_knowledge[:1500]

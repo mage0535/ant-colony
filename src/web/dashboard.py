@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
@@ -18,6 +19,8 @@ from src.analysis.role_analyzer import GroupMessageAnalyzer, RoleAnalyzer
 from src.isolation.file_store import IsolatedFileStore
 from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
 from src.knowledge.collector import KnowledgeCollector
+from src.knowledge.linking import build_knowledge_open_url
+from src.tools.knowledge_tools import owner_type_label
 from src.knowledge.repository_factory import build_knowledge_repository
 from src.models.contracts import Task, TaskStatus
 from src.pool.agent_pool import AgentPool
@@ -367,6 +370,15 @@ def list_knowledge(owner_type: str = "", owner_id: str = "", user_id: str = "", 
     else:
         results = kr.list_for_owner(KnowledgeOwnerType.ORGANIZATION, "*")
     return {"entries": [_knowledge_entry_to_dict(e, user_id=user_id) for e in results[:limit]]}
+
+
+@app.get("/api/v1/knowledge/{entry_id}")
+def get_knowledge_entry(entry_id: str, user_id: str = "", space_id: str = ""):
+    kr = get_knowledge_repo()
+    entry = kr.get(entry_id)
+    if entry is None:
+        raise HTTPException(404, f"Entry {entry_id} not found")
+    return _knowledge_entry_to_dict(entry, user_id=user_id, space_id=space_id)
 
 
 @app.get("/api/v1/knowledge/accessible")
@@ -883,6 +895,78 @@ def knowledge_management_page():
     )
 
 
+@app.get("/api/v1/knowledge/{entry_id}/open", response_class=HTMLResponse)
+def open_knowledge_entry(entry_id: str, user_id: str = "", space_id: str = ""):
+    from html import escape
+    from src.knowledge.acl import may_read, resolve_role
+
+    kr = get_knowledge_repo()
+    entry = kr.get(entry_id)
+    if entry is None:
+        raise HTTPException(404, f"Entry {entry_id} not found")
+    if user_id:
+        role = resolve_role(user_id, space_id)
+        if not may_read(role, entry.owner_type.value, entry.owner_id, user_id):
+            raise HTTPException(403, "Permission denied")
+
+    title = str(entry.metadata.get("title", "")).strip() or entry.id
+    source_url = _knowledge_source_open_url(entry)
+    source_link = f'<p><a href="{escape(source_url)}" target="_blank">打开原始来源</a></p>' if source_url else ""
+    body = escape(entry.content)
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)}</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem auto; max-width: 960px; line-height: 1.65; color: #222; padding: 0 1rem; }}
+    pre {{ white-space: pre-wrap; word-break: break-word; background: #f6f8fa; padding: 1rem; border-radius: 8px; }}
+    .meta {{ color: #666; margin-bottom: 1rem; }}
+  </style>
+</head>
+<body>
+  <h1>{escape(title)}</h1>
+  <div class="meta">范围：{escape(owner_type_label(entry.owner_type.value))} / {escape(entry.owner_id)}</div>
+  {source_link}
+  <pre>{body}</pre>
+</body>
+</html>"""
+    )
+
+
+@app.get("/api/v1/knowledge/{entry_id}/source")
+def download_knowledge_source(entry_id: str, user_id: str = "", space_id: str = ""):
+    from src.knowledge.acl import may_read, resolve_role
+
+    kr = get_knowledge_repo()
+    entry = kr.get(entry_id)
+    if entry is None:
+        raise HTTPException(404, f"Entry {entry_id} not found")
+    if user_id:
+        role = resolve_role(user_id, space_id)
+        if not may_read(role, entry.owner_type.value, entry.owner_id, user_id):
+            raise HTTPException(403, "Permission denied")
+
+    source_path = str(entry.metadata.get("source_path", "")).strip()
+    if not source_path:
+        raise HTTPException(404, "No source file available")
+    resolved = Path(source_path)
+    if not resolved.is_absolute():
+        repo_root = Path(__file__).resolve().parents[2]
+        resolved = (repo_root / source_path).resolve()
+    allowed_roots = [
+        Path(__file__).resolve().parents[2].resolve(),
+        Path("./data/files").resolve(),
+    ]
+    if not any(str(resolved).startswith(str(root)) for root in allowed_roots):
+        raise HTTPException(403, "Source path is outside allowed roots")
+    if not resolved.is_file():
+        raise HTTPException(404, "Source file not found")
+    return FileResponse(str(resolved), filename=resolved.name)
+
+
 # ---- Document Download ----
 
 @app.get("/api/v1/documents/{filename:path}")
@@ -908,6 +992,7 @@ def _knowledge_entry_to_dict(entry: KnowledgeEntry, *, user_id: str = "", space_
     return {
         "id": entry.id,
         "owner_type": entry.owner_type.value,
+        "owner_type_label": owner_type_label(entry.owner_type.value),
         "owner_id": entry.owner_id,
         "title": str(entry.metadata.get("title", "")),
         "content": entry.content,
@@ -915,4 +1000,16 @@ def _knowledge_entry_to_dict(entry: KnowledgeEntry, *, user_id: str = "", space_
         "metadata": entry.metadata,
         "can_read": can_read,
         "can_write": can_write,
+        "open_url": build_knowledge_open_url(entry.id),
+        "source_url": _knowledge_source_open_url(entry),
     }
+
+
+def _knowledge_source_open_url(entry: KnowledgeEntry) -> str:
+    source_type = str(entry.metadata.get("source_type", "")).strip()
+    if source_type in {"file", "builtin_company_guide"}:
+        return build_knowledge_open_url(entry.id).replace("/open", "/source")
+    source_url = str(entry.metadata.get("source_url", "")).strip()
+    if source_url:
+        return source_url
+    return ""

@@ -102,6 +102,8 @@ def search_knowledge_entries(query: str, *, user_id: str = "", space_id: str = "
 
 
 def search_knowledge_tool(args: dict[str, Any]) -> str:
+    from src.knowledge.linking import build_knowledge_open_url
+
     query = str(args.get("query", ""))
     if not query:
         return "请提供搜索关键词 (query)"
@@ -114,11 +116,13 @@ def search_knowledge_tool(args: dict[str, Any]) -> str:
     for result in results:
         title = str(result.metadata.get("title", "")).strip() or result.content.splitlines()[0][:60]
         lines.append(f"  [{owner_type_label(result.owner_type.value)}] {title}")
+        lines.append(f"  打开查看：{build_knowledge_open_url(result.id)}")
     return "\n".join(lines)
 
 
 def list_knowledge_tool(args: dict[str, Any]) -> str:
     from src.knowledge.contracts import KnowledgeOwnerType
+    from src.knowledge.linking import build_knowledge_open_url
     from src.knowledge.repository_factory import build_knowledge_repository
 
     repo = build_knowledge_repository()
@@ -141,6 +145,7 @@ def list_knowledge_tool(args: dict[str, Any]) -> str:
     for result in results[:20]:
         title = str(result.metadata.get("title", "")).strip() or result.content.splitlines()[0][:60]
         lines.append(f"  [{owner_type_label(result.owner_type.value)}] {title}")
+        lines.append(f"  打开查看：{build_knowledge_open_url(result.id)}")
     return "\n".join(lines)
 
 

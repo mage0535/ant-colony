@@ -67,6 +67,7 @@ class KnowledgeCollector:
             content=f"URL: {url}\nSource: {parsed.netloc}\n\n{_strip_html(content)}",
             tags=(tags or []) + ["url", domain_tag],
         )
+        entry.metadata.update({"title": url, "source_type": "url", "source_url": url})
         self.repo.save(entry)
         logger.info("Collected URL %s as %s (%d chars)", url, entry.id, len(entry.content))
         return entry
@@ -80,6 +81,7 @@ class KnowledgeCollector:
             content=f"{title}\n\n{text}",
             tags=tags or [],
         )
+        entry.metadata.update({"title": title, "source_type": "text"})
         self.repo.save(entry)
         logger.info("Collected text %s as %s", title, entry.id)
         return entry
@@ -108,6 +110,14 @@ class KnowledgeCollector:
             owner_type=owner_type, owner_id=owner_id,
             content=content[:100000],
             tags=(tags or []) + tags_extra,
+        )
+        entry.metadata.update(
+            {
+                "title": title,
+                "source_type": "file",
+                "source_path": filepath,
+                "source_filename": title,
+            }
         )
         self.repo.save(entry)
         logger.info("Collected file %s as %s (%d chars, type=%s)", filepath, entry.id, len(entry.content), ftype)

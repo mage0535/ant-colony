@@ -297,12 +297,13 @@ class TestPersonalAgent(unittest.TestCase):
 
         with patch(
             "src.agents.personal_agent._prefetch_accessible_knowledge",
-            return_value="[organization] 企业微信 AI 助手激活说明书\n企业微信 AI 助手激活说明书\n\n第一步 打开企业微信\n第二步 找到机器人",
+            return_value="【公司知识】企业微信 AI 助手激活说明书\n打开查看：http://127.0.0.1:18092/api/v1/knowledge/company-guide-wecom-activation/open\n第一步 打开企业微信\n第二步 找到机器人",
         ):
             response = agent.process_message("u1", "我想让其他同事也激活类似你的员工企微机器人，应该怎么操作", context)
 
         self.assertIn("我先从你有权限访问的知识库里找到了相关内容", response.text)
         self.assertIn("企业微信 AI 助手激活说明书", response.text)
+        self.assertIn("打开查看", response.text)
         self.assertIn("第一步 打开企业微信", response.text)
 
     def test_personal_agent_uses_last_knowledge_for_followup_question(self) -> None:
@@ -319,7 +320,7 @@ class TestPersonalAgent(unittest.TestCase):
         with patch(
             "src.agents.personal_agent._prefetch_accessible_knowledge",
             side_effect=[
-                "【公司知识】企业微信 AI 助手激活说明书\n第一步 打开企业微信\n第二步 找到机器人",
+                "【公司知识】企业微信 AI 助手激活说明书\n打开查看：http://127.0.0.1:18092/api/v1/knowledge/company-guide-wecom-activation/open\n第一步 打开企业微信\n第二步 找到机器人",
                 "",
             ],
         ):

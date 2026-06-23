@@ -23,6 +23,7 @@ class TestKnowledgeManagementApi(unittest.TestCase):
             result = search_knowledge("激活", user_id="u1", space_id="", limit=10)
 
         self.assertEqual(result["results"][0]["title"], "企业微信 AI 助手激活说明书")
+        self.assertIn("/api/v1/knowledge/k1/open", result["results"][0]["open_url"])
 
     def test_import_company_guides_api_returns_imported_entries(self) -> None:
         from src.web.dashboard import import_company_guides_api
@@ -45,6 +46,25 @@ class TestKnowledgeManagementApi(unittest.TestCase):
 
         self.assertEqual(result["imported"], 1)
         self.assertEqual(result["entries"][0]["title"], "企业微信 AI 助手激活说明书")
+
+    def test_open_knowledge_entry_renders_html(self) -> None:
+        from src.web.dashboard import open_knowledge_entry
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        entry = KnowledgeEntry(
+            id="k1",
+            owner_type=KnowledgeOwnerType.ORGANIZATION,
+            owner_id="*",
+            content="企业微信 AI 助手激活说明书\n\n正文内容",
+            tags=["guide"],
+            metadata={"title": "企业微信 AI 助手激活说明书"},
+        )
+        fake_repo = type("Repo", (), {"get": lambda self, entry_id: entry})()
+
+        with patch("src.web.dashboard.get_knowledge_repo", return_value=fake_repo):
+            response = open_knowledge_entry("k1")
+
+        self.assertIn("企业微信 AI 助手激活说明书", response.body.decode("utf-8"))
 
 
 if __name__ == "__main__":
