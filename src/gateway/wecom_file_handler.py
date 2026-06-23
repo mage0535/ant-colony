@@ -58,6 +58,8 @@ def handle_wecom_file(payload: dict[str, Any]) -> dict[str, Any]:
             from_user_id=from_user_id,
             source_path=tmp_path,
             preserve_template=False,
+            owner_type=_infer_knowledge_owner_type(payload),
+            owner_id=_infer_knowledge_owner_id(payload),
         )
         return {"summary": summary, "filename": filename, **template_meta}
     except Exception as exc:
@@ -148,6 +150,8 @@ def summarize_file_bytes(
     from_user_id: str = "",
     source_path: str = "",
     preserve_template: bool = True,
+    owner_type: str = "organization",
+    owner_id: str = "*",
 ) -> str:
     """Convert, index, and summarize a file payload regardless of transport."""
     filename = _normalize_office_filename(filename, data)
@@ -188,7 +192,7 @@ def summarize_file_bytes(
 
             repo = build_knowledge_repository()
             collector = KnowledgeCollector(repo)
-            entry = collector.collect_file(tmp_path, owner_type="organization", owner_id="*")
+            entry = collector.collect_file(tmp_path, owner_type=owner_type, owner_id=owner_id)
             logger.info("File indexed: %s (id=%s)", filename, entry.id if entry else "?")
         except Exception as exc:
             logger.warning("Failed to index file into knowledge base: %s", exc)
@@ -239,3 +243,26 @@ def _normalize_office_filename(filename: str, data: bytes) -> str:
         if b"ppt/" in lowered or b"presentation.xml" in lowered:
             return f"{name}.pptx"
     return name
+
+
+def _infer_knowledge_owner_type(payload: dict[str, Any]) -> str:
+    if payload.get("project_id"):
+        return "project"
+    if payload.get("dept_id"):
+        return "department"
+    if payload.get("is_direct"):
+        return "personal"
+    if payload.get("space_id"):
+        return "project"
+    return "organization"
+
+
+def _infer_knowledge_owner_id(payload: dict[str, Any]) -> str:
+    owner_type = _infer_knowledge_owner_type(payload)
+    if owner_type == "personal":
+        return str(payload.get("from_user_id") or payload.get("from") or "*")
+    if owner_type == "department":
+        return str(payload.get("dept_id") or "*")
+    if owner_type == "project":
+        return str(payload.get("project_id") or payload.get("space_id") or "*")
+    return "*"

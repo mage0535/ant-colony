@@ -411,6 +411,45 @@ class TestFileTypeInference(unittest.TestCase):
         self.assertNotIn("\x00", summary)
         self.assertIn("第一章总则正文", summary)
 
+    def test_summarize_file_bytes_indexes_personal_scope_for_direct_chat(self) -> None:
+        from src.gateway.wecom_file_handler import _infer_knowledge_owner_id, _infer_knowledge_owner_type
+
+        payload = {"from_user_id": "u123", "is_direct": True}
+
+        self.assertEqual(_infer_knowledge_owner_type(payload), "personal")
+        self.assertEqual(_infer_knowledge_owner_id(payload), "u123")
+
+    def test_summarize_file_bytes_indexes_project_scope_for_group_space(self) -> None:
+        from src.gateway.wecom_file_handler import _infer_knowledge_owner_id, _infer_knowledge_owner_type
+
+        payload = {"from_user_id": "u123", "is_direct": False, "space_id": "proj-1"}
+
+        self.assertEqual(_infer_knowledge_owner_type(payload), "project")
+        self.assertEqual(_infer_knowledge_owner_id(payload), "proj-1")
+
+    def test_summarize_file_bytes_passes_owner_scope_to_collector(self) -> None:
+        from src.gateway.wecom_file_handler import summarize_file_bytes
+
+        office_bytes = b"PK\x03\x04" + b"[Content_Types].xml" + b"word/document.xml"
+
+        with patch("src.knowledge.document_converter.guess_type", return_value="other"), \
+             patch("src.knowledge.document_converter.convert_document", return_value="提取到的正文"), \
+             patch("src.gateway.wecom_file_handler.prepare_template_candidate"), \
+             patch("src.knowledge.repository_factory.build_knowledge_repository", return_value=object()), \
+             patch("src.knowledge.collector.KnowledgeCollector") as mock_collector_cls:
+            mock_collector_cls.return_value.collect_file.return_value = None
+            summarize_file_bytes(
+                office_bytes,
+                "template.docx",
+                from_user_id="u123",
+                owner_type="department",
+                owner_id="dept-2",
+            )
+
+        mock_collector_cls.return_value.collect_file.assert_called_once()
+        self.assertEqual(mock_collector_cls.return_value.collect_file.call_args.kwargs["owner_type"], "department")
+        self.assertEqual(mock_collector_cls.return_value.collect_file.call_args.kwargs["owner_id"], "dept-2")
+
 
 class TestDocumentContentSanitization(unittest.TestCase):
     def test_generate_report_strips_embedded_null_bytes_before_officecli(self) -> None:
