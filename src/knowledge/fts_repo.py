@@ -72,6 +72,15 @@ class FtsKnowledgeRepository:
         self._conn.commit()
         return entry
 
+    def get(self, entry_id: str) -> KnowledgeEntry | None:
+        row = self._conn.execute(
+            "SELECT * FROM knowledge_items WHERE id = ?",
+            (entry_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _row_to_entry(row)
+
     def list_for_owner(self, owner_type: KnowledgeOwnerType, owner_id: str) -> list[KnowledgeEntry]:
         rows = self._conn.execute(
             "SELECT * FROM knowledge_items WHERE owner_type = ? AND owner_id = ? ORDER BY created_at DESC",

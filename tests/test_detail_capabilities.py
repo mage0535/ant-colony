@@ -28,9 +28,8 @@ class TestInternalDetailCapabilities(unittest.TestCase):
         class FakeEntry:
             content = "制度正文"
 
-        with patch("src.platform.internal_capability_provider.FtsKnowledgeRepository") as mock_repo_cls:
-            mock_repo = mock_repo_cls.return_value
-            mock_repo.search.return_value = [FakeEntry()]
+        fake_repo = type("Repo", (), {"search": lambda self, query, limit=1: [FakeEntry()]})()
+        with patch("src.platform.internal_capability_provider.build_knowledge_repository", return_value=fake_repo):
             result = InternalCapabilityProvider().read_drive_doc("制度")
 
         self.assertIn("制度正文", result)
@@ -41,9 +40,8 @@ class TestInternalDetailCapabilities(unittest.TestCase):
         class FakeEntry:
             content = "在线文档内容"
 
-        with patch("src.platform.internal_capability_provider.FtsKnowledgeRepository") as mock_repo_cls:
-            mock_repo = mock_repo_cls.return_value
-            mock_repo.search.return_value = [FakeEntry()]
+        fake_repo = type("Repo", (), {"search": lambda self, query, limit=1: [FakeEntry()]})()
+        with patch("src.platform.internal_capability_provider.build_knowledge_repository", return_value=fake_repo):
             result = InternalCapabilityProvider().read_docs_document("沟通管理办法")
 
         self.assertIn("在线文档内容", result)

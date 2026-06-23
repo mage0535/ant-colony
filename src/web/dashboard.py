@@ -11,13 +11,14 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from src.analysis.role_analyzer import GroupMessageAnalyzer, RoleAnalyzer
 from src.isolation.file_store import IsolatedFileStore
 from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
 from src.knowledge.collector import KnowledgeCollector
-from src.knowledge.fts_repo import FtsKnowledgeRepository
+from src.knowledge.repository_factory import build_knowledge_repository
 from src.models.contracts import Task, TaskStatus
 from src.pool.agent_pool import AgentPool
 from src.rooms.space_registry import SpaceRegistry
@@ -50,7 +51,7 @@ repo: TaskRepository | None = None
 _group_msg_analyzer: GroupMessageAnalyzer | None = None
 agent_pool = AgentPool()
 _space_registry: SpaceRegistry | None = None
-_knowledge_repo: FtsKnowledgeRepository | None = None
+_knowledge_repo: Any = None
 _warm_store: Any = None
 _cold_store: Any = None
 
@@ -70,14 +71,10 @@ def get_space_registry() -> SpaceRegistry:
     return _space_registry
 
 
-def get_knowledge_repo() -> FtsKnowledgeRepository:
+def get_knowledge_repo() -> Any:
     global _knowledge_repo
     if _knowledge_repo is None:
-        r = get_repo()
-        _knowledge_repo = FtsKnowledgeRepository(r._conn)
-        # Rebuild FTS index to ensure it's current
-        r._conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
-        r._conn.commit()
+        _knowledge_repo = build_knowledge_repository()
     return _knowledge_repo
 
 
@@ -139,6 +136,21 @@ class KnowledgeCollectRequest(BaseModel):
     owner_type: str = "project"
     owner_id: str = "*"
     tags: list[str] = []
+
+
+class KnowledgeUpdateRequest(BaseModel):
+    content: str
+    title: str = ""
+    tags: list[str] = []
+    user_id: str = ""
+
+
+class KnowledgePromoteRequest(BaseModel):
+    entry_id: str
+    target_owner_type: str
+    target_owner_id: str
+    new_entry_id: str = ""
+    user_id: str = ""
 class FileDeleteRequest(BaseModel):
     user_id: str
     space_id: str
@@ -316,16 +328,18 @@ def create_knowledge(req: KnowledgeCreateRequest):
 @app.get("/api/v1/knowledge/search")
 def search_knowledge(query: str, user_id: str = "", space_id: str = "", limit: int = 20):
     kr = get_knowledge_repo()
-    results = kr.search(query, user_id=user_id, space_id=space_id, limit=limit)
+    results = kr.search_accessible(query, user_id=user_id, space_id=space_id, limit=limit) if user_id else kr.search(query, limit=limit)
     return {"results": [
-        {"id": e.id, "owner_type": e.owner_type.value, "owner_id": e.owner_id, "content": e.content, "tags": e.tags}
+        _knowledge_entry_to_dict(e)
         for e in results
     ]}
 
 @app.get("/api/v1/knowledge")
-def list_knowledge(owner_type: str = "", owner_id: str = ""):
+def list_knowledge(owner_type: str = "", owner_id: str = "", user_id: str = "", limit: int = 50):
     kr = get_knowledge_repo()
-    if owner_type and owner_id:
+    if user_id:
+        results = kr.list_accessible(user_id=user_id, limit=limit)
+    elif owner_type and owner_id:
         try:
             ot = KnowledgeOwnerType(owner_type)
         except ValueError:
@@ -333,17 +347,76 @@ def list_knowledge(owner_type: str = "", owner_id: str = ""):
         results = kr.list_for_owner(ot, owner_id)
     else:
         results = kr.list_for_owner(KnowledgeOwnerType.ORGANIZATION, "*")
-    return {"entries": [
-        {"id": e.id, "owner_type": e.owner_type.value, "owner_id": e.owner_id, "content": e.content, "tags": e.tags}
-        for e in results
-    ]}
+    return {"entries": [_knowledge_entry_to_dict(e) for e in results[:limit]]}
+
+
+@app.get("/api/v1/knowledge/accessible")
+def list_accessible_knowledge(user_id: str, query: str = "", space_id: str = "", limit: int = 50):
+    kr = get_knowledge_repo()
+    results = kr.search_accessible(query, user_id=user_id, space_id=space_id, limit=limit) if query else kr.list_accessible(user_id=user_id, limit=limit)
+    return {"entries": [_knowledge_entry_to_dict(e) for e in results]}
 
 @app.delete("/api/v1/knowledge/{entry_id}")
-def delete_knowledge(entry_id: str):
+def delete_knowledge(entry_id: str, user_id: str = ""):
     kr = get_knowledge_repo()
-    if not kr.delete(entry_id):
+    if not kr.delete(entry_id, user_id=user_id):
         raise HTTPException(404, f"Entry {entry_id} not found")
     return {"id": entry_id, "deleted": True}
+
+
+@app.put("/api/v1/knowledge/{entry_id}")
+def update_knowledge(entry_id: str, req: KnowledgeUpdateRequest):
+    from src.knowledge.acl import may_write, resolve_role
+
+    kr = get_knowledge_repo()
+    entry = kr.get(entry_id)
+    if entry is None:
+        raise HTTPException(404, f"Entry {entry_id} not found")
+    role = resolve_role(req.user_id, "")
+    if req.user_id and not may_write(role, entry.owner_type.value, entry.owner_id, req.user_id):
+        raise HTTPException(403, "Permission denied")
+    entry.content = f"{req.title}\n\n{req.content}" if req.title else req.content
+    entry.tags = list(req.tags)
+    if req.title:
+        entry.metadata["title"] = req.title
+    kr.save(entry)
+    return _knowledge_entry_to_dict(entry)
+
+
+@app.post("/api/v1/knowledge/promote")
+def promote_knowledge(req: KnowledgePromoteRequest):
+    from src.knowledge.acl import may_write, resolve_role
+    from src.knowledge.service import KnowledgeService
+
+    kr = get_knowledge_repo()
+    entry = kr.get(req.entry_id)
+    if entry is None:
+        raise HTTPException(404, f"Entry {req.entry_id} not found")
+    role = resolve_role(req.user_id, "")
+    if req.user_id and not may_write(role, entry.owner_type.value, entry.owner_id, req.user_id):
+        raise HTTPException(403, "Permission denied")
+    try:
+        target_owner_type = KnowledgeOwnerType(req.target_owner_type)
+    except ValueError:
+        raise HTTPException(400, f"Invalid target_owner_type: {req.target_owner_type}")
+    service = KnowledgeService(kr)
+    new_entry_id = req.new_entry_id or f"{req.entry_id}-promoted-{target_owner_type.value}"
+    promoted = service.promote_entry(
+        entry,
+        target_owner_type=target_owner_type,
+        target_owner_id=req.target_owner_id,
+        new_entry_id=new_entry_id,
+        extra_tags=["promoted"],
+    )
+    return _knowledge_entry_to_dict(promoted)
+
+
+@app.post("/api/v1/knowledge/import/company-guides")
+def import_company_guides_api():
+    from src.knowledge.company_guides import import_company_guides
+
+    entries = import_company_guides(get_knowledge_repo())
+    return {"imported": len(entries), "entries": [_knowledge_entry_to_dict(e) for e in entries]}
 
 @app.post("/api/v1/knowledge/collect")
 def collect_knowledge(req: KnowledgeCollectRequest):
@@ -536,7 +609,7 @@ def upload_file(
     # Auto-index document into knowledge base
     try:
         fpath = os.path.join(store._base, rel_path)
-        collector = KnowledgeCollector(FtsKnowledgeRepository(Database.get().connect()))
+        collector = KnowledgeCollector(build_knowledge_repository())
         entry = collector.collect_file(fpath, owner_type=owner_type, owner_id=owner_id)
         indexed = entry.id if entry else None
     except Exception as e:
@@ -666,6 +739,95 @@ def root():
     return {"name": "Ant Colony API", "version": "0.3.0", "docs": "/docs"}
 
 
+@app.get("/knowledge/manage", response_class=HTMLResponse)
+def knowledge_management_page():
+    return HTMLResponse(
+        """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Knowledge Manager</title>
+</head>
+<body class="bg-light">
+  <div class="container py-4">
+    <h1 class="h3 mb-3">知识库管理</h1>
+    <div class="row g-3 mb-3">
+      <div class="col-md-3"><input id="userId" class="form-control" placeholder="用户ID"></div>
+      <div class="col-md-5"><input id="query" class="form-control" placeholder="关键词"></div>
+      <div class="col-md-2"><button class="btn btn-primary w-100" onclick="loadEntries()">搜索/查看</button></div>
+      <div class="col-md-2"><button class="btn btn-outline-secondary w-100" onclick="importGuides()">导入公司说明书</button></div>
+    </div>
+    <div class="mb-3">
+      <textarea id="editor" class="form-control" rows="8" placeholder="点击下方条目后在这里编辑内容"></textarea>
+    </div>
+    <div class="row g-3 mb-4">
+      <div class="col-md-3"><input id="entryId" class="form-control" placeholder="条目ID"></div>
+      <div class="col-md-3"><input id="title" class="form-control" placeholder="标题"></div>
+      <div class="col-md-3"><input id="tags" class="form-control" placeholder="标签，逗号分隔"></div>
+      <div class="col-md-3 d-grid gap-2">
+        <button class="btn btn-success" onclick="updateEntry()">保存更新</button>
+        <button class="btn btn-danger" onclick="deleteEntry()">删除条目</button>
+      </div>
+    </div>
+    <div id="result" class="list-group"></div>
+  </div>
+  <script>
+    async function loadEntries() {
+      const userId = document.getElementById('userId').value.trim();
+      const query = document.getElementById('query').value.trim();
+      const url = query
+        ? `/api/v1/knowledge/accessible?user_id=${encodeURIComponent(userId)}&query=${encodeURIComponent(query)}`
+        : `/api/v1/knowledge?user_id=${encodeURIComponent(userId)}`;
+      const data = await fetch(url, {headers: {'Accept': 'application/json'}}).then(r => r.json());
+      const root = document.getElementById('result');
+      root.innerHTML = '';
+      for (const item of (data.entries || data.results || [])) {
+        const btn = document.createElement('button');
+        btn.className = 'list-group-item list-group-item-action';
+        btn.textContent = `[${item.owner_type}] ${item.title || item.id}`;
+        btn.onclick = () => {
+          document.getElementById('entryId').value = item.id;
+          document.getElementById('title').value = item.title || '';
+          document.getElementById('tags').value = (item.tags || []).join(', ');
+          document.getElementById('editor').value = item.content || '';
+        };
+        root.appendChild(btn);
+      }
+    }
+    async function importGuides() {
+      await fetch('/api/v1/knowledge/import/company-guides', {method: 'POST'});
+      await loadEntries();
+    }
+    async function updateEntry() {
+      const entryId = document.getElementById('entryId').value.trim();
+      const payload = {
+        title: document.getElementById('title').value.trim(),
+        content: document.getElementById('editor').value,
+        tags: document.getElementById('tags').value.split(',').map(v => v.trim()).filter(Boolean),
+        user_id: document.getElementById('userId').value.trim()
+      };
+      await fetch(`/api/v1/knowledge/${encodeURIComponent(entryId)}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      await loadEntries();
+    }
+    async function deleteEntry() {
+      const entryId = document.getElementById('entryId').value.trim();
+      const userId = document.getElementById('userId').value.trim();
+      await fetch(`/api/v1/knowledge/${encodeURIComponent(entryId)}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
+      await loadEntries();
+    }
+  </script>
+</body>
+</html>
+        """
+    )
+
+
 # ---- Document Download ----
 
 @app.get("/api/v1/documents/{filename:path}")
@@ -677,3 +839,15 @@ def download_document(filename: str):
     except FileNotFoundError:
         raise HTTPException(404, "File not found")
     return FileResponse(filepath, filename=filename)
+
+
+def _knowledge_entry_to_dict(entry: KnowledgeEntry) -> dict[str, Any]:
+    return {
+        "id": entry.id,
+        "owner_type": entry.owner_type.value,
+        "owner_id": entry.owner_id,
+        "title": str(entry.metadata.get("title", "")),
+        "content": entry.content,
+        "tags": entry.tags,
+        "metadata": entry.metadata,
+    }

@@ -107,7 +107,7 @@ def test_upload_indexes_to_project_scope_by_default() -> None:
     with (
         patch("src.web.dashboard._get_file_store", return_value=fake_store),
         patch("src.web.dashboard.Database.get") as get_db,
-        patch("src.web.dashboard.FtsKnowledgeRepository"),
+        patch("src.web.dashboard.build_knowledge_repository", return_value=object()),
         patch("src.web.dashboard.KnowledgeCollector", return_value=fake_collector),
     ):
         get_db.return_value.connect.return_value = object()
@@ -133,7 +133,7 @@ def test_upload_can_index_to_organization_scope() -> None:
     with (
         patch("src.web.dashboard._get_file_store", return_value=fake_store),
         patch("src.web.dashboard.Database.get") as get_db,
-        patch("src.web.dashboard.FtsKnowledgeRepository"),
+        patch("src.web.dashboard.build_knowledge_repository", return_value=object()),
         patch("src.web.dashboard.KnowledgeCollector", return_value=fake_collector),
     ):
         get_db.return_value.connect.return_value = object()

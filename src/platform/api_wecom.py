@@ -5,6 +5,7 @@ import logging
 import os
 import time
 import urllib.request
+import urllib.error
 from datetime import datetime
 from typing import Any
 
@@ -145,6 +146,12 @@ class WeComClient:
                     item += f" | {url}"
                 results.append(item)
             return "\n".join(results) if results else None
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                logger.warning("WeCom search_docs endpoint unavailable (HTTP 404)")
+                return None
+            logger.warning("WeCom search_docs failed: %s", e)
+            raise
         except Exception as e:
             logger.warning("WeCom search_docs failed: %s", e)
             raise

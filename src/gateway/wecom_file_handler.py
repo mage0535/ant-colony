@@ -184,9 +184,9 @@ def summarize_file_bytes(
 
         try:
             from src.knowledge.collector import KnowledgeCollector
-            from src.knowledge.gbrain_repo import GbrainKnowledgeRepository
+            from src.knowledge.repository_factory import build_knowledge_repository
 
-            repo = GbrainKnowledgeRepository()
+            repo = build_knowledge_repository()
             collector = KnowledgeCollector(repo)
             entry = collector.collect_file(tmp_path, owner_type="organization", owner_id="*")
             logger.info("File indexed: %s (id=%s)", filename, entry.id if entry else "?")

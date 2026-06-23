@@ -235,6 +235,28 @@
 - `department`
 - `organization`
 
+### 2026-06-23 knowledge management and guide import
+
+本轮补齐了企业知识库的统一读写与管理能力：
+
+- 新增公司级说明书导入：
+  - `scripts/import_company_guides.py`
+  - `src/knowledge/company_guides.py`
+- 三份说明书现在可按稳定 ID、稳定标题、稳定关键词导入到 `organization/company` 知识库
+- 机器人文档检索策略已调整为：
+  - 先查本地知识库 `search_knowledge`
+  - 本地无结果再尝试 `docs.search`
+  - WeCom 在线文档搜索返回 `HTTP 404` 时不再直接把底层错误暴露给用户
+- 新增知识库统一仓库层：
+  - `src/knowledge/repository_factory.py`
+  - 机器人搜索、后台管理、文件索引、说明书导入统一走同一套仓库接口
+- 新增后台知识库管理能力：
+  - `GET /api/v1/knowledge/accessible`
+  - `PUT /api/v1/knowledge/{entry_id}`
+  - `POST /api/v1/knowledge/promote`
+  - `POST /api/v1/knowledge/import/company-guides`
+  - `GET /knowledge/manage`
+
 ## 最新验证证据
 
 - 全量本地单测：

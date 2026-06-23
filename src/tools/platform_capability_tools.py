@@ -208,20 +208,44 @@ def read_pptx_tool(args: dict[str, str]) -> str:
 
 def doc_search_tool(args: dict[str, str]) -> str:
     from src.platform import invoke_capability
+    from src.tools.knowledge_tools import search_knowledge_tool
 
     query = str(args.get("query", ""))
     if not query:
         return "请提供搜索关键词"
-    return invoke_capability("docs.search", query, context=_context_from_args(args), empty_message="未找到匹配的文档（需配置飞书/钉钉/企微凭证）")
+    knowledge_result = search_knowledge_tool({"query": query, "user_id": args.get("user_id", "")})
+    if knowledge_result and not knowledge_result.startswith("未找到关于"):
+        return knowledge_result
+    doc_result = invoke_capability("docs.search", query, context=_context_from_args(args), empty_message="")
+    if not doc_result:
+        return f"本地知识库和企业在线文档中都未找到与“{query}”匹配的内容"
+    if "HTTP Error 404" in doc_result or "Not Found" in doc_result:
+        return (
+            f"本地知识库中未找到与“{query}”匹配的内容；"
+            "当前企业微信在线文档搜索接口不可用或未开放给当前应用，请先将文档导入本地知识库后再搜索。"
+        )
+    return doc_result
 
 
 def read_docs_tool(args: dict[str, str]) -> str:
     from src.platform import invoke_capability_first
+    from src.tools.knowledge_tools import search_knowledge_tool
 
     query = str(args.get("query", ""))
     if not query:
         return "请提供文档名称或关键词"
-    return invoke_capability_first("docs.read", query, context=_context_from_args(args), empty_message="未找到可读取的文档内容")
+    knowledge_result = search_knowledge_tool({"query": query, "user_id": args.get("user_id", "")})
+    if knowledge_result and not knowledge_result.startswith("未找到关于"):
+        return knowledge_result
+    result = invoke_capability_first("docs.read", query, context=_context_from_args(args), empty_message="")
+    if not result:
+        return f"本地知识库和企业在线文档中都未找到与“{query}”匹配的内容"
+    if "HTTP Error 404" in result or "Not Found" in result:
+        return (
+            f"本地知识库中未找到与“{query}”匹配的内容；"
+            "当前企业微信在线文档读取能力不可用或权限不足，请先将文档导入本地知识库。"
+        )
+    return result
 
 
 def approval_detail_tool(args: dict[str, str]) -> str:

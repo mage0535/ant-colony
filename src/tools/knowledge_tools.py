@@ -6,9 +6,9 @@ from typing import Any
 
 
 def search_knowledge_tool(args: dict[str, Any]) -> str:
-    from src.knowledge.gbrain_repo import GbrainKnowledgeRepository
+    from src.knowledge.repository_factory import build_knowledge_repository
 
-    repo = GbrainKnowledgeRepository()
+    repo = build_knowledge_repository()
     query = str(args.get("query", ""))
     if not query:
         return "请提供搜索关键词 (query)"
@@ -18,15 +18,16 @@ def search_knowledge_tool(args: dict[str, Any]) -> str:
         return f"未找到关于 '{query}' 的知识条目"
     lines = [f"搜索 '{query}' 找到 {len(results)} 条结果:"]
     for result in results:
-        lines.append(f"  [{result.owner_type.value}] {result.content[:120]}")
+        title = str(result.metadata.get("title", "")).strip() or result.content.splitlines()[0][:60]
+        lines.append(f"  [{result.owner_type.value}] {title}")
     return "\n".join(lines)
 
 
 def list_knowledge_tool(args: dict[str, Any]) -> str:
     from src.knowledge.contracts import KnowledgeOwnerType
-    from src.knowledge.gbrain_repo import GbrainKnowledgeRepository
+    from src.knowledge.repository_factory import build_knowledge_repository
 
-    repo = GbrainKnowledgeRepository()
+    repo = build_knowledge_repository()
     user_id = args.get("user_id", "")
     owner_type = args.get("owner_type", "")
     owner_id = args.get("owner_id", "")
@@ -44,7 +45,8 @@ def list_knowledge_tool(args: dict[str, Any]) -> str:
         return "知识库为空"
     lines = [f"知识条目 ({len(results)} 条):"]
     for result in results[:20]:
-        lines.append(f"  [{result.owner_type.value}] {result.content[:100]}")
+        title = str(result.metadata.get("title", "")).strip() or result.content.splitlines()[0][:60]
+        lines.append(f"  [{result.owner_type.value}] {title}")
     return "\n".join(lines)
 
 
@@ -52,7 +54,7 @@ def add_document_tool(args: dict[str, Any]) -> str:
     from src.knowledge.acl import Role, resolve_role
     from src.knowledge.collector import _acl_for_owner_type
     from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
-    from src.knowledge.gbrain_repo import GbrainKnowledgeRepository
+    from src.knowledge.repository_factory import build_knowledge_repository
 
     scope = args.get("scope", "personal")
     user_id = args.get("user_id", "")
@@ -83,7 +85,7 @@ def add_document_tool(args: dict[str, Any]) -> str:
     owner_type = KnowledgeOwnerType(owner_type_str)
     resolved_owner_id = owner_id or (user_id if scope == "personal" else "*")
     read_roles, write_roles = _acl_for_owner_type(owner_type_str)
-    repo = GbrainKnowledgeRepository()
+    repo = build_knowledge_repository()
     entry = KnowledgeEntry(
         id=str(uuid.uuid4()),
         owner_type=owner_type,
@@ -153,7 +155,7 @@ def delete_cloud_drive_tool(args: dict[str, Any]) -> str:
 
 def promote_knowledge_tool(args: dict[str, Any]) -> str:
     from src.knowledge.contracts import KnowledgeOwnerType
-    from src.knowledge.gbrain_repo import GbrainKnowledgeRepository
+    from src.knowledge.repository_factory import build_knowledge_repository
     from src.knowledge.service import KnowledgeService
 
     entry_id = str(args.get("entry_id", ""))
@@ -162,7 +164,7 @@ def promote_knowledge_tool(args: dict[str, Any]) -> str:
     if not entry_id or not target_id:
         return "请提供 entry_id 和 target_id"
 
-    repo = GbrainKnowledgeRepository()
+    repo = build_knowledge_repository()
     service = KnowledgeService(repo)
     entry = repo.get(entry_id)
     if entry is None:
@@ -183,3 +185,52 @@ def promote_knowledge_tool(args: dict[str, Any]) -> str:
         extra_tags=["promoted"],
     )
     return f"已将知识条目 {entry_id} 升级为 {target_scope}/{target_id}（新ID: {promoted.id}）"
+
+
+def update_knowledge_tool(args: dict[str, Any]) -> str:
+    from src.knowledge.repository_factory import build_knowledge_repository
+
+    entry_id = str(args.get("entry_id", ""))
+    new_content = str(args.get("content", ""))
+    if not entry_id or not new_content:
+        return "请提供 entry_id 和 content"
+
+    repo = build_knowledge_repository()
+    entry = repo.get(entry_id)
+    if entry is None:
+        return f"未找到知识条目：{entry_id}"
+
+    title = str(args.get("title", "")).strip()
+    tags = args.get("tags")
+    if isinstance(tags, str):
+        tags = [part.strip() for part in tags.split(",") if part.strip()]
+    if not isinstance(tags, list):
+        tags = entry.tags
+
+    entry.content = f"{title}\n\n{new_content}" if title else new_content
+    entry.tags = list(tags)
+    if title:
+        entry.metadata["title"] = title
+    repo.save(entry)
+    return f"已更新知识条目：{entry_id}"
+
+
+def delete_knowledge_tool(args: dict[str, Any]) -> str:
+    from src.knowledge.repository_factory import build_knowledge_repository
+
+    entry_id = str(args.get("entry_id", ""))
+    user_id = str(args.get("user_id", ""))
+    if not entry_id:
+        return "请提供 entry_id"
+    deleted = build_knowledge_repository().delete(entry_id, user_id=user_id)
+    return f"已删除知识条目：{entry_id}" if deleted else f"删除失败或未找到知识条目：{entry_id}"
+
+
+def import_company_guides_tool(args: dict[str, Any]) -> str:
+    del args
+    from src.knowledge.company_guides import import_company_guides
+    from src.knowledge.repository_factory import build_knowledge_repository
+
+    entries = import_company_guides(build_knowledge_repository())
+    titles = [str(item.metadata.get("title", item.id)) for item in entries]
+    return f"已导入 {len(entries)} 份公司级说明书到 organization/company 知识库：\n" + "\n".join(f"- {title}" for title in titles)

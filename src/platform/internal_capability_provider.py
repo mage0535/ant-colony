@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import os
 
-from src.knowledge.fts_repo import FtsKnowledgeRepository
-from src.store.database import Database
+from src.knowledge.repository_factory import build_knowledge_repository
 
 
 class InternalCapabilityProvider:
@@ -32,7 +31,7 @@ class InternalCapabilityProvider:
         return "\n".join(lines)
 
     def read_drive_doc(self, query: str) -> str | None:
-        repo = FtsKnowledgeRepository(Database.get().connect())
+        repo = build_knowledge_repository()
         results = repo.search(query, limit=1)
         if not results:
             return None
@@ -56,11 +55,19 @@ class InternalCapabilityProvider:
         return list_inbox(limit=10)
 
     def read_docs_document(self, query: str) -> str | None:
-        repo = FtsKnowledgeRepository(Database.get().connect())
+        repo = build_knowledge_repository()
         results = repo.search(query, limit=1)
         if not results:
             return None
         return results[0].content[:4000]
+
+    def search_docs(self, query: str) -> str | None:
+        repo = build_knowledge_repository()
+        results = repo.search(query, limit=5)
+        if not results:
+            return None
+        lines = [f"[{item.owner_type.value}] {item.content[:120]}" for item in results]
+        return "\n".join(lines)
 
     def list_mail_messages(self, limit: int = 10) -> str | None:
         from src.tools.email_tool import list_inbox

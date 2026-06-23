@@ -60,12 +60,15 @@ from src.tools.task_tools import (
 from src.tools.knowledge_tools import (
     add_document_tool as _add_document_tool,
     delete_cloud_drive_tool as _delete_cloud_drive_tool,
+    delete_knowledge_tool as _delete_knowledge_tool,
+    import_company_guides_tool as _import_company_guides_tool,
     list_cloud_drives_tool as _list_cloud_drives_tool,
     list_knowledge_tool as _list_knowledge_tool,
     promote_knowledge_tool as _promote_knowledge_tool,
     register_cloud_drive_tool as _register_cloud_drive_tool,
     search_knowledge_tool as _search_knowledge_tool,
     sync_from_cloud_tool as _sync_from_cloud_tool,
+    update_knowledge_tool as _update_knowledge_tool,
 )
 from src.tools.memory_scope_tools import (
     promote_scoped_memory_tool as _promote_scoped_memory_tool,
@@ -726,6 +729,78 @@ BUILTIN_TOOLS: list[ToolSpec] = [
         },
 
         handler=_promote_knowledge_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:update_knowledge",
+
+        name="更新知识条目",
+
+        category="knowledge",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="更新知识库中的既有条目内容、标题或标签。当用户说'更新知识库'、'修改知识条目'、'改一下这条知识'时使用。",
+
+        parameters={
+
+            "entry_id": {"type": "string", "description": "知识条目ID（必填）"},
+            "content": {"type": "string", "description": "新的正文内容（必填）"},
+            "title": {"type": "string", "description": "新的标题（可选）"},
+            "tags": {"type": "string", "description": "新的标签列表，逗号分隔（可选）"},
+
+        },
+
+        handler=_update_knowledge_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:delete_knowledge",
+
+        name="删除知识条目",
+
+        category="knowledge",
+
+        risk_level="high",
+
+        allowed_roles=["personal", "project"],
+
+        description="删除知识库中的指定条目。当用户说'删除这条知识'、'移除知识条目'、'清理知识库'时使用。",
+
+        parameters={
+
+            "entry_id": {"type": "string", "description": "知识条目ID（必填）"},
+            "user_id": {"type": "string", "description": "当前用户ID（可选，用于权限校验）"},
+
+        },
+
+        handler=_delete_knowledge_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:import_company_guides",
+
+        name="导入公司级说明书到知识库",
+
+        category="knowledge",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="将系统内置的三份公司级操作说明书导入 organization/company 知识库，带稳定标题和关键词。",
+
+        parameters={},
+
+        handler=_import_company_guides_tool,
 
     ),
 
