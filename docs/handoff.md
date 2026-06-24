@@ -521,3 +521,35 @@
   - 服务器 `ant-colony-dashboard` 已重启，状态 `active`
   - 新管理台链接请求：HTTP 200
   - `/api/v1/admin/profile` 请求：HTTP 200，`can_activate_bots=true`
+
+## 2026-06-24 小白化自动开通与知识库自动权限修复
+
+- 用户反馈：
+  - 平台 Bot 开通仍提示“企业微信统一开通缺少必填凭据：bot_id, bot_secret”
+  - 管理员和普通用户都应按小白逻辑处理，尽量自动采集数据，只让用户审核确认
+  - 知识范围应根据企业 IM 组织架构和权限自动分配，不应让管理员手动指定
+  - 企业 IM 组织架构变化后，知识权限应及时同步
+  - “知识库管理入口”点击后无法打开
+  - 公司说明书不应作为独立项目存在，只应作为公司知识库中的普通文档
+- 根因：
+  - `activate_platform_bot` 只读取页面提交的 credentials，没有自动合并当前服务环境变量、`infra/.env.wecom` 和历史平台配置
+  - `/knowledge/manage` 没有加入公开页面白名单，页面跳转会先被 Dashboard 鉴权中间件拦截
+  - 知识库管理页仍暴露 `owner_type/owner_id` 让管理员手填
+- 修复：
+  - 平台 Bot 开通改为自动采集顺序：页面确认输入 -> 当前服务环境变量 -> `infra/.env.wecom` -> 历史平台配置
+  - 只有所有来源都找不到必填项时，才提示管理员补充一次高级配置
+  - 管理台按钮改为“确认自动接管企业微信/飞书/钉钉”
+  - 知识库管理入口改为同窗口跳转，避免浏览器弹窗拦截
+  - `/knowledge/manage` 加入公开页面白名单；页面内 API 仍使用 admin token / user_id 鉴权
+  - `knowledge_permissions` 返回 `visible_scopes`、`writable_scopes` 和 `default_write_scope`
+  - 新增知识默认 `owner_type=auto`，后端根据用户角色、部门、负责人关系自动写入个人/部门/项目/公司知识库
+  - 自动升级知识条目同样使用后端自动目标范围
+  - `OrgGraphService.sync_if_stale()` 按 TTL 自动刷新企微通讯录，管理员页面提供“同步组织架构”按钮
+  - 公司说明书仍保存为 `organization/*` 范围下的普通知识条目，不作为项目空间存在
+- 验证：
+  - 本地全量测试：`465 passed`
+  - 服务器定向测试：`26 passed`
+  - 服务器 `ant-colony-dashboard` 已重启，状态 `active`
+  - `/knowledge/manage?...` 请求：HTTP 200
+  - `/api/v1/admin/knowledge/permissions?...` 请求：HTTP 200，`default_write_scope=organization/*`
+  - 空 credentials 调用 `/api/v1/admin/platform/bots/wecom/activate?...`：HTTP 200，`missing_keys=[]`，`restart_required=false`

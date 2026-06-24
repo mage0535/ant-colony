@@ -30,6 +30,7 @@ class TestPlatformBotManagementApi(unittest.TestCase):
                 "auto_permissions": ["docs.full"],
                 "restart_required": True,
                 "next_action": "企业微信凭据已保存，重启对应 Bot/网关服务后生效。",
+                "credential_sources": {"bot_id": "当前服务环境变量"},
             },
         )()
 
@@ -48,6 +49,7 @@ class TestPlatformBotManagementApi(unittest.TestCase):
         self.assertTrue(result["enabled"])
         self.assertEqual(result["display_name"], "企业 AI 助手")
         self.assertTrue(result["restart_required"])
+        self.assertEqual(result["credential_sources"]["bot_id"], "当前服务环境变量")
         self.assertIn("重启", result["next_action"])
 
     def test_activate_platform_bot_route_returns_400_for_bad_credentials(self) -> None:

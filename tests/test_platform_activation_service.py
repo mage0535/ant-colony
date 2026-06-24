@@ -34,11 +34,49 @@ class TestPlatformActivationService(unittest.TestCase):
     def test_activate_platform_bot_rejects_missing_required_credentials(self) -> None:
         from src.platform.activation_service import activate_platform_bot
 
-        with self.assertRaises(ValueError) as ctx:
-            activate_platform_bot(platform="wecom", credentials={"bot_id": "bot-1"})
+        fake_service = MagicMock()
+        fake_service.get_platform_settings.return_value = None
+        with patch.dict("os.environ", {"WECOM_BOT_ID": "", "WECOM_BOT_SECRET": ""}, clear=False), \
+             patch("src.platform.activation_service.build_settings_service", return_value=fake_service), \
+             self.assertRaises(ValueError) as ctx:
+            activate_platform_bot(platform="wecom", credentials={"bot_id": "bot-1"}, env_file="missing-test.env")
 
         self.assertIn("缺少必填凭据", str(ctx.exception))
         self.assertIn("bot_secret", str(ctx.exception))
+
+    def test_activate_platform_bot_auto_collects_credentials_from_env_file(self) -> None:
+        from src.platform.activation_service import activate_platform_bot
+
+        env_file = self._testMethodName + ".env"
+        fake_service = MagicMock()
+        fake_service.get_platform_settings.return_value = None
+        with open(env_file, "w", encoding="utf-8") as f:
+            f.write("WECOM_BOT_ID=bot-from-file\nWECOM_BOT_SECRET=secret-from-file\n")
+        try:
+            with patch("src.platform.activation_service.write_env_values") as mock_write_env, \
+                 patch("src.platform.activation_service.build_settings_service", return_value=fake_service):
+                result = activate_platform_bot(platform="wecom", credentials={}, env_file=env_file)
+        finally:
+            import os
+            os.remove(env_file)
+
+        self.assertIn("bot_id", result.configured_keys)
+        self.assertEqual(result.credential_sources["bot_id"], f"配置文件 {env_file}")
+        env_values = mock_write_env.call_args.args[1]
+        self.assertEqual(env_values["WECOM_BOT_ID"], "bot-from-file")
+
+    def test_activate_platform_bot_auto_collects_credentials_from_process_env(self) -> None:
+        from src.platform.activation_service import activate_platform_bot
+
+        fake_service = MagicMock()
+        fake_service.get_platform_settings.return_value = None
+        with patch.dict("os.environ", {"WECOM_BOT_ID": "bot-env", "WECOM_BOT_SECRET": "secret-env"}, clear=False), \
+             patch("src.platform.activation_service.write_env_values") as mock_write_env, \
+             patch("src.platform.activation_service.build_settings_service", return_value=fake_service):
+            result = activate_platform_bot(platform="wecom", credentials={})
+
+        self.assertEqual(result.credential_sources["bot_secret"], "当前服务环境变量")
+        self.assertEqual(mock_write_env.call_args.args[1]["WECOM_BOT_SECRET"], "secret-env")
 
     def test_activate_dingtalk_writes_runtime_and_legacy_env_aliases(self) -> None:
         from src.platform.activation_service import activate_platform_bot

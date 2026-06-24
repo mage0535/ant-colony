@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Ant Colony API", version="0.3.0")
 
-_PUBLIC_PATHS = {"/", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/admin/console"}
+_PUBLIC_PATHS = {"/", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/admin/console", "/knowledge/manage"}
 _ADMIN_API_PREFIX = "/api/v1/admin/"
 MAX_UPLOAD_BYTES = int(os.environ.get("ANT_COLONY_MAX_FILE_BYTES", str(50 * 1024 * 1024)))
 
@@ -128,7 +128,7 @@ class SpaceLinkRequest(BaseModel):
 
 
 class PlatformBotActivationRequest(BaseModel):
-    credentials: dict[str, str]
+    credentials: dict[str, str] = {}
     activated_by: str = ""
     display_name: str = ""
     visibility_scope: str = "all"
@@ -159,8 +159,8 @@ class KnowledgeCollectRequest(BaseModel):
     url: str = ""
     text: str = ""
     title: str = ""
-    owner_type: str = "project"
-    owner_id: str = "*"
+    owner_type: str = "auto"
+    owner_id: str = ""
     tags: list[str] = []
     user_id: str = ""
     space_id: str = ""
@@ -339,6 +339,7 @@ def activate_platform_bot_api(platform: str, req: PlatformBotActivationRequest):
         "auto_permissions": result.auto_permissions,
         "restart_required": result.restart_required,
         "next_action": result.next_action,
+        "credential_sources": result.credential_sources,
     }
 
 
@@ -436,6 +437,17 @@ def admin_knowledge_entries(request: Request, query: str = "", space_id: str = "
 def admin_knowledge_permissions(request: Request, space_id: str = ""):
     context = require_admin_context_from_request(request)
     return knowledge_permissions(user_id=context["user_id"], space_id=space_id)
+
+
+@app.post("/api/v1/admin/org/sync")
+def admin_sync_org(request: Request):
+    context = require_admin_context_from_request(request)
+    from src.platform.org_graph import OrgGraphService
+
+    if context["platform"] == "wecom":
+        result = OrgGraphService().sync_wecom_directory()
+        return {"platform": context["platform"], "synced": True, **result}
+    return {"platform": context["platform"], "synced": False, "reason": "当前平台暂未配置真实通讯录同步凭据"}
 
 
 @app.post("/api/v1/admin/knowledge/collect")
@@ -579,17 +591,21 @@ def list_accessible_knowledge(user_id: str, query: str = "", space_id: str = "",
 
 @app.get("/api/v1/knowledge/permissions")
 def knowledge_permissions(user_id: str, space_id: str = ""):
-    from src.knowledge.acl import resolve_role, visible_scopes
+    from src.knowledge.acl import default_write_scope, resolve_role, visible_scopes, writable_scopes
     from src.platform.org_graph import OrgGraphService
 
     role = resolve_role(user_id, space_id)
     graph = OrgGraphService()
     profile = graph.get_user_profile("wecom", user_id) or {}
+    write_scopes = writable_scopes(role, user_id)
+    default_owner_type, default_owner_id = default_write_scope(role, user_id)
     return {
         "user_id": user_id,
         "space_id": space_id,
         "role": role.name,
         "visible_scopes": [{"owner_type": owner_type, "owner_id": owner_id} for owner_type, owner_id in visible_scopes(role, user_id)],
+        "writable_scopes": [{"owner_type": owner_type, "owner_id": owner_id} for owner_type, owner_id in write_scopes],
+        "default_write_scope": {"owner_type": default_owner_type, "owner_id": default_owner_id},
         "managed_departments": profile.get("leader_departments", []),
         "departments": profile.get("departments", []),
         "is_admin": bool(profile.get("is_admin")),
@@ -638,6 +654,8 @@ def promote_knowledge(req: KnowledgePromoteRequest):
     role = resolve_role(req.user_id, "")
     if req.user_id and not may_write(role, entry.owner_type.value, entry.owner_id, req.user_id):
         raise HTTPException(403, "Permission denied")
+    if not req.target_owner_type or req.target_owner_type == "auto" or not req.target_owner_id:
+        req.target_owner_type, req.target_owner_id = _resolve_auto_knowledge_owner(req.user_id, "")
     try:
         target_owner_type = KnowledgeOwnerType(req.target_owner_type)
     except ValueError:
@@ -667,6 +685,8 @@ def import_company_guides_api(user_id: str = ""):
 
 @app.post("/api/v1/knowledge/collect")
 def collect_knowledge(req: KnowledgeCollectRequest):
+    if req.user_id and (not req.owner_type or req.owner_type == "auto" or not req.owner_id):
+        req.owner_type, req.owner_id = _resolve_auto_knowledge_owner(req.user_id, req.space_id)
     if req.user_id:
         from src.knowledge.acl import may_write, resolve_role
 
@@ -684,6 +704,13 @@ def collect_knowledge(req: KnowledgeCollectRequest):
         entry = collector.collect_text(req.text, req.title or "untitled", owner_type=req.owner_type, owner_id=req.owner_id, tags=req.tags)
         return {"id": entry.id, "source": "text", "owner_type": entry.owner_type.value}
     raise HTTPException(400, "Provide url= or text=")
+
+
+def _resolve_auto_knowledge_owner(user_id: str, space_id: str = "", platform: str = "wecom") -> tuple[str, str]:
+    from src.knowledge.acl import default_write_scope, resolve_role
+
+    role = resolve_role(user_id, space_id, platform=platform)
+    return default_write_scope(role, user_id, platform=platform)
 
 # ---- Host Agent ----
 
@@ -1061,20 +1088,15 @@ def knowledge_management_page():
         <div class="actions">
           <button onclick="loadEntries()">查询知识</button>
           <button class="secondary" onclick="loadPermissions()">刷新权限</button>
+          <button class="tonal" onclick="syncOrg()">同步组织架构</button>
         </div>
         <div id="perm" class="status"></div>
       </div>
       <div class="card">
         <h2>新增知识</h2>
         <label>标题</label><input id="newTitle" placeholder="例如：车间通行管理规定">
-        <label>归属范围</label>
-        <select id="newOwnerType">
-          <option value="personal">个人</option>
-          <option value="project">项目</option>
-          <option value="department">部门</option>
-          <option value="organization">公司</option>
-        </select>
-        <label>归属 ID</label><input id="newOwnerId" placeholder="个人填用户ID，部门/项目填对应ID，公司填 *">
+        <p>系统会根据当前用户在企业微信中的角色、部门和负责人权限自动决定入库范围。</p>
+        <div id="autoOwner" class="status">等待权限识别</div>
         <label>标签</label><input id="newTags" placeholder="逗号分隔">
         <label>正文</label><textarea id="newContent" placeholder="粘贴要入库的内容"></textarea>
         <button onclick="createEntry()">新增到知识库</button>
@@ -1083,7 +1105,7 @@ def knowledge_management_page():
     <section class="stack">
       <div class="card">
         <div class="actions">
-          <button class="secondary" onclick="importGuides()">导入公司说明书</button>
+        <button class="secondary" onclick="importGuides()">导入公司知识库说明书</button>
           <button class="tonal" onclick="openSelected()">打开选中条目</button>
         </div>
         <div id="guideStatus" class="status"></div>
@@ -1103,16 +1125,9 @@ def knowledge_management_page():
             <button id="saveBtn" onclick="updateEntry()" disabled>保存</button>
             <button id="deleteBtn" class="danger" onclick="deleteEntry()" disabled>删除</button>
           </div>
-          <h3>升级/复制到其他范围</h3>
-          <label>目标范围</label>
-          <select id="promoteType">
-            <option value="personal">个人</option>
-            <option value="project">项目</option>
-            <option value="department">部门</option>
-            <option value="organization">公司</option>
-          </select>
-          <label>目标 ID</label><input id="promoteOwnerId" placeholder="公司填 *">
-          <button class="secondary" onclick="promoteEntry()">升级知识条目</button>
+          <h3>自动升级/复制</h3>
+          <p>系统会按当前用户权限自动选择最高可写范围，不需要手动填写目标范围。</p>
+          <button class="secondary" onclick="promoteEntry()">自动升级知识条目</button>
           <div id="editStatus" class="status"></div>
         </div>
       </div>
@@ -1124,6 +1139,10 @@ def knowledge_management_page():
     const adminQuery = () => `platform=${encodeURIComponent(params.get('platform') || 'wecom')}&user_id=${encodeURIComponent(params.get('user_id') || '')}&admin_token=${encodeURIComponent(params.get('admin_token') || '')}`;
     function userId() { return document.getElementById('userId').value.trim() || params.get('user_id') || ''; }
     function setStatus(id, text, bad=false) { const el = document.getElementById(id); el.textContent = text; el.style.color = bad ? 'var(--md-error)' : 'var(--md-muted)'; }
+    function scopeLabel(scope) {
+      const labels = {organization:'公司', department:'部门', project:'项目', personal:'个人'};
+      return `${labels[scope.owner_type] || scope.owner_type} / ${scope.owner_id}`;
+    }
     async function requestJson(url, options = {}) {
       const resp = await fetch(url, options);
       const data = await resp.json();
@@ -1136,11 +1155,14 @@ def knowledge_management_page():
         const spaceId = document.getElementById('spaceId').value.trim();
         const url = hasAdminToken ? adminUrl(`/api/v1/admin/knowledge/permissions?space_id=${encodeURIComponent(spaceId)}`) : `/api/v1/knowledge/permissions?user_id=${encodeURIComponent(userId())}&space_id=${encodeURIComponent(spaceId)}`;
         const perm = await requestJson(url);
+        window.defaultWriteScope = perm.default_write_scope || {owner_type:'personal', owner_id:userId()};
         document.getElementById('identity').textContent = `${perm.user_id || userId()} / ${perm.role || '未知'}`;
         document.getElementById('perm').innerHTML =
           `<span class="chip ${perm.can_manage_organization ? 'ok' : ''}">公司管理：${perm.can_manage_organization ? '是' : '否'}</span>` +
           `<span class="chip ${perm.can_manage_department ? 'ok' : ''}">部门管理：${perm.can_manage_department ? '是' : '否'}</span>` +
-          `<span class="chip ${perm.can_manage_project ? 'ok' : ''}">项目管理：${perm.can_manage_project ? '是' : '否'}</span>`;
+          `<span class="chip ${perm.can_manage_project ? 'ok' : ''}">项目管理：${perm.can_manage_project ? '是' : '否'}</span>` +
+          `<div class="meta">可写范围：${(perm.writable_scopes || []).map(scopeLabel).join('；') || '仅可查看'}</div>`;
+        document.getElementById('autoOwner').innerHTML = `<span class="chip ok">默认入库：${scopeLabel(window.defaultWriteScope)}</span>`;
       } catch (err) {
         setStatus('perm', String(err.message || err), true);
       }
@@ -1179,18 +1201,18 @@ def knowledge_management_page():
         const data = hasAdminToken
           ? await requestJson(adminUrl('/api/v1/admin/knowledge/import/company-guides'), {method: 'POST'})
           : await requestJson(`/api/v1/knowledge/import/company-guides?user_id=${encodeURIComponent(userId())}`, {method: 'POST'});
-        setStatus('guideStatus', `已导入 ${data.imported || 0} 条公司说明书`);
+        setStatus('guideStatus', `已导入 ${data.imported || 0} 条公司知识库文档`);
         await loadEntries();
       } catch (err) { setStatus('guideStatus', String(err.message || err), true); }
     }
     async function createEntry() {
       try {
-        const ownerType = document.getElementById('newOwnerType').value;
+        await loadPermissions();
         const payload = {
           text: document.getElementById('newContent').value,
           title: document.getElementById('newTitle').value,
-          owner_type: ownerType,
-          owner_id: document.getElementById('newOwnerId').value || (ownerType === 'organization' ? '*' : userId()),
+          owner_type: 'auto',
+          owner_id: '',
           tags: document.getElementById('newTags').value.split(',').map(v => v.trim()).filter(Boolean),
           user_id: userId(),
           space_id: document.getElementById('spaceId').value.trim()
@@ -1232,13 +1254,23 @@ def knowledge_management_page():
     async function promoteEntry() {
       try {
         const entryId = document.getElementById('entryId').value.trim();
-        const targetType = document.getElementById('promoteType').value;
-        const payload = {entry_id: entryId, target_owner_type: targetType, target_owner_id: document.getElementById('promoteOwnerId').value || (targetType === 'organization' ? '*' : userId()), user_id: userId()};
+        const payload = {entry_id: entryId, target_owner_type: 'auto', target_owner_id: '', user_id: userId()};
         const url = hasAdminToken ? adminUrl('/api/v1/admin/knowledge/promote') : '/api/v1/knowledge/promote';
         await requestJson(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         setStatus('editStatus', '升级成功');
         await loadEntries();
       } catch (err) { setStatus('editStatus', String(err.message || err), true); }
+    }
+    async function syncOrg() {
+      try {
+        if (!hasAdminToken) {
+          setStatus('perm', '只有管理员链接可以主动同步组织架构；普通用户会在权限识别时自动使用最新缓存。', true);
+          return;
+        }
+        const data = await requestJson(adminUrl('/api/v1/admin/org/sync'), {method:'POST'});
+        setStatus('perm', data.synced ? `组织架构已同步：部门 ${data.departments || 0}，用户 ${data.users || 0}` : `无需同步：${data.reason || ''}`);
+        await loadPermissions();
+      } catch (err) { setStatus('perm', String(err.message || err), true); }
     }
     function openSelected() { if (window.selectedOpenUrl) window.open(window.selectedOpenUrl, '_blank'); }
     if (params.get('user_id')) document.getElementById('userId').value = params.get('user_id');
@@ -1333,34 +1365,46 @@ def admin_console_page():
         <div class="grid">
           <div class="panel span">
             <h2>平台 Bot 统一开通</h2>
-            <p>先接管企业 IM 平台 Bot 凭据，再给员工分配 AI 助手。下面表单是逐字段保存，不需要粘贴 JSON。</p>
+            <p>平台会自动检查服务器环境变量、配置文件和历史配置。管理员通常只需要审核状态并点击确认接管；只有系统提示仍缺少凭据时，才展开高级配置补录一次。</p>
             <div id="botStatus"></div>
           </div>
           <div class="panel">
             <h3>企业微信</h3>
             <label>显示名称</label><input id="wecomName" placeholder="企业 AI 助手">
-            <label>Bot ID</label><input id="wecom_bot_id">
-            <label>Bot Secret</label><input id="wecom_bot_secret" type="password">
-            <label>Corp ID</label><input id="wecom_corp_id">
-            <label>Agent ID</label><input id="wecom_agent_id">
-            <label>应用 Secret</label><input id="wecom_secret" type="password">
-            <div class="actions"><button class="primary" onclick="activatePlatformBot('wecom')">保存并接管企业微信</button></div>
+            <p class="muted">默认自动复用服务器已有企业微信 Bot 和应用凭据。</p>
+            <details>
+              <summary>高级配置：仅在系统提示缺少凭据时填写</summary>
+              <label>Bot ID</label><input id="wecom_bot_id">
+              <label>Bot Secret</label><input id="wecom_bot_secret" type="password">
+              <label>Corp ID</label><input id="wecom_corp_id">
+              <label>Agent ID</label><input id="wecom_agent_id">
+              <label>应用 Secret</label><input id="wecom_secret" type="password">
+            </details>
+            <div class="actions"><button class="primary" onclick="activatePlatformBot('wecom')">确认自动接管企业微信</button></div>
           </div>
           <div class="panel">
             <h3>飞书</h3>
             <label>显示名称</label><input id="feishuName" placeholder="飞书 AI 助手">
-            <label>App ID</label><input id="feishu_app_id">
-            <label>App Secret</label><input id="feishu_app_secret" type="password">
-            <label>Domain</label><select id="feishu_domain"><option value="feishu">飞书国内</option><option value="lark">Lark 国际版</option></select>
-            <div class="actions"><button class="primary" onclick="activatePlatformBot('feishu')">保存并接管飞书</button></div>
+            <p class="muted">没有真实飞书租户时保持模拟状态；有凭据后平台会自动复用。</p>
+            <details>
+              <summary>高级配置：仅在系统提示缺少凭据时填写</summary>
+              <label>App ID</label><input id="feishu_app_id">
+              <label>App Secret</label><input id="feishu_app_secret" type="password">
+              <label>Domain</label><select id="feishu_domain"><option value="">自动</option><option value="feishu">飞书国内</option><option value="lark">Lark 国际版</option></select>
+            </details>
+            <div class="actions"><button class="primary" onclick="activatePlatformBot('feishu')">确认自动接管飞书</button></div>
           </div>
           <div class="panel">
             <h3>钉钉</h3>
             <label>显示名称</label><input id="dingtalkName" placeholder="钉钉 AI 助手">
-            <label>Client ID</label><input id="dingtalk_client_id">
-            <label>Client Secret</label><input id="dingtalk_client_secret" type="password">
-            <label>Robot Code</label><input id="dingtalk_robot_code">
-            <div class="actions"><button class="primary" onclick="activatePlatformBot('dingtalk')">保存并接管钉钉</button></div>
+            <p class="muted">没有真实钉钉租户时保持模拟状态；有凭据后平台会自动复用。</p>
+            <details>
+              <summary>高级配置：仅在系统提示缺少凭据时填写</summary>
+              <label>Client ID</label><input id="dingtalk_client_id">
+              <label>Client Secret</label><input id="dingtalk_client_secret" type="password">
+              <label>Robot Code</label><input id="dingtalk_robot_code">
+            </details>
+            <div class="actions"><button class="primary" onclick="activatePlatformBot('dingtalk')">确认自动接管钉钉</button></div>
           </div>
           <div class="panel span"><h3>开通结果</h3><div id="botResult" class="status">暂无操作</div></div>
         </div>
@@ -1417,7 +1461,7 @@ def admin_console_page():
           <table>
             <tbody>
               <tr><th>总览</th><td>确认当前企业 IM 用户是否通过管理员校验，快速查看平台与运行状态。</td></tr>
-              <tr><th>平台 Bot 开通</th><td>逐字段填写企微、飞书、钉钉凭据，点击保存并接管。重点看缺少配置、是否需要重启和下一步。</td></tr>
+              <tr><th>平台 Bot 开通</th><td>系统会自动检查服务器环境变量、配置文件和历史配置。管理员先审核状态，再点击确认自动接管；只有系统明确提示仍缺少凭据时，才展开高级配置补录。</td></tr>
               <tr><th>员工 AI 助手</th><td>输入同事企业 IM 用户 ID，开通后系统记录分配状态，并在企微下直接发送开通通知。</td></tr>
               <tr><th>知识库管理</th><td>导入说明书或打开知识库业务页面，按当前企微权限管理对应范围知识。</td></tr>
               <tr><th>运行验证</th><td>检查端口和平台环境变量是否就绪。飞书、钉钉没有真实账号时只能看模拟或缺凭据状态。</td></tr>
@@ -1474,8 +1518,11 @@ def admin_console_page():
       const platforms = data.platforms || [];
       const enabled = platforms.filter((platform) => platform.enabled).length;
       setHtml('platformSummary', chip(`已启用平台：${enabled}`, enabled ? 'ok' : 'warn') + chip(`总平台：${platforms.length}`));
-      const rows = platforms.map((platform) => `<tr><td>${safe(platform.platform_label || platform.platform)}</td><td>${platform.enabled ? chip('已启用','ok') : chip('未启用','warn')}</td><td>${safe((platform.configured_keys || []).join(', ') || '-')}</td><td>${safe((platform.missing_keys || []).join(', ') || '-')}</td><td>${platform.restart_required ? chip('需要','bad') : chip('不需要','ok')}</td><td>${safe(platform.next_action || '-')}</td></tr>`);
-      setHtml('botStatus', table(['平台','状态','已配置','缺少配置','重启','下一步'], rows));
+      const rows = platforms.map((platform) => {
+        const sourceText = Object.entries(platform.credential_sources || {}).map(([key, source]) => `${key}: ${source}`).join('; ') || '-';
+        return `<tr><td>${safe(platform.platform_label || platform.platform)}</td><td>${platform.enabled ? chip('已启用','ok') : chip('待确认','warn')}</td><td>${safe((platform.configured_keys || []).join(', ') || '-')}</td><td>${safe((platform.missing_keys || []).join(', ') || '-')}</td><td>${safe(sourceText)}</td><td>${platform.restart_required ? chip('需要','bad') : chip('不需要','ok')}</td><td>${safe(platform.next_action || '-')}</td></tr>`;
+      });
+      setHtml('botStatus', table(['平台','状态','已配置','缺少配置','自动发现来源','重启','下一步'], rows));
     }
     function platformCredentials(platform) {
       if (platform === 'wecom') return {bot_id:val('wecom_bot_id'), bot_secret:val('wecom_bot_secret'), corp_id:val('wecom_corp_id'), agent_id:val('wecom_agent_id'), secret:val('wecom_secret')};
@@ -1487,7 +1534,8 @@ def admin_console_page():
       const payload = {credentials: platformCredentials(platform), display_name: nameMap[platform] || '', visibility_scope: 'all', auto_permissions: ['docs.full','knowledge.readwrite','contacts.read']};
       try {
         const data = await api(`/api/v1/admin/platform/bots/${platform}/activate`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-        setHtml('botResult', chip(`${data.display_name || platform} 已保存`, 'ok') + chip(data.restart_required ? '需要重启' : '当前可测试', data.restart_required ? 'warn' : 'ok') + `<p>${safe(data.next_action || '')}</p>`);
+        const sources = Object.entries(data.credential_sources || {}).map(([key, source]) => `${key}: ${source}`).join('；') || '未返回来源';
+        setHtml('botResult', chip(`${data.display_name || platform} 已自动接管`, 'ok') + chip(data.restart_required ? '需要重启' : '当前可测试', data.restart_required ? 'warn' : 'ok') + `<p>${safe(data.next_action || '')}</p><p>自动发现来源：${safe(sources)}</p>`);
         await loadBots();
       } catch (err) {
         setText('botResult', String(err.message || err), true);
@@ -1540,7 +1588,7 @@ def admin_console_page():
       }
     }
     function openKnowledgeManager() {
-      window.open(`/knowledge/manage?${authQuery()}`, '_blank');
+      window.location.href = `/knowledge/manage?${authQuery()}`;
     }
     async function loadRuntime() {
       try {

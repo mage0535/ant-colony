@@ -151,6 +151,31 @@ class OrgGraphService:
             "is_admin": self.is_admin(platform, user_id),
         }
 
+    def sync_if_stale(self, platform: str = "wecom", max_age_seconds: float = _SYNC_TTL_SECONDS) -> bool:
+        if platform != "wecom":
+            return False
+        row = self._conn.execute(
+            """
+            SELECT MAX(updated_at) FROM (
+                SELECT updated_at FROM org_users WHERE platform = ?
+                UNION ALL
+                SELECT updated_at FROM org_departments WHERE platform = ?
+                UNION ALL
+                SELECT updated_at FROM org_memberships WHERE platform = ?
+            )
+            """,
+            (platform, platform, platform),
+        ).fetchone()
+        last_updated = float(row[0] or 0) if row else 0.0
+        if last_updated and time.time() - last_updated < max_age_seconds:
+            return False
+        try:
+            self.sync_wecom_directory()
+            return True
+        except Exception:
+            logger.debug("WeCom directory sync_if_stale failed", exc_info=True)
+            return False
+
     def sync_wecom_directory(self) -> dict[str, int]:
         platform = "wecom"
         dept_resp = _get("department/list")

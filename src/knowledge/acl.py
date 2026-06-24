@@ -60,6 +60,11 @@ def resolve_role(user_id: str, space_id: str = "", platform: str = "wecom") -> R
     if not user_id:
         return Role.everyone
     graph = _graph()
+    if platform == "wecom":
+        try:
+            graph.sync_if_stale(platform)
+        except Exception:
+            logger.debug("WeCom org graph stale-sync failed", exc_info=True)
     profile = graph.get_user_profile(platform, user_id)
     if profile is None and platform == "wecom":
         try:
@@ -147,3 +152,49 @@ def visible_scopes(role: Role, user_id: str, platform: str = "wecom") -> list[tu
     if role >= Role.leader:
         pass
     return scopes
+
+
+def writable_scopes(role: Role, user_id: str, platform: str = "wecom") -> list[tuple[str, str]]:
+    scopes: list[tuple[str, str]] = []
+    if role >= Role.self:
+        scopes.append(("personal", user_id))
+    graph = _graph()
+    if role >= Role.leader:
+        for dept_id in graph.get_leader_departments(platform, user_id)[:20]:
+            scopes.append(("department", str(dept_id)))
+    if role >= Role.leader:
+        scopes.append(("organization", "*"))
+    if role >= Role.member:
+        try:
+            from src.rooms.space_registry import SpaceRegistry
+            from src.store.database import Database
+            from src.store.task_repo import TaskRepository
+
+            registry = SpaceRegistry(repo=TaskRepository(Database.get()))
+            for record in registry.list_all():
+                if record.space_type == "project" and user_id in record.members:
+                    scopes.append(("project", record.space_id))
+        except Exception:
+            pass
+    return _dedupe_scopes(scopes)
+
+
+def default_write_scope(role: Role, user_id: str, platform: str = "wecom") -> tuple[str, str]:
+    scopes = writable_scopes(role, user_id, platform)
+    priority = ("organization", "department", "project", "personal")
+    for owner_type in priority:
+        for scope in scopes:
+            if scope[0] == owner_type:
+                return scope
+    return ("personal", user_id)
+
+
+def _dedupe_scopes(scopes: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    result: list[tuple[str, str]] = []
+    for scope in scopes:
+        if scope in seen:
+            continue
+        seen.add(scope)
+        result.append(scope)
+    return result

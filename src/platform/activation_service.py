@@ -80,6 +80,7 @@ class ActivationResult:
     auto_permissions: list[str]
     restart_required: bool
     next_action: str
+    credential_sources: dict[str, str]
 
 
 def activate_platform_bot(
@@ -95,10 +96,21 @@ def activate_platform_bot(
     normalized_platform = platform.strip().lower()
     if normalized_platform not in ENV_KEY_MAPPINGS:
         raise ValueError(f"Unsupported platform: {platform}")
+    service = build_settings_service()
+    credentials, credential_sources = _merge_credentials(
+        normalized_platform,
+        credentials,
+        env_file=env_file,
+        service=service,
+    )
     missing_credentials = _missing_required_credentials(normalized_platform, credentials)
     if missing_credentials:
         readable = ", ".join(missing_credentials)
-        raise ValueError(f"{_platform_label(normalized_platform)}统一开通缺少必填凭据：{readable}")
+        raise ValueError(
+            f"{_platform_label(normalized_platform)}统一开通仍缺少必填凭据：{readable}。"
+            "平台已自动检查服务器环境变量、配置文件和历史配置，但没有找到这些值；"
+            "请由管理员确认是否先通过扫码/平台授权接入，或在高级配置中补充一次。"
+        )
 
     auto_permissions = auto_permissions or ["docs.full", "knowledge.readwrite", "contacts.read"]
     env_map = _build_env_map(normalized_platform, credentials)
@@ -121,7 +133,6 @@ def activate_platform_bot(
         "auto_permissions": auto_permissions,
     }
 
-    service = build_settings_service()
     service.upsert_platform_settings(
         platform=_platform_type(normalized_platform),
         enabled=True,
@@ -141,6 +152,7 @@ def activate_platform_bot(
         auto_permissions=list(auto_permissions),
         restart_required=restart_required,
         next_action=_next_action(normalized_platform, restart_required),
+        credential_sources=credential_sources,
     )
 
 
@@ -174,6 +186,7 @@ def list_platform_bot_statuses() -> list[dict[str, Any]]:
                 "display_name": str(metadata.get("display_name", _default_display_name(platform))),
                 "visibility_scope": str(metadata.get("visibility_scope", "")),
                 "auto_permissions": metadata.get("auto_permissions", []),
+                "credential_sources": _credential_sources_for_status(platform, record.settings if record else {}),
             }
         )
     return statuses
@@ -209,6 +222,84 @@ def _missing_required_credentials(platform: str, credentials: dict[str, str]) ->
         for key in REQUIRED_CREDENTIALS[platform]
         if not str(credentials.get(key, "")).strip()
     ]
+
+
+def _merge_credentials(
+    platform: str,
+    credentials: dict[str, str],
+    *,
+    env_file: str | Path,
+    service: Any,
+) -> tuple[dict[str, str], dict[str, str]]:
+    merged: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    env_file_values = _read_env_file(env_file)
+    record = service.get_platform_settings(_platform_type(platform))
+    settings = record.settings if record else {}
+
+    for source_key, env_key in ENV_KEY_MAPPINGS[platform].items():
+        explicit_value = str(credentials.get(source_key, "")).strip()
+        if explicit_value:
+            merged[source_key] = explicit_value
+            sources[source_key] = "页面确认输入"
+            continue
+
+        env_value = _first_value(os.environ, env_key, *ENV_KEY_ALIASES.get(platform, {}).get(source_key, ()))
+        if env_value:
+            merged[source_key] = env_value
+            sources[source_key] = "当前服务环境变量"
+            continue
+
+        file_value = _first_value(env_file_values, env_key, *ENV_KEY_ALIASES.get(platform, {}).get(source_key, ()))
+        if file_value:
+            merged[source_key] = file_value
+            sources[source_key] = f"配置文件 {env_file}"
+            continue
+
+        settings_key = SETTINGS_KEY_MAPPINGS[platform].get(source_key)
+        settings_value = str(settings.get(settings_key, "")).strip() if settings_key else ""
+        if settings_value:
+            merged[source_key] = settings_value
+            sources[source_key] = "历史平台配置"
+
+    return merged, sources
+
+
+def _read_env_file(env_file: str | Path) -> dict[str, str]:
+    path = Path(env_file)
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _first_value(mapping: Any, *keys: str) -> str:
+    for key in keys:
+        value = str(mapping.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def _credential_sources_for_status(platform: str, settings: dict[str, str]) -> dict[str, str]:
+    sources: dict[str, str] = {}
+    env_file_values = _read_env_file("infra/.env.wecom")
+    for source_key, env_key in ENV_KEY_MAPPINGS[platform].items():
+        aliases = ENV_KEY_ALIASES.get(platform, {}).get(source_key, ())
+        settings_key = SETTINGS_KEY_MAPPINGS[platform].get(source_key)
+        if _first_value(os.environ, env_key, *aliases):
+            sources[source_key] = "当前服务环境变量"
+        elif _first_value(env_file_values, env_key, *aliases):
+            sources[source_key] = "配置文件 infra/.env.wecom"
+        elif settings_key and str(settings.get(settings_key, "")).strip():
+            sources[source_key] = "历史平台配置"
+    return sources
 
 
 def _build_env_map(platform: str, credentials: dict[str, str]) -> dict[str, str]:

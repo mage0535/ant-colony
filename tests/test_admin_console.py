@@ -79,6 +79,7 @@ def test_admin_activate_bot_sets_activated_by_from_im_user() -> None:
         "auto_permissions": ["docs.full"],
         "restart_required": True,
         "next_action": "企业微信凭据已保存，重启对应 Bot/网关服务后生效。",
+        "credential_sources": {"bot_id": "当前服务环境变量"},
     }
 
     with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
@@ -150,7 +151,8 @@ def test_admin_console_page_contains_material_business_sections() -> None:
     assert "平台 Bot 开通" in html
     assert "员工 AI 助手" in html
     assert "开通并通知员工" in html
-    assert "保存并接管企业微信" in html
+    assert "确认自动接管企业微信" in html
+    assert "高级配置：仅在系统提示缺少凭据时填写" in html
 
 
 def test_knowledge_management_page_contains_business_operations() -> None:
@@ -161,7 +163,7 @@ def test_knowledge_management_page_contains_business_operations() -> None:
     assert "--md-primary:#0b57d0" in html
     assert "新增到知识库" in html
     assert "升级知识条目" in html
-    assert "导入公司说明书" in html
+    assert "导入公司知识库说明书" in html
     assert "按企业微信组织权限自动适配" in html
 
 
