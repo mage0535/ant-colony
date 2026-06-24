@@ -1431,25 +1431,38 @@ def admin_console_page():
   <script>
     const params = new URLSearchParams(location.search);
     const authQuery = () => `platform=${encodeURIComponent(params.get('platform') || 'wecom')}&user_id=${encodeURIComponent(params.get('user_id') || '')}&admin_token=${encodeURIComponent(params.get('admin_token') || '')}`;
+    const el = (id) => document.getElementById(id);
+    const val = (id) => (el(id)?.value || '').trim();
+    const safe = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     function showTab(id, btn) {
-      document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
-      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-      document.getElementById(id).classList.add('active');
+      document.querySelectorAll('section').forEach((section) => section.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach((button) => button.classList.remove('active'));
+      el(id).classList.add('active');
       btn.classList.add('active');
     }
     async function api(path, options = {}) {
       const joiner = path.includes('?') ? '&' : '?';
       const resp = await fetch(`${path}${joiner}${authQuery()}`, options);
-      const data = await resp.json();
+      const contentType = resp.headers.get('content-type') || '';
+      const data = contentType.includes('application/json') ? await resp.json() : {detail: await resp.text()};
       if (!resp.ok) throw new Error(data.detail || data.error || JSON.stringify(data));
       return data;
     }
-    function chip(text, cls='') { return `<span class="chip ${cls}">${text}</span>`; }
-    function setHtml(id, html) { document.getElementById(id).innerHTML = html; }
-    function setText(id, text, bad=false) { const el = document.getElementById(id); el.textContent = text; el.style.color = bad ? 'var(--md-error)' : 'var(--md-muted)'; }
+    function chip(text, cls='') { return `<span class="chip ${safe(cls)}">${safe(text)}</span>`; }
+    function setHtml(id, html) { el(id).innerHTML = html; }
+    function setText(id, text, bad=false) {
+      const node = el(id);
+      node.textContent = text;
+      node.style.color = bad ? 'var(--md-error)' : 'var(--md-muted)';
+    }
+    function table(headers, rows) {
+      const head = headers.map((item) => `<th>${safe(item)}</th>`).join('');
+      const body = rows.length ? rows.join('') : `<tr><td colspan="${headers.length}">暂无数据</td></tr>`;
+      return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    }
     async function loadProfile() {
       const profile = await api('/api/v1/admin/profile');
-      document.getElementById('identity').textContent = `${profile.platform} / ${profile.user_id} / ${profile.role}`;
+      el('identity').textContent = `${profile.platform} / ${profile.user_id} / ${profile.role}`;
       setHtml('profileBox', [
         chip(`用户：${profile.user_id}`, 'ok'),
         chip(`角色：${profile.role}`, 'ok'),
@@ -1458,73 +1471,87 @@ def admin_console_page():
     }
     async function loadBots() {
       const data = await api('/api/v1/admin/platform/bots');
-      const enabled = (data.platforms || []).filter(p => p.enabled).length;
-      setHtml('platformSummary', chip(`已启用平台：${enabled}`, enabled ? 'ok' : 'warn') + chip(`总平台：${(data.platforms || []).length}`));
-      const rows = (data.platforms || []).map(p => `<tr><td>${p.platform_label || p.platform}</td><td>${p.enabled ? chip('已启用','ok') : chip('未启用','warn')}</td><td>${(p.configured_keys || []).join(', ') || '-'}</td><td>${(p.missing_keys || []).join(', ') || '-'}</td><td>${p.restart_required ? chip('需要','bad') : chip('不需要','ok')}</td><td>${p.next_action || '-'}</td></tr>`).join('');
-      document.getElementById('botStatus').innerHTML = `<table><thead><tr><th>平台</th><th>状态</th><th>已配置</th><th>缺少配置</th><th>重启</th><th>下一步</th></tr></thead><tbody>${rows}</tbody></table>`;
+      const platforms = data.platforms || [];
+      const enabled = platforms.filter((platform) => platform.enabled).length;
+      setHtml('platformSummary', chip(`已启用平台：${enabled}`, enabled ? 'ok' : 'warn') + chip(`总平台：${platforms.length}`));
+      const rows = platforms.map((platform) => `<tr><td>${safe(platform.platform_label || platform.platform)}</td><td>${platform.enabled ? chip('已启用','ok') : chip('未启用','warn')}</td><td>${safe((platform.configured_keys || []).join(', ') || '-')}</td><td>${safe((platform.missing_keys || []).join(', ') || '-')}</td><td>${platform.restart_required ? chip('需要','bad') : chip('不需要','ok')}</td><td>${safe(platform.next_action || '-')}</td></tr>`);
+      setHtml('botStatus', table(['平台','状态','已配置','缺少配置','重启','下一步'], rows));
     }
     function platformCredentials(platform) {
-      if (platform === 'wecom') return {bot_id:wecom_bot_id.value, bot_secret:wecom_bot_secret.value, corp_id:wecom_corp_id.value, agent_id:wecom_agent_id.value, secret:wecom_secret.value};
-      if (platform === 'feishu') return {app_id:feishu_app_id.value, app_secret:feishu_app_secret.value, domain:feishu_domain.value};
-      return {client_id:dingtalk_client_id.value, client_secret:dingtalk_client_secret.value, robot_code:dingtalk_robot_code.value};
+      if (platform === 'wecom') return {bot_id:val('wecom_bot_id'), bot_secret:val('wecom_bot_secret'), corp_id:val('wecom_corp_id'), agent_id:val('wecom_agent_id'), secret:val('wecom_secret')};
+      if (platform === 'feishu') return {app_id:val('feishu_app_id'), app_secret:val('feishu_app_secret'), domain:val('feishu_domain')};
+      return {client_id:val('dingtalk_client_id'), client_secret:val('dingtalk_client_secret'), robot_code:val('dingtalk_robot_code')};
     }
     async function activatePlatformBot(platform) {
-      const nameMap = {wecom:wecomName.value, feishu:feishuName.value, dingtalk:dingtalkName.value};
+      const nameMap = {wecom:val('wecomName'), feishu:val('feishuName'), dingtalk:val('dingtalkName')};
       const payload = {credentials: platformCredentials(platform), display_name: nameMap[platform] || '', visibility_scope: 'all', auto_permissions: ['docs.full','knowledge.readwrite','contacts.read']};
       try {
-      const data = await api(`/api/v1/admin/platform/bots/${platform}/activate`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-      setHtml('botResult', chip(`${data.display_name} 已保存`, 'ok') + chip(data.restart_required ? '需要重启' : '当前可测试', data.restart_required ? 'warn' : 'ok') + `<p>${data.next_action}</p>`);
-      await loadBots();
-      } catch (err) { setText('botResult', String(err.message || err), true); }
+        const data = await api(`/api/v1/admin/platform/bots/${platform}/activate`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        setHtml('botResult', chip(`${data.display_name || platform} 已保存`, 'ok') + chip(data.restart_required ? '需要重启' : '当前可测试', data.restart_required ? 'warn' : 'ok') + `<p>${safe(data.next_action || '')}</p>`);
+        await loadBots();
+      } catch (err) {
+        setText('botResult', String(err.message || err), true);
+      }
     }
     async function loadEmployeeBots() {
       try {
         const data = await api('/api/v1/admin/employee-bots');
-        const rows = (data.assignments || []).map(a => `<tr><td>${a.platform}</td><td>${a.user_id}</td><td>${a.display_name}</td><td>${a.scope}</td><td>${a.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td><td>${a.notify_status || '-'}</td></tr>`).join('');
-        document.getElementById('employeeList').innerHTML = `<table><thead><tr><th>平台</th><th>员工</th><th>名称</th><th>范围</th><th>状态</th><th>通知</th></tr></thead><tbody>${rows}</tbody></table>`;
-      } catch (err) { setText('employeeResult', String(err.message || err), true); }
+        const rows = (data.assignments || []).map((assignment) => `<tr><td>${safe(assignment.platform)}</td><td>${safe(assignment.user_id)}</td><td>${safe(assignment.display_name)}</td><td>${safe(assignment.scope)}</td><td>${assignment.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td><td>${safe(assignment.notify_status || '-')}</td></tr>`);
+        setHtml('employeeList', table(['平台','员工','名称','范围','状态','通知'], rows));
+      } catch (err) {
+        setText('employeeResult', String(err.message || err), true);
+      }
     }
     async function activateEmployeeBot() {
       try {
         const payload = {
-          platform: employeePlatform.value,
-          user_id: employeeUserId.value.trim(),
-          display_name: employeeBotName.value,
-          scope: employeeScope.value,
-          permissions: employeePermissions.value.split(',').map(v => v.trim()).filter(Boolean),
+          platform: val('employeePlatform') || 'wecom',
+          user_id: val('employeeUserId'),
+          display_name: val('employeeBotName') || '企业 AI 助手',
+          scope: val('employeeScope') || 'personal',
+          permissions: val('employeePermissions').split(',').map((item) => item.trim()).filter(Boolean),
           notify: true
         };
+        if (!payload.user_id) throw new Error('请先填写员工的企业 IM 用户 ID');
         const data = await api('/api/v1/admin/employee-bots/activate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-        setHtml('employeeResult', chip('员工 AI 助手已开通','ok') + chip(`通知：${data.assignment.notify_status || '-'}`));
+        setHtml('employeeResult', chip('员工 AI 助手已开通','ok') + chip(`通知：${data.assignment?.notify_status || '-'}`));
         await loadEmployeeBots();
-      } catch (err) { setText('employeeResult', String(err.message || err), true); }
+      } catch (err) {
+        setText('employeeResult', String(err.message || err), true);
+      }
     }
     async function deactivateEmployeeBot() {
       try {
-        const payload = {platform: employeePlatform.value, user_id: employeeUserId.value.trim()};
+        const payload = {platform: val('employeePlatform') || 'wecom', user_id: val('employeeUserId')};
+        if (!payload.user_id) throw new Error('请先填写员工的企业 IM 用户 ID');
         const data = await api('/api/v1/admin/employee-bots/deactivate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-        setHtml('employeeResult', chip(`状态：${data.assignment.status}`, 'warn'));
+        setHtml('employeeResult', chip(`状态：${data.assignment?.status || '已停用'}`, 'warn'));
         await loadEmployeeBots();
-      } catch (err) { setText('employeeResult', String(err.message || err), true); }
-    }
+      } catch (err) {
+        setText('employeeResult', String(err.message || err), true);
+      }
     }
     async function importGuides() {
       try {
-      const data = await api('/api/v1/admin/knowledge/import/company-guides', {method:'POST'});
-      setHtml('guideResult', chip(`已导入 ${data.imported || 0} 条`, 'ok'));
-      } catch (err) { setText('guideResult', String(err.message || err), true); }
+        const data = await api('/api/v1/admin/knowledge/import/company-guides', {method:'POST'});
+        setHtml('guideResult', chip(`已导入 ${data.imported || 0} 条`, 'ok'));
+      } catch (err) {
+        setText('guideResult', String(err.message || err), true);
+      }
     }
     function openKnowledgeManager() {
       window.open(`/knowledge/manage?${authQuery()}`, '_blank');
     }
     async function loadRuntime() {
       try {
-      const data = await api('/api/v1/admin/runtime/status');
-      const reachable = Object.values(data.runtime.ports || {}).filter(p => p.reachable).length;
-      setHtml('runtimeSummary', chip(`可达端口：${reachable}`, 'ok') + chip(`健康：${data.health.status}`,'ok'));
-      const platformRows = Object.entries(data.runtime.platforms || {}).map(([name, p]) => `<tr><td>${name}</td><td>${p.configured ? chip('已配置','ok') : chip('缺凭据','warn')}</td><td>${(p.present_env || []).join(', ') || '-'}</td><td>${(p.missing_env || []).join(', ') || '-'}</td></tr>`).join('');
-      document.getElementById('runtimeResult').innerHTML = `<table><thead><tr><th>平台</th><th>状态</th><th>已加载</th><th>缺少</th></tr></thead><tbody>${platformRows}</tbody></table>`;
-      } catch (err) { setText('runtimeResult', String(err.message || err), true); }
+        const data = await api('/api/v1/admin/runtime/status');
+        const reachable = Object.values(data.runtime.ports || {}).filter((port) => port.reachable).length;
+        setHtml('runtimeSummary', chip(`可达端口：${reachable}`, 'ok') + chip(`健康：${data.health.status}`,'ok'));
+        const platformRows = Object.entries(data.runtime.platforms || {}).map(([name, platform]) => `<tr><td>${safe(name)}</td><td>${platform.configured ? chip('已配置','ok') : chip('缺凭据','warn')}</td><td>${safe((platform.present_env || []).join(', ') || '-')}</td><td>${safe((platform.missing_env || []).join(', ') || '-')}</td></tr>`);
+        setHtml('runtimeResult', table(['平台','状态','已加载','缺少'], platformRows));
+      } catch (err) {
+        setText('runtimeResult', String(err.message || err), true);
+      }
     }
     (async function init() {
       try {
@@ -1533,7 +1560,7 @@ def admin_console_page():
         await loadEmployeeBots();
         await loadRuntime();
       } catch (err) {
-        document.getElementById('identity').textContent = '验证失败';
+        el('identity').textContent = '验证失败';
         setText('profileBox', String(err.message || err), true);
       }
     })();

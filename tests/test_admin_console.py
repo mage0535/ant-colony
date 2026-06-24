@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -161,6 +163,25 @@ def test_knowledge_management_page_contains_business_operations() -> None:
     assert "升级知识条目" in html
     assert "导入公司说明书" in html
     assert "按企业微信组织权限自动适配" in html
+
+
+def test_admin_and_knowledge_page_scripts_are_valid_javascript(tmp_path) -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+
+    from src.web.dashboard import admin_console_page, knowledge_management_page
+
+    for name, response in {
+        "admin-console": admin_console_page(),
+        "knowledge-management": knowledge_management_page(),
+    }.items():
+        html = response.body.decode("utf-8")
+        start = html.index("<script>") + len("<script>")
+        end = html.index("</script>", start)
+        script = tmp_path / f"{name}.js"
+        script.write_text(html[start:end], encoding="utf-8")
+        subprocess.run([node, "--check", str(script)], check=True)
 
 
 def test_create_admin_console_link_includes_signed_token() -> None:

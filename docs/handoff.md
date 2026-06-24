@@ -497,3 +497,27 @@
    - 部门群 / 项目群 / 跨空间 linked space 场景
 4. 飞书 / 钉钉真实联调
    - 当前代码和模拟测试已就绪，仅缺凭据
+
+## 2026-06-24 管理员控制台点击无响应修复
+
+- 用户反馈：
+  - 管理员控制台显示“未验证”
+  - 页面内任意按钮点击无反应
+- 根因：
+  - `/admin/console` 页面内联 JavaScript 存在语法错误
+  - `deactivateEmployeeBot()` 后多了孤立 `}`
+  - 多处中文状态拼接和模板字符串在页面脚本中不够稳健，导致整段脚本无法执行
+- 修复：
+  - 重写管理员控制台脚本的 DOM 工具函数、表格渲染、chip 渲染和 API 错误处理
+  - 去掉依赖浏览器全局 `id` 变量的表单读取方式，统一改为 `document.getElementById`
+  - 对动态输出统一做 HTML 转义，避免状态字段污染页面
+  - 员工 AI 助手开通/停用增加前端必填校验，未填员工 user_id 时直接提示中文错误
+- 防回归：
+  - `tests/test_admin_console.py` 新增脚本语法检查
+  - 有 Node 环境时会对 `/admin/console` 和 `/knowledge/manage` 的内联脚本执行 `node --check`
+- 验证：
+  - 本地全量测试：`461 passed`
+  - 服务器定向测试：`13 passed`
+  - 服务器 `ant-colony-dashboard` 已重启，状态 `active`
+  - 新管理台链接请求：HTTP 200
+  - `/api/v1/admin/profile` 请求：HTTP 200，`can_activate_bots=true`
