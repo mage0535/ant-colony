@@ -93,10 +93,8 @@ def may_read(role: Role, owner_type: str, owner_id: str, user_id: str) -> bool:
     if owner_type == "organization":
         return True
     if owner_type == "department":
-        if role >= Role.leader:
-            return True  # leaders can read any department
         if role >= Role.member:
-            return _is_dept_member(user_id, owner_id)
+            return _is_dept_member(user_id, owner_id) or _is_dept_leader(user_id, owner_id)
         return False
     if owner_type == "project":
         return role >= Role.member and _is_project_member(user_id, owner_id)
@@ -113,7 +111,7 @@ def may_write(role: Role, owner_type: str, owner_id: str, user_id: str) -> bool:
     if role >= Role.admin:
         return True
     if owner_type == "organization":
-        return role >= Role.leader
+        return role >= Role.admin
     if owner_type == "department":
         if role >= Role.leader:
             return _is_dept_leader(user_id, owner_id)
@@ -162,7 +160,7 @@ def writable_scopes(role: Role, user_id: str, platform: str = "wecom") -> list[t
     if role >= Role.leader:
         for dept_id in graph.get_leader_departments(platform, user_id)[:20]:
             scopes.append(("department", str(dept_id)))
-    if role >= Role.leader:
+    if role >= Role.admin:
         scopes.append(("organization", "*"))
     if role >= Role.member:
         try:
@@ -181,7 +179,7 @@ def writable_scopes(role: Role, user_id: str, platform: str = "wecom") -> list[t
 
 def default_write_scope(role: Role, user_id: str, platform: str = "wecom") -> tuple[str, str]:
     scopes = writable_scopes(role, user_id, platform)
-    priority = ("organization", "department", "project", "personal")
+    priority = ("organization", "department", "project", "personal") if role >= Role.admin else ("department", "project", "personal")
     for owner_type in priority:
         for scope in scopes:
             if scope[0] == owner_type:

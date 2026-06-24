@@ -242,7 +242,7 @@
 - 新增公司级说明书导入：
   - `scripts/import_company_guides.py`
   - `src/knowledge/company_guides.py`
-- 三份说明书现在可按稳定 ID、稳定标题、稳定关键词导入到 `organization/company` 知识库
+- 三份说明书现在可按稳定 ID、稳定标题、稳定关键词导入到公司级知识库
 - 机器人文档检索策略已调整为：
   - 先查本地知识库 `search_knowledge`
   - 本地无结果再尝试 `docs.search`
@@ -553,3 +553,28 @@
   - `/knowledge/manage?...` 请求：HTTP 200
   - `/api/v1/admin/knowledge/permissions?...` 请求：HTTP 200，`default_write_scope=organization/*`
   - 空 credentials 调用 `/api/v1/admin/platform/bots/wecom/activate?...`：HTTP 200，`missing_keys=[]`，`restart_required=false`
+
+## 2026-06-24 IM 组织权限强制收敛复核
+
+- 用户要求：
+  - 后台管理必须自动获取企业 IM 中的用户角色、部门、负责人和管理员身份
+  - 员工开通 AI 助手时，管理员只确认开通，不手动指定知识范围或权限
+  - 用户管理知识库时，系统按 IM 组织架构自动匹配个人/部门/项目/公司知识范围
+  - 公司说明书不能作为独立类目，只能作为公司知识库中的普通文档统一管理
+- 复核发现：
+  - 员工 AI 助手开通接口仍接受并保存外部传入的 `scope` 和 `permissions`
+  - 管理员控制台仍展示“知识范围”和“权限”输入框，容易让管理员误配
+  - 部门负责人曾可读取任意部门知识、写入公司级知识库，权限边界过宽
+  - Bot 工具层的知识新增/升级/更新存在绕过页面 ACL 的可能
+- 修复：
+  - `activate_employee_bot()` 现在忽略外部传入的 `scope/permissions`，统一调用 ACL 从 IM 组织架构自动派生默认范围和权限
+  - 管理员控制台移除员工知识范围/权限输入，只保留平台、员工 user_id、显示名称和确认按钮
+  - ACL 收紧为：公司级写入仅管理员；部门级读取仅本部门成员/负责人；部门级写入仅对应部门负责人；管理员仍拥有全局权限
+  - 知识新增、升级、更新工具统一调用 `default_write_scope()`、`may_read()`、`may_write()` 校验，避免 Bot 侧绕过权限
+  - 公司说明书导入必须带用户身份并校验管理员；用户可见文案改为“普通公司级文档导入公司知识库”
+- 防回归：
+  - 新增/更新测试覆盖员工开通忽略手工范围、部门负责人不能管理公司知识库、部门负责人不能读写非负责部门、管理页不再出现 `employeeScope/employeePermissions`
+- 验证：
+  - 本地定向测试：`25 passed`
+  - 本地编译检查：`python -m compileall -q src tests scripts`
+  - 本地 diff 检查：`git diff --check`

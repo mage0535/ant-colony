@@ -796,7 +796,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal", "project"],
 
-        description="将系统内置的三份公司级操作说明书导入 organization/company 知识库，带稳定标题和关键词。",
+        description="将系统内置的三份公司级操作说明书作为普通公司文档导入公司知识库，带稳定标题和关键词。",
 
         parameters={},
 

@@ -150,12 +150,12 @@ def list_knowledge_tool(args: dict[str, Any]) -> str:
 
 
 def add_document_tool(args: dict[str, Any]) -> str:
-    from src.knowledge.acl import Role, resolve_role
+    from src.knowledge.acl import default_write_scope, may_write, resolve_role
     from src.knowledge.collector import _acl_for_owner_type
     from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
     from src.knowledge.repository_factory import build_knowledge_repository
 
-    scope = args.get("scope", "personal")
+    scope = str(args.get("scope", "auto") or "auto")
     user_id = args.get("user_id", "")
     title = args.get("title", "未命名文档")
     content = args.get("content", "")
@@ -165,24 +165,21 @@ def add_document_tool(args: dict[str, Any]) -> str:
     if not content:
         return "请提供文档内容"
     role = resolve_role(user_id)
-    scope_requirements: dict[str, Role] = {
-        "company": Role.leader,
-        "department": Role.leader,
-        "project": Role.member,
-        "personal": Role.self,
-    }
-    required_role = scope_requirements.get(scope, Role.self)
-    if role < required_role:
-        return f"权限不足：当前角色 {role.name}，添加 '{scope}' 范围文档需要 {required_role.name} 权限"
     scope_type_map = {
         "company": "organization",
+        "organization": "organization",
         "department": "department",
         "project": "project",
         "personal": "personal",
     }
-    owner_type_str = scope_type_map.get(scope, "personal")
+    if scope == "auto" or not owner_id:
+        owner_type_str, resolved_owner_id = default_write_scope(role, user_id)
+    else:
+        owner_type_str = scope_type_map.get(scope, "personal")
+        resolved_owner_id = owner_id
+    if not may_write(role, owner_type_str, resolved_owner_id, user_id):
+        return "权限不足：系统已按企业 IM 组织架构校验，你不能写入该知识范围"
     owner_type = KnowledgeOwnerType(owner_type_str)
-    resolved_owner_id = owner_id or (user_id if scope == "personal" else "*")
     read_roles, write_roles = _acl_for_owner_type(owner_type_str)
     repo = build_knowledge_repository()
     entry = KnowledgeEntry(
@@ -191,12 +188,12 @@ def add_document_tool(args: dict[str, Any]) -> str:
         owner_id=resolved_owner_id,
         content=content,
         tags=[title],
-        metadata={"title": title, "added_by": user_id, "scope": scope},
+        metadata={"title": title, "added_by": user_id, "scope": owner_type_str},
         read_roles=read_roles,
         write_roles=write_roles,
     )
     repo.save(entry)
-    return f"文档 '{title}' 已添加到知识库（归属：{scope}）"
+    return f"文档 '{title}' 已添加到知识库（归属：{owner_type_label(owner_type_str)} / {resolved_owner_id}）"
 
 
 def register_cloud_drive_tool(args: dict[str, Any]) -> str:
@@ -253,21 +250,28 @@ def delete_cloud_drive_tool(args: dict[str, Any]) -> str:
 
 
 def promote_knowledge_tool(args: dict[str, Any]) -> str:
+    from src.knowledge.acl import default_write_scope, may_read, may_write, resolve_role
     from src.knowledge.contracts import KnowledgeOwnerType
     from src.knowledge.repository_factory import build_knowledge_repository
     from src.knowledge.service import KnowledgeService
 
     entry_id = str(args.get("entry_id", ""))
-    target_scope = str(args.get("target_scope", "department"))
+    target_scope = str(args.get("target_scope", "auto") or "auto")
     target_id = str(args.get("target_id", ""))
-    if not entry_id or not target_id:
-        return "请提供 entry_id 和 target_id"
+    user_id = str(args.get("user_id", ""))
+    if not entry_id:
+        return "请提供 entry_id"
+    if not user_id:
+        return "请提供用户ID"
 
     repo = build_knowledge_repository()
     service = KnowledgeService(repo)
     entry = repo.get(entry_id)
     if entry is None:
         return f"未找到知识条目：{entry_id}"
+    role = resolve_role(user_id)
+    if not may_read(role, entry.owner_type.value, entry.owner_id, user_id):
+        return "权限不足：你不能读取该知识条目"
 
     scope_map = {
         "personal": KnowledgeOwnerType.PERSONAL,
@@ -275,7 +279,13 @@ def promote_knowledge_tool(args: dict[str, Any]) -> str:
         "department": KnowledgeOwnerType.DEPARTMENT,
         "organization": KnowledgeOwnerType.ORGANIZATION,
     }
-    owner_type = scope_map.get(target_scope, KnowledgeOwnerType.DEPARTMENT)
+    if target_scope == "auto" or not target_id:
+        target_owner_type_str, target_id = default_write_scope(role, user_id)
+        owner_type = KnowledgeOwnerType(target_owner_type_str)
+    else:
+        owner_type = scope_map.get(target_scope, KnowledgeOwnerType.DEPARTMENT)
+    if not may_write(role, owner_type.value, target_id, user_id):
+        return "权限不足：系统已按企业 IM 组织架构校验，你不能升级到该知识范围"
     promoted = service.promote_entry(
         entry,
         target_owner_type=owner_type,
@@ -283,21 +293,28 @@ def promote_knowledge_tool(args: dict[str, Any]) -> str:
         new_entry_id=f"{entry.id}-promoted-{target_scope}",
         extra_tags=["promoted"],
     )
-    return f"已将知识条目 {entry_id} 升级为 {target_scope}/{target_id}（新ID: {promoted.id}）"
+    return f"已将知识条目 {entry_id} 升级为 {owner_type_label(owner_type.value)} / {target_id}（新ID: {promoted.id}）"
 
 
 def update_knowledge_tool(args: dict[str, Any]) -> str:
+    from src.knowledge.acl import may_write, resolve_role
     from src.knowledge.repository_factory import build_knowledge_repository
 
     entry_id = str(args.get("entry_id", ""))
     new_content = str(args.get("content", ""))
+    user_id = str(args.get("user_id", ""))
     if not entry_id or not new_content:
         return "请提供 entry_id 和 content"
+    if not user_id:
+        return "请提供用户ID"
 
     repo = build_knowledge_repository()
     entry = repo.get(entry_id)
     if entry is None:
         return f"未找到知识条目：{entry_id}"
+    role = resolve_role(user_id)
+    if not may_write(role, entry.owner_type.value, entry.owner_id, user_id):
+        return "权限不足：你不能编辑该知识条目"
 
     title = str(args.get("title", "")).strip()
     tags = args.get("tags")
@@ -326,10 +343,15 @@ def delete_knowledge_tool(args: dict[str, Any]) -> str:
 
 
 def import_company_guides_tool(args: dict[str, Any]) -> str:
-    del args
+    from src.knowledge.acl import Role, resolve_role
     from src.knowledge.company_guides import import_company_guides
     from src.knowledge.repository_factory import build_knowledge_repository
 
+    user_id = str(args.get("user_id", ""))
+    if not user_id:
+        return "请提供用户ID"
+    if resolve_role(user_id) < Role.admin:
+        return "权限不足：公司级说明书只能由企业 IM 管理员导入"
     entries = import_company_guides(build_knowledge_repository())
     titles = [str(item.metadata.get("title", item.id)) for item in entries]
-    return f"已导入 {len(entries)} 份公司级说明书到 organization/company 知识库：\n" + "\n".join(f"- {title}" for title in titles)
+    return f"已导入 {len(entries)} 份公司级说明书到公司知识库：\n" + "\n".join(f"- {title}" for title in titles)

@@ -68,9 +68,14 @@ class TestScopePromotionTools(unittest.TestCase):
         with (
             patch("src.knowledge.gbrain_repo.GbrainKnowledgeRepository", return_value=FakeRepo()),
             patch("src.knowledge.service.KnowledgeService") as mock_service_cls,
+            patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"name": "leader", "value": 3})()),
+            patch("src.knowledge.acl.may_read", return_value=True),
+            patch("src.knowledge.acl.may_write", return_value=True),
         ):
             mock_service = mock_service_cls.return_value
             mock_service.promote_entry.return_value = type("Entry", (), {"id": "k1-promoted"})()
-            result = promote_knowledge_tool({"entry_id": "k1", "target_scope": "department", "target_id": "2"})
+            result = promote_knowledge_tool(
+                {"entry_id": "k1", "target_scope": "department", "target_id": "2", "user_id": "u-leader"}
+            )
 
-        self.assertIn("已将知识条目 k1 升级为 department/2", result)
+        self.assertIn("已将知识条目 k1 升级为 部门 / 2", result)

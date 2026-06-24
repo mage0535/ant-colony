@@ -363,7 +363,7 @@ def admin_profile(request: Request):
             for owner_type, owner_id in visible_scopes(role, context["user_id"], platform=context["platform"])
         ],
         "can_activate_bots": True,
-        "can_import_company_guides": True,
+        "can_import_company_guides": role.value >= 4,
         "can_manage_knowledge": True,
     }
 
@@ -609,7 +609,7 @@ def knowledge_permissions(user_id: str, space_id: str = ""):
         "managed_departments": profile.get("leader_departments", []),
         "departments": profile.get("departments", []),
         "is_admin": bool(profile.get("is_admin")),
-        "can_manage_organization": role.value >= 3,
+        "can_manage_organization": role.value >= 4,
         "can_manage_department": role.value >= 3,
         "can_manage_project": role.value >= 2,
         "can_manage_personal": role.value >= 1,
@@ -660,6 +660,8 @@ def promote_knowledge(req: KnowledgePromoteRequest):
         target_owner_type = KnowledgeOwnerType(req.target_owner_type)
     except ValueError:
         raise HTTPException(400, f"Invalid target_owner_type: {req.target_owner_type}")
+    if req.user_id and not may_write(role, target_owner_type.value, req.target_owner_id, req.user_id):
+        raise HTTPException(403, "Permission denied")
     service = KnowledgeService(kr)
     new_entry_id = req.new_entry_id or f"{req.entry_id}-promoted-{target_owner_type.value}"
     promoted = service.promote_entry(
@@ -677,8 +679,10 @@ def import_company_guides_api(user_id: str = ""):
     from src.knowledge.acl import resolve_role
     from src.knowledge.company_guides import import_company_guides
 
+    if not user_id:
+        raise HTTPException(400, "Provide user_id")
     role = resolve_role(user_id, "")
-    if user_id and role.value < 3:
+    if role.value < 4:
         raise HTTPException(403, "Permission denied")
     entries = import_company_guides(get_knowledge_repo())
     return {"imported": len(entries), "entries": [_knowledge_entry_to_dict(e, user_id=user_id) for e in entries]}
@@ -1105,7 +1109,7 @@ def knowledge_management_page():
     <section class="stack">
       <div class="card">
         <div class="actions">
-        <button class="secondary" onclick="importGuides()">导入公司知识库说明书</button>
+        <button class="secondary" onclick="importGuides()">导入公司级说明书文档</button>
           <button class="tonal" onclick="openSelected()">打开选中条目</button>
         </div>
         <div id="guideStatus" class="status"></div>
@@ -1414,11 +1418,10 @@ def admin_console_page():
           <div class="panel">
             <h2>给员工开通 AI 助手</h2>
             <p>这里不是让员工自己创建独立机器人，而是把平台统一 Bot 分配给指定员工，并发送企微开通通知。</p>
+            <p class="muted">知识范围和操作权限由平台根据员工在企业 IM 中的组织架构、部门归属、负责人/管理员身份自动计算，管理员只确认开通，不手工指定范围。</p>
             <label>平台</label><select id="employeePlatform"><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="dingtalk">钉钉</option></select>
             <label>员工用户 ID</label><input id="employeeUserId" placeholder="例如 MaGe 或同事企微 user_id">
             <label>显示名称</label><input id="employeeBotName" placeholder="企业 AI 助手">
-            <label>知识范围</label><select id="employeeScope"><option value="personal">个人</option><option value="department">部门</option><option value="project">项目</option><option value="organization">公司</option></select>
-            <label>权限</label><input id="employeePermissions" value="chat.use,knowledge.read,files.process">
             <div class="actions">
               <button class="primary" onclick="activateEmployeeBot()">开通并通知员工</button>
               <button class="danger" onclick="deactivateEmployeeBot()">停用员工 AI 助手</button>
@@ -1436,7 +1439,7 @@ def admin_console_page():
         <div class="grid two">
           <div class="panel">
             <h2>公司说明书导入</h2>
-            <p>将激活说明书、功能说明书、知识库管理说明书导入 organization/company 级知识库。</p>
+            <p>将激活说明书、功能说明书、知识库管理说明书作为普通公司级文档导入公司知识库，后续统一按组织权限管理。</p>
             <button onclick="importGuides()">导入或更新公司说明书</button>
             <div id="guideResult" class="status">暂无操作</div>
           </div>
@@ -1462,8 +1465,8 @@ def admin_console_page():
             <tbody>
               <tr><th>总览</th><td>确认当前企业 IM 用户是否通过管理员校验，快速查看平台与运行状态。</td></tr>
               <tr><th>平台 Bot 开通</th><td>系统会自动检查服务器环境变量、配置文件和历史配置。管理员先审核状态，再点击确认自动接管；只有系统明确提示仍缺少凭据时，才展开高级配置补录。</td></tr>
-              <tr><th>员工 AI 助手</th><td>输入同事企业 IM 用户 ID，开通后系统记录分配状态，并在企微下直接发送开通通知。</td></tr>
-              <tr><th>知识库管理</th><td>导入说明书或打开知识库业务页面，按当前企微权限管理对应范围知识。</td></tr>
+              <tr><th>员工 AI 助手</th><td>输入同事企业 IM 用户 ID，管理员确认后平台自动按企业 IM 组织架构分配知识范围和权限，并在企微下直接发送开通通知。</td></tr>
+              <tr><th>知识库管理</th><td>说明书作为普通公司级知识文档统一纳入知识库；所有新增、更新、删除、升级操作都按当前企微组织权限自动适配。</td></tr>
               <tr><th>运行验证</th><td>检查端口和平台环境变量是否就绪。飞书、钉钉没有真实账号时只能看模拟或缺凭据状态。</td></tr>
               <tr><th>管理员身份</th><td>页面 URL 必须包含 platform、user_id、admin_token。后端会校验令牌签名和该用户是否是对应 IM 平台管理员。</td></tr>
             </tbody>
@@ -1545,7 +1548,7 @@ def admin_console_page():
       try {
         const data = await api('/api/v1/admin/employee-bots');
         const rows = (data.assignments || []).map((assignment) => `<tr><td>${safe(assignment.platform)}</td><td>${safe(assignment.user_id)}</td><td>${safe(assignment.display_name)}</td><td>${safe(assignment.scope)}</td><td>${assignment.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td><td>${safe(assignment.notify_status || '-')}</td></tr>`);
-        setHtml('employeeList', table(['平台','员工','名称','范围','状态','通知'], rows));
+        setHtml('employeeList', table(['平台','员工','名称','自动范围','状态','通知'], rows));
       } catch (err) {
         setText('employeeResult', String(err.message || err), true);
       }
@@ -1556,8 +1559,6 @@ def admin_console_page():
           platform: val('employeePlatform') || 'wecom',
           user_id: val('employeeUserId'),
           display_name: val('employeeBotName') || '企业 AI 助手',
-          scope: val('employeeScope') || 'personal',
-          permissions: val('employeePermissions').split(',').map((item) => item.trim()).filter(Boolean),
           notify: true
         };
         if (!payload.user_id) throw new Error('请先填写员工的企业 IM 用户 ID');

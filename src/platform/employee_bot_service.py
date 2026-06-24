@@ -45,7 +45,9 @@ def activate_employee_bot(
     normalized_user_id = user_id.strip()
     if not normalized_user_id:
         raise ValueError("缺少员工企业 IM 用户 ID")
-    permissions = permissions or ["chat.use", "knowledge.read", "files.process"]
+    access = _derive_employee_access(normalized_platform, normalized_user_id)
+    permissions = access["permissions"]
+    scope = access["default_scope"]
     now = time.time()
     notify_status = "not_requested"
     if notify:
@@ -169,6 +171,36 @@ def _notify_employee(platform: str, user_id: str, display_name: str) -> str:
         return "sent" if send_text(user_id, text) else "send_failed"
     except Exception as exc:
         return f"send_error:{exc}"
+
+
+def _derive_employee_access(platform: str, user_id: str) -> dict[str, Any]:
+    try:
+        from src.knowledge.acl import default_write_scope, resolve_role, visible_scopes, writable_scopes
+
+        role = resolve_role(user_id, platform=platform)
+        default_scope = default_write_scope(role, user_id, platform=platform)
+        readable = visible_scopes(role, user_id, platform=platform)
+        writable = writable_scopes(role, user_id, platform=platform)
+        permissions = ["chat.use", "files.process", "knowledge.read"]
+        if writable:
+            permissions.append("knowledge.write")
+        if role.name == "admin":
+            permissions.extend(["bot.manage", "knowledge.admin"])
+        return {
+            "role": role.name,
+            "default_scope": f"{default_scope[0]}:{default_scope[1]}",
+            "readable_scopes": [f"{owner_type}:{owner_id}" for owner_type, owner_id in readable],
+            "writable_scopes": [f"{owner_type}:{owner_id}" for owner_type, owner_id in writable],
+            "permissions": permissions,
+        }
+    except Exception:
+        return {
+            "role": "self",
+            "default_scope": f"personal:{user_id}",
+            "readable_scopes": [f"personal:{user_id}", "organization:*"],
+            "writable_scopes": [f"personal:{user_id}"],
+            "permissions": ["chat.use", "files.process", "knowledge.read", "knowledge.write"],
+        }
 
 
 def _normalize_platform(platform: str) -> str:

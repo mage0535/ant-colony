@@ -31,6 +31,28 @@ class TestAclDynamicRoles(unittest.TestCase):
 
         self.assertEqual(resolve_role("u-leader", platform="wecom"), Role.leader)
 
+    def test_department_leader_is_limited_to_owned_departments(self) -> None:
+        from src.knowledge.acl import Role, default_write_scope, may_read, may_write, resolve_role, writable_scopes
+        from src.platform.org_graph import OrgGraphService
+
+        graph = OrgGraphService(db_path=self.tmp)
+        graph.upsert_department("wecom", "dept-2", "生产部", "1")
+        graph.upsert_department("wecom", "dept-3", "财务部", "1")
+        graph.upsert_user("wecom", "u-leader", "张三")
+        graph.replace_user_memberships("wecom", "u-leader", [("dept-2", True, False)])
+
+        role = resolve_role("u-leader", platform="wecom")
+
+        self.assertEqual(role, Role.leader)
+        self.assertEqual(default_write_scope(role, "u-leader", platform="wecom"), ("department", "dept-2"))
+        self.assertIn(("department", "dept-2"), writable_scopes(role, "u-leader", platform="wecom"))
+        self.assertNotIn(("organization", "*"), writable_scopes(role, "u-leader", platform="wecom"))
+        self.assertTrue(may_read(role, "department", "dept-2", "u-leader"))
+        self.assertFalse(may_read(role, "department", "dept-3", "u-leader"))
+        self.assertTrue(may_write(role, "department", "dept-2", "u-leader"))
+        self.assertFalse(may_write(role, "department", "dept-3", "u-leader"))
+        self.assertFalse(may_write(role, "organization", "*", "u-leader"))
+
     def test_project_read_write_requires_space_membership(self) -> None:
         from src.knowledge.acl import Role, may_read, may_write
         from src.rooms.space_registry import SpaceRegistry

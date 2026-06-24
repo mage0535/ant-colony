@@ -42,9 +42,12 @@ class TestKnowledgeManagementApi(unittest.TestCase):
             )
         ]
 
-        with patch("src.web.dashboard.get_knowledge_repo", return_value=object()), \
+        from src.knowledge.acl import Role
+
+        with patch("src.knowledge.acl.resolve_role", return_value=Role.admin), \
+             patch("src.web.dashboard.get_knowledge_repo", return_value=object()), \
              patch("src.knowledge.company_guides.import_company_guides", return_value=entries):
-            result = import_company_guides_api()
+            result = import_company_guides_api(user_id="u-admin")
 
         self.assertEqual(result["imported"], 1)
         self.assertEqual(result["entries"][0]["title"], "企业微信 AI 助手激活说明书")

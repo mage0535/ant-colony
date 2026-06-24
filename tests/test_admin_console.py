@@ -151,6 +151,9 @@ def test_admin_console_page_contains_material_business_sections() -> None:
     assert "平台 Bot 开通" in html
     assert "员工 AI 助手" in html
     assert "开通并通知员工" in html
+    assert "知识范围和操作权限由平台根据员工在企业 IM 中的组织架构" in html
+    assert "employeeScope" not in html
+    assert "employeePermissions" not in html
     assert "确认自动接管企业微信" in html
     assert "高级配置：仅在系统提示缺少凭据时填写" in html
 
@@ -163,7 +166,7 @@ def test_knowledge_management_page_contains_business_operations() -> None:
     assert "--md-primary:#0b57d0" in html
     assert "新增到知识库" in html
     assert "升级知识条目" in html
-    assert "导入公司知识库说明书" in html
+    assert "导入公司级说明书文档" in html
     assert "按企业微信组织权限自动适配" in html
 
 
