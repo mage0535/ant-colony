@@ -18,7 +18,7 @@ def _acl_for_owner_type(owner_type: str) -> tuple[list[str], list[str]]:
         "personal":     (["self"],         ["admin", "self"]),
         "project":      (["*"],            ["admin", "member"]),
         "department":   (["*"],            ["admin", "leader"]),
-        "organization": (["*"],            ["admin", "leader"]),
+        "organization": (["*"],            ["admin"]),
     }
     return defaults.get(owner_type, (["*"], ["admin"]))
 

@@ -12,6 +12,7 @@ from fastapi import HTTPException, Request
 
 
 DEFAULT_ADMIN_SESSION_TTL_SECONDS = 3600
+DEFAULT_USER_SESSION_TTL_SECONDS = 86400
 
 
 def create_admin_console_token(
@@ -26,6 +27,28 @@ def create_admin_console_token(
         raise RuntimeError("ANT_COLONY_ADMIN_SESSION_SECRET or ANT_COLONY_AUTH_TOKEN is required")
     issued_at = int(time.time() if now is None else now)
     payload = {
+        "platform": _normalize_platform(platform),
+        "user_id": user_id.strip(),
+        "exp": issued_at + int(ttl_seconds),
+    }
+    body = _b64(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    sig = _sign(body, secret)
+    return f"{body}.{sig}"
+
+
+def create_im_user_token(
+    *,
+    platform: str,
+    user_id: str,
+    ttl_seconds: int = DEFAULT_USER_SESSION_TTL_SECONDS,
+    now: float | None = None,
+) -> str:
+    secret = _admin_secret()
+    if not secret:
+        raise RuntimeError("ANT_COLONY_ADMIN_SESSION_SECRET or ANT_COLONY_AUTH_TOKEN is required")
+    issued_at = int(time.time() if now is None else now)
+    payload = {
+        "kind": "im_user",
         "platform": _normalize_platform(platform),
         "user_id": user_id.strip(),
         "exp": issued_at + int(ttl_seconds),
@@ -78,6 +101,36 @@ def require_admin_context_from_request(request: Request) -> dict[str, Any]:
     return require_admin_context(platform=platform, user_id=user_id, admin_token=admin_token)
 
 
+def require_user_context_from_request(request: Request) -> dict[str, Any]:
+    platform = (
+        request.query_params.get("platform")
+        or request.headers.get("X-Platform")
+        or "wecom"
+    )
+    user_id = (
+        request.query_params.get("user_id")
+        or request.headers.get("X-User-ID")
+        or request.headers.get("X-IM-User-ID")
+        or ""
+    )
+    user_token = (
+        request.query_params.get("user_token")
+        or request.headers.get("X-User-Token")
+        or ""
+    )
+    normalized_platform = _normalize_platform(platform)
+    normalized_user_id = user_id.strip()
+    if not normalized_user_id:
+        raise HTTPException(401, "缺少企业 IM 用户身份")
+    if not _verify_im_user_token(
+        platform=normalized_platform,
+        user_id=normalized_user_id,
+        token=user_token,
+    ):
+        raise HTTPException(401, "用户访问令牌无效或已过期")
+    return {"platform": normalized_platform, "user_id": normalized_user_id, "role": "user"}
+
+
 def is_platform_admin(platform: str, user_id: str) -> bool:
     normalized_platform = _normalize_platform(platform)
     normalized_user_id = user_id.strip()
@@ -116,6 +169,31 @@ def _verify_admin_console_token(
     except Exception:
         return False
     current = int(time.time() if now is None else now)
+    if str(payload.get("platform", "")) != _normalize_platform(platform):
+        return False
+    if str(payload.get("user_id", "")) != user_id.strip():
+        return False
+    try:
+        exp = int(payload.get("exp", 0))
+    except (TypeError, ValueError):
+        return False
+    return current <= exp
+
+
+def _verify_im_user_token(*, platform: str, user_id: str, token: str, now: float | None = None) -> bool:
+    secret = _admin_secret()
+    if not secret or not token or "." not in token:
+        return False
+    body, _, sig = token.partition(".")
+    if not hmac.compare_digest(_sign(body, secret), sig):
+        return False
+    try:
+        payload = json.loads(_unb64(body).decode("utf-8"))
+    except Exception:
+        return False
+    current = int(time.time() if now is None else now)
+    if str(payload.get("kind", "")) != "im_user":
+        return False
     if str(payload.get("platform", "")) != _normalize_platform(platform):
         return False
     if str(payload.get("user_id", "")) != user_id.strip():

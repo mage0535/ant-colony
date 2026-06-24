@@ -47,7 +47,7 @@ def build_company_guide_entries() -> list[KnowledgeEntry]:
                     "stable": True,
                 },
                 read_roles=["*"],
-                write_roles=["admin", "leader"],
+                write_roles=["admin"],
             )
         )
     return entries

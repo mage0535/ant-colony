@@ -28,14 +28,15 @@ from src.rooms.space_registry import SpaceRegistry
 from src.store.database import Database
 from src.store.task_repo import TaskRepository
 from src.web.document_paths import resolve_document_download_path
-from src.web.admin_auth import require_admin_context_from_request
+from src.web.admin_auth import require_admin_context_from_request, require_user_context_from_request
 from src.web.middleware import add_request_id, check_rate_limit, require_auth
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Ant Colony API", version="0.3.0")
 
-_PUBLIC_PATHS = {"/", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/admin/console", "/knowledge/manage"}
+_PUBLIC_PATHS = {"/", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/admin/console", "/knowledge/manage", "/knowledge/user"}
+_PUBLIC_PREFIXES = ("/api/v1/user/knowledge/",)
 _ADMIN_API_PREFIX = "/api/v1/admin/"
 MAX_UPLOAD_BYTES = int(os.environ.get("ANT_COLONY_MAX_FILE_BYTES", str(50 * 1024 * 1024)))
 
@@ -43,7 +44,11 @@ MAX_UPLOAD_BYTES = int(os.environ.get("ANT_COLONY_MAX_FILE_BYTES", str(50 * 1024
 @app.middleware("http")
 async def auth_and_rate_limit(request: Request, call_next):
     try:
-        if request.url.path not in _PUBLIC_PATHS and not request.url.path.startswith(_ADMIN_API_PREFIX):
+        if (
+            request.url.path not in _PUBLIC_PATHS
+            and not request.url.path.startswith(_ADMIN_API_PREFIX)
+            and not request.url.path.startswith(_PUBLIC_PREFIXES)
+        ):
             require_auth(request)
         check_rate_limit(request)
     except HTTPException as e:
@@ -164,6 +169,7 @@ class KnowledgeCollectRequest(BaseModel):
     tags: list[str] = []
     user_id: str = ""
     space_id: str = ""
+    platform: str = "wecom"
 
 
 class KnowledgeUpdateRequest(BaseModel):
@@ -171,6 +177,7 @@ class KnowledgeUpdateRequest(BaseModel):
     title: str = ""
     tags: list[str] = []
     user_id: str = ""
+    platform: str = "wecom"
 
 
 class KnowledgePromoteRequest(BaseModel):
@@ -179,6 +186,7 @@ class KnowledgePromoteRequest(BaseModel):
     target_owner_id: str
     new_entry_id: str = ""
     user_id: str = ""
+    platform: str = "wecom"
 class FileDeleteRequest(BaseModel):
     user_id: str
     space_id: str
@@ -430,13 +438,13 @@ def admin_import_company_guides(request: Request):
 @app.get("/api/v1/admin/knowledge/entries")
 def admin_knowledge_entries(request: Request, query: str = "", space_id: str = "", limit: int = 100):
     context = require_admin_context_from_request(request)
-    return list_accessible_knowledge(user_id=context["user_id"], query=query, space_id=space_id, limit=limit)
+    return list_accessible_knowledge(user_id=context["user_id"], query=query, space_id=space_id, limit=limit, platform=context["platform"])
 
 
 @app.get("/api/v1/admin/knowledge/permissions")
 def admin_knowledge_permissions(request: Request, space_id: str = ""):
     context = require_admin_context_from_request(request)
-    return knowledge_permissions(user_id=context["user_id"], space_id=space_id)
+    return knowledge_permissions(user_id=context["user_id"], space_id=space_id, platform=context["platform"])
 
 
 @app.post("/api/v1/admin/org/sync")
@@ -454,13 +462,32 @@ def admin_sync_org(request: Request):
 def admin_collect_knowledge(req: KnowledgeCollectRequest, request: Request):
     context = require_admin_context_from_request(request)
     req.user_id = context["user_id"]
+    req.platform = context["platform"]
     return collect_knowledge(req)
+
+
+@app.post("/api/v1/admin/knowledge/files/upload")
+def admin_upload_knowledge_file(
+    request: Request,
+    file: UploadFile = File(...),
+    space_id: str = Form(""),
+):
+    context = require_admin_context_from_request(request)
+    return upload_file(
+        file=file,
+        user_id=context["user_id"],
+        space_id=space_id,
+        knowledge_owner_type="auto",
+        knowledge_owner_id="",
+        platform=context["platform"],
+    )
 
 
 @app.put("/api/v1/admin/knowledge/{entry_id}")
 def admin_update_knowledge(entry_id: str, req: KnowledgeUpdateRequest, request: Request):
     context = require_admin_context_from_request(request)
     req.user_id = context["user_id"]
+    req.platform = context["platform"]
     return update_knowledge(entry_id, req)
 
 
@@ -474,6 +501,66 @@ def admin_delete_knowledge(entry_id: str, request: Request):
 def admin_promote_knowledge(req: KnowledgePromoteRequest, request: Request):
     context = require_admin_context_from_request(request)
     req.user_id = context["user_id"]
+    req.platform = context["platform"]
+    return promote_knowledge(req)
+
+
+@app.get("/api/v1/user/knowledge/permissions")
+def user_knowledge_permissions(request: Request, space_id: str = ""):
+    context = require_user_context_from_request(request)
+    return knowledge_permissions(user_id=context["user_id"], space_id=space_id, platform=context["platform"])
+
+
+@app.get("/api/v1/user/knowledge/entries")
+def user_knowledge_entries(request: Request, query: str = "", space_id: str = "", limit: int = 100):
+    context = require_user_context_from_request(request)
+    return list_accessible_knowledge(user_id=context["user_id"], query=query, space_id=space_id, limit=limit, platform=context["platform"])
+
+
+@app.post("/api/v1/user/knowledge/collect")
+def user_collect_knowledge(req: KnowledgeCollectRequest, request: Request):
+    context = require_user_context_from_request(request)
+    req.user_id = context["user_id"]
+    req.platform = context["platform"]
+    return collect_knowledge(req)
+
+
+@app.post("/api/v1/user/knowledge/files/upload")
+def user_upload_knowledge_file(
+    request: Request,
+    file: UploadFile = File(...),
+    space_id: str = Form(""),
+):
+    context = require_user_context_from_request(request)
+    return upload_file(
+        file=file,
+        user_id=context["user_id"],
+        space_id=space_id,
+        knowledge_owner_type="auto",
+        knowledge_owner_id="",
+        platform=context["platform"],
+    )
+
+
+@app.put("/api/v1/user/knowledge/{entry_id}")
+def user_update_knowledge(entry_id: str, req: KnowledgeUpdateRequest, request: Request):
+    context = require_user_context_from_request(request)
+    req.user_id = context["user_id"]
+    req.platform = context["platform"]
+    return update_knowledge(entry_id, req)
+
+
+@app.delete("/api/v1/user/knowledge/{entry_id}")
+def user_delete_knowledge(entry_id: str, request: Request):
+    context = require_user_context_from_request(request)
+    return delete_knowledge(entry_id, user_id=context["user_id"])
+
+
+@app.post("/api/v1/user/knowledge/promote")
+def user_promote_knowledge(req: KnowledgePromoteRequest, request: Request):
+    context = require_user_context_from_request(request)
+    req.user_id = context["user_id"]
+    req.platform = context["platform"]
     return promote_knowledge(req)
 
 
@@ -583,27 +670,30 @@ def get_knowledge_entry(entry_id: str, user_id: str = "", space_id: str = ""):
 
 
 @app.get("/api/v1/knowledge/accessible")
-def list_accessible_knowledge(user_id: str, query: str = "", space_id: str = "", limit: int = 50):
+def list_accessible_knowledge(user_id: str, query: str = "", space_id: str = "", limit: int = 50, platform: str = "wecom"):
     kr = get_knowledge_repo()
-    results = kr.search_accessible(query, user_id=user_id, space_id=space_id, limit=limit) if query else kr.list_accessible(user_id=user_id, limit=limit)
-    return {"entries": [_knowledge_entry_to_dict(e, user_id=user_id, space_id=space_id) for e in results]}
+    if platform == "wecom":
+        results = kr.search_accessible(query, user_id=user_id, space_id=space_id, limit=limit) if query else kr.list_accessible(user_id=user_id, limit=limit)
+    else:
+        results = _list_accessible_by_platform(kr, user_id=user_id, query=query, space_id=space_id, limit=limit, platform=platform)
+    return {"entries": [_knowledge_entry_to_dict(e, user_id=user_id, space_id=space_id, platform=platform) for e in results]}
 
 
 @app.get("/api/v1/knowledge/permissions")
-def knowledge_permissions(user_id: str, space_id: str = ""):
+def knowledge_permissions(user_id: str, space_id: str = "", platform: str = "wecom"):
     from src.knowledge.acl import default_write_scope, resolve_role, visible_scopes, writable_scopes
     from src.platform.org_graph import OrgGraphService
 
-    role = resolve_role(user_id, space_id)
+    role = resolve_role(user_id, space_id, platform=platform)
     graph = OrgGraphService()
-    profile = graph.get_user_profile("wecom", user_id) or {}
-    write_scopes = writable_scopes(role, user_id)
-    default_owner_type, default_owner_id = default_write_scope(role, user_id)
+    profile = graph.get_user_profile(platform, user_id) or {}
+    write_scopes = writable_scopes(role, user_id, platform=platform)
+    default_owner_type, default_owner_id = default_write_scope(role, user_id, platform=platform)
     return {
         "user_id": user_id,
         "space_id": space_id,
         "role": role.name,
-        "visible_scopes": [{"owner_type": owner_type, "owner_id": owner_id} for owner_type, owner_id in visible_scopes(role, user_id)],
+        "visible_scopes": [{"owner_type": owner_type, "owner_id": owner_id} for owner_type, owner_id in visible_scopes(role, user_id, platform=platform)],
         "writable_scopes": [{"owner_type": owner_type, "owner_id": owner_id} for owner_type, owner_id in write_scopes],
         "default_write_scope": {"owner_type": default_owner_type, "owner_id": default_owner_id},
         "managed_departments": profile.get("leader_departments", []),
@@ -631,8 +721,8 @@ def update_knowledge(entry_id: str, req: KnowledgeUpdateRequest):
     entry = kr.get(entry_id)
     if entry is None:
         raise HTTPException(404, f"Entry {entry_id} not found")
-    role = resolve_role(req.user_id, "")
-    if req.user_id and not may_write(role, entry.owner_type.value, entry.owner_id, req.user_id):
+    role = resolve_role(req.user_id, "", platform=req.platform)
+    if req.user_id and not may_write(role, entry.owner_type.value, entry.owner_id, req.user_id, platform=req.platform):
         raise HTTPException(403, "Permission denied")
     entry.content = f"{req.title}\n\n{req.content}" if req.title else req.content
     entry.tags = list(req.tags)
@@ -651,16 +741,16 @@ def promote_knowledge(req: KnowledgePromoteRequest):
     entry = kr.get(req.entry_id)
     if entry is None:
         raise HTTPException(404, f"Entry {req.entry_id} not found")
-    role = resolve_role(req.user_id, "")
-    if req.user_id and not may_write(role, entry.owner_type.value, entry.owner_id, req.user_id):
+    role = resolve_role(req.user_id, "", platform=req.platform)
+    if req.user_id and not may_write(role, entry.owner_type.value, entry.owner_id, req.user_id, platform=req.platform):
         raise HTTPException(403, "Permission denied")
     if not req.target_owner_type or req.target_owner_type == "auto" or not req.target_owner_id:
-        req.target_owner_type, req.target_owner_id = _resolve_auto_knowledge_owner(req.user_id, "")
+        req.target_owner_type, req.target_owner_id = _resolve_auto_knowledge_owner(req.user_id, "", platform=req.platform)
     try:
         target_owner_type = KnowledgeOwnerType(req.target_owner_type)
     except ValueError:
         raise HTTPException(400, f"Invalid target_owner_type: {req.target_owner_type}")
-    if req.user_id and not may_write(role, target_owner_type.value, req.target_owner_id, req.user_id):
+    if req.user_id and not may_write(role, target_owner_type.value, req.target_owner_id, req.user_id, platform=req.platform):
         raise HTTPException(403, "Permission denied")
     service = KnowledgeService(kr)
     new_entry_id = req.new_entry_id or f"{req.entry_id}-promoted-{target_owner_type.value}"
@@ -690,12 +780,12 @@ def import_company_guides_api(user_id: str = ""):
 @app.post("/api/v1/knowledge/collect")
 def collect_knowledge(req: KnowledgeCollectRequest):
     if req.user_id and (not req.owner_type or req.owner_type == "auto" or not req.owner_id):
-        req.owner_type, req.owner_id = _resolve_auto_knowledge_owner(req.user_id, req.space_id)
+        req.owner_type, req.owner_id = _resolve_auto_knowledge_owner(req.user_id, req.space_id, platform=req.platform)
     if req.user_id:
         from src.knowledge.acl import may_write, resolve_role
 
-        role = resolve_role(req.user_id, req.space_id)
-        if not may_write(role, req.owner_type, req.owner_id, req.user_id):
+        role = resolve_role(req.user_id, req.space_id, platform=req.platform)
+        if not may_write(role, req.owner_type, req.owner_id, req.user_id, platform=req.platform):
             raise HTTPException(403, "Permission denied")
     kr = get_knowledge_repo()
     collector = KnowledgeCollector(kr)
@@ -876,20 +966,29 @@ def upload_file(
     file: UploadFile = File(...),
     user_id: str = Form(...),
     space_id: str = Form(...),
-    knowledge_owner_type: str = Form("project"),
+    knowledge_owner_type: str = Form("auto"),
     knowledge_owner_id: str = Form(""),
+    platform: str = Form("wecom"),
 ):
+    normalized_platform = platform if isinstance(platform, str) else "wecom"
     content = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"File exceeds the {MAX_UPLOAD_BYTES}-byte upload limit")
     store = _get_file_store()
-    rel_path = store.write(user_id, space_id, file.filename or "unnamed", content)
+    storage_space_id = space_id.strip() or "_global"
+    rel_path = store.write(user_id, storage_space_id, file.filename or "unnamed", content)
     owner_type, owner_id = _resolve_knowledge_owner(
         knowledge_owner_type=knowledge_owner_type,
         knowledge_owner_id=knowledge_owner_id,
         user_id=user_id,
         space_id=space_id,
+        platform=normalized_platform,
     )
+    from src.knowledge.acl import may_write, resolve_role
+
+    role = resolve_role(user_id, space_id, platform=normalized_platform)
+    if not may_write(role, owner_type, owner_id, user_id, platform=normalized_platform):
+        raise HTTPException(403, "Permission denied")
     # Auto-index document into knowledge base
     try:
         fpath = os.path.join(store._base, rel_path)
@@ -993,10 +1092,13 @@ def _resolve_knowledge_owner(
     knowledge_owner_id: Any,
     user_id: str,
     space_id: str,
+    platform: str = "wecom",
 ) -> tuple[str, str]:
-    raw_type = knowledge_owner_type if isinstance(knowledge_owner_type, str) else ""
+    raw_type = knowledge_owner_type if isinstance(knowledge_owner_type, str) else "auto"
     raw_id = knowledge_owner_id if isinstance(knowledge_owner_id, str) else ""
     normalized_type = (raw_type or "project").strip().lower()
+    if normalized_type == "auto":
+        return _resolve_auto_knowledge_owner(user_id, space_id, platform=platform)
     valid_types = {
         KnowledgeOwnerType.PERSONAL.value,
         KnowledgeOwnerType.PROJECT.value,
@@ -1065,6 +1167,10 @@ def knowledge_management_page():
     .chip.ok { color:var(--md-success); background:#e6f4ea; }
     .chip.bad { color:var(--md-error); background:#fce8e6; }
     .list { display:grid; gap:10px; max-height:580px; overflow:auto; }
+    .scope-tree { display:grid; gap:8px; }
+    .scope-node { border:1px solid #e1e3e1; border-radius:16px; padding:12px; background:#fff; }
+    .scope-node strong { display:block; margin-bottom:4px; }
+    .scope-node.readonly { background:#fafafa; }
     .item { border:1px solid #e1e3e1; border-radius:18px; padding:14px; background:#fff; cursor:pointer; }
     .item.active { border-color:var(--md-primary); background:#f4f8ff; }
     .meta { color:var(--md-muted); font-size:13px; margin-top:6px; }
@@ -1078,7 +1184,7 @@ def knowledge_management_page():
   <header>
     <div>
       <h1>知识库管理</h1>
-      <p>按企业微信组织权限自动适配可见范围、可写范围和管理动作。</p>
+      <p>按企业 IM 组织权限自动适配可见范围、可写范围和管理动作。</p>
     </div>
     <div id="identity" class="chip">等待识别</div>
   </header>
@@ -1086,7 +1192,7 @@ def knowledge_management_page():
     <aside class="stack">
       <div class="card">
         <h2>筛选</h2>
-        <label>用户 ID</label><input id="userId" placeholder="企业微信 user_id">
+        <label>用户 ID</label><input id="userId" placeholder="企业 IM user_id">
         <label>关键词</label><input id="query" placeholder="标题、制度名、关键词">
         <label>空间 ID</label><input id="spaceId" placeholder="项目或部门空间，可留空">
         <div class="actions">
@@ -1097,6 +1203,11 @@ def knowledge_management_page():
         <div id="perm" class="status"></div>
       </div>
       <div class="card">
+        <h2>组织目录</h2>
+        <p>按当前用户可见范围和可写范围分组显示，员工只能看到自己有权访问的知识库目录。</p>
+        <div id="scopeTree" class="scope-tree">等待权限识别</div>
+      </div>
+      <div class="card">
         <h2>新增知识</h2>
         <label>标题</label><input id="newTitle" placeholder="例如：车间通行管理规定">
         <p>系统会根据当前用户在企业微信中的角色、部门和负责人权限自动决定入库范围。</p>
@@ -1104,6 +1215,13 @@ def knowledge_management_page():
         <label>标签</label><input id="newTags" placeholder="逗号分隔">
         <label>正文</label><textarea id="newContent" placeholder="粘贴要入库的内容"></textarea>
         <button onclick="createEntry()">新增到知识库</button>
+      </div>
+      <div class="card">
+        <h2>上传文档入库</h2>
+        <p>上传后系统会立即解析并索引文档内容，默认归入当前用户有权限写入的知识库。</p>
+        <input id="knowledgeFile" type="file" accept=".txt,.md,.docx,.pdf,.xlsx,.pptx,.csv,.json">
+        <button onclick="uploadKnowledgeFile()">上传并索引</button>
+        <div id="uploadStatus" class="status"></div>
       </div>
     </aside>
     <section class="stack">
@@ -1140,7 +1258,9 @@ def knowledge_management_page():
   <script>
     const params = new URLSearchParams(location.search);
     const hasAdminToken = !!params.get('admin_token');
+    const hasUserToken = !!params.get('user_token');
     const adminQuery = () => `platform=${encodeURIComponent(params.get('platform') || 'wecom')}&user_id=${encodeURIComponent(params.get('user_id') || '')}&admin_token=${encodeURIComponent(params.get('admin_token') || '')}`;
+    const userQuery = () => `platform=${encodeURIComponent(params.get('platform') || 'wecom')}&user_id=${encodeURIComponent(params.get('user_id') || userId())}&user_token=${encodeURIComponent(params.get('user_token') || '')}`;
     function userId() { return document.getElementById('userId').value.trim() || params.get('user_id') || ''; }
     function setStatus(id, text, bad=false) { const el = document.getElementById(id); el.textContent = text; el.style.color = bad ? 'var(--md-error)' : 'var(--md-muted)'; }
     function scopeLabel(scope) {
@@ -1154,11 +1274,41 @@ def knowledge_management_page():
       return data;
     }
     function adminUrl(path) { return `${path}${path.includes('?') ? '&' : '?'}${adminQuery()}`; }
+    function userUrl(path) { return `${path}${path.includes('?') ? '&' : '?'}${userQuery()}`; }
+    function knowledgeUrl(adminPath, userPath, fallbackPath) {
+      if (hasAdminToken) return adminUrl(adminPath);
+      if (hasUserToken) return userUrl(userPath);
+      return fallbackPath;
+    }
+    function renderScopeGroups(perm, entries = []) {
+      const root = document.getElementById('scopeTree');
+      const writable = new Set((perm.writable_scopes || []).map(scope => `${scope.owner_type}:${scope.owner_id}`));
+      const counts = {};
+      for (const item of entries) {
+        const key = `${item.owner_type}:${item.owner_id}`;
+        counts[key] = (counts[key] || 0) + 1;
+      }
+      const visible = perm.visible_scopes || [];
+      if (!visible.length) {
+        root.textContent = '暂无可见知识库目录';
+        return;
+      }
+      root.innerHTML = visible.map(scope => {
+        const key = `${scope.owner_type}:${scope.owner_id}`;
+        const canWrite = writable.has(key);
+        return `<div class="scope-node ${canWrite ? '' : 'readonly'}"><strong>${scopeLabel(scope)}</strong><span class="chip ${canWrite ? 'ok' : ''}">${canWrite ? '可维护' : '只读'}</span><span class="chip">条目 ${counts[key] || 0}</span></div>`;
+      }).join('');
+    }
     async function loadPermissions() {
       try {
         const spaceId = document.getElementById('spaceId').value.trim();
-        const url = hasAdminToken ? adminUrl(`/api/v1/admin/knowledge/permissions?space_id=${encodeURIComponent(spaceId)}`) : `/api/v1/knowledge/permissions?user_id=${encodeURIComponent(userId())}&space_id=${encodeURIComponent(spaceId)}`;
+        const url = knowledgeUrl(
+          `/api/v1/admin/knowledge/permissions?space_id=${encodeURIComponent(spaceId)}`,
+          `/api/v1/user/knowledge/permissions?space_id=${encodeURIComponent(spaceId)}`,
+          `/api/v1/knowledge/permissions?user_id=${encodeURIComponent(userId())}&space_id=${encodeURIComponent(spaceId)}`
+        );
         const perm = await requestJson(url);
+        window.currentPermissions = perm;
         window.defaultWriteScope = perm.default_write_scope || {owner_type:'personal', owner_id:userId()};
         document.getElementById('identity').textContent = `${perm.user_id || userId()} / ${perm.role || '未知'}`;
         document.getElementById('perm').innerHTML =
@@ -1167,6 +1317,7 @@ def knowledge_management_page():
           `<span class="chip ${perm.can_manage_project ? 'ok' : ''}">项目管理：${perm.can_manage_project ? '是' : '否'}</span>` +
           `<div class="meta">可写范围：${(perm.writable_scopes || []).map(scopeLabel).join('；') || '仅可查看'}</div>`;
         document.getElementById('autoOwner').innerHTML = `<span class="chip ok">默认入库：${scopeLabel(window.defaultWriteScope)}</span>`;
+        renderScopeGroups(perm, window.currentEntries || []);
       } catch (err) {
         setStatus('perm', String(err.message || err), true);
       }
@@ -1176,13 +1327,18 @@ def knowledge_management_page():
       const query = document.getElementById('query').value.trim();
       const spaceId = document.getElementById('spaceId').value.trim();
       await loadPermissions();
-      const url = hasAdminToken
-        ? adminUrl(`/api/v1/admin/knowledge/entries?query=${encodeURIComponent(query)}&space_id=${encodeURIComponent(spaceId)}`)
-        : (query ? `/api/v1/knowledge/accessible?user_id=${encodeURIComponent(userId())}&query=${encodeURIComponent(query)}&space_id=${encodeURIComponent(spaceId)}` : `/api/v1/knowledge?user_id=${encodeURIComponent(userId())}`);
+      const url = knowledgeUrl(
+        `/api/v1/admin/knowledge/entries?query=${encodeURIComponent(query)}&space_id=${encodeURIComponent(spaceId)}`,
+        `/api/v1/user/knowledge/entries?query=${encodeURIComponent(query)}&space_id=${encodeURIComponent(spaceId)}`,
+        (query ? `/api/v1/knowledge/accessible?user_id=${encodeURIComponent(userId())}&query=${encodeURIComponent(query)}&space_id=${encodeURIComponent(spaceId)}` : `/api/v1/knowledge?user_id=${encodeURIComponent(userId())}`)
+      );
       const data = await requestJson(url);
       const root = document.getElementById('result');
       root.innerHTML = '';
-      for (const item of (data.entries || data.results || [])) {
+      const entries = data.entries || data.results || [];
+      window.currentEntries = entries;
+      renderScopeGroups(window.currentPermissions || {}, entries);
+      for (const item of entries) {
         const row = document.createElement('div');
         row.className = 'item';
         row.innerHTML = `<strong>${item.title || item.id}</strong><div class="meta">${item.owner_type_label || item.owner_type} / ${item.owner_id} / ${item.can_write ? '可编辑' : '只读'}</div>`;
@@ -1202,6 +1358,7 @@ def knowledge_management_page():
     }
     async function importGuides() {
       try {
+        if (!hasAdminToken) throw new Error('公司级说明书导入需要管理员控制台链接');
         const data = hasAdminToken
           ? await requestJson(adminUrl('/api/v1/admin/knowledge/import/company-guides'), {method: 'POST'})
           : await requestJson(`/api/v1/knowledge/import/company-guides?user_id=${encodeURIComponent(userId())}`, {method: 'POST'});
@@ -1221,11 +1378,28 @@ def knowledge_management_page():
           user_id: userId(),
           space_id: document.getElementById('spaceId').value.trim()
         };
-        const url = hasAdminToken ? adminUrl('/api/v1/admin/knowledge/collect') : '/api/v1/knowledge/collect';
+        const url = knowledgeUrl('/api/v1/admin/knowledge/collect', '/api/v1/user/knowledge/collect', '/api/v1/knowledge/collect');
         await requestJson(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         setStatus('guideStatus', '新增知识条目成功');
         await loadEntries();
       } catch (err) { setStatus('guideStatus', String(err.message || err), true); }
+    }
+    async function uploadKnowledgeFile() {
+      try {
+        await loadPermissions();
+        const fileInput = document.getElementById('knowledgeFile');
+        if (!fileInput.files || !fileInput.files.length) throw new Error('请先选择要上传的文档文件');
+        const form = new FormData();
+        form.append('file', fileInput.files[0]);
+        form.append('user_id', userId());
+        form.append('space_id', document.getElementById('spaceId').value.trim());
+        form.append('knowledge_owner_type', 'auto');
+        form.append('knowledge_owner_id', '');
+        const url = knowledgeUrl('/api/v1/admin/knowledge/files/upload', '/api/v1/user/knowledge/files/upload', '/api/v1/files');
+        const data = await requestJson(url, {method:'POST', body:form});
+        setStatus('uploadStatus', data.indexed ? `上传并索引成功：${data.filename}` : `文件已上传，但未提取到可索引内容：${data.filename}`, !data.indexed);
+        await loadEntries();
+      } catch (err) { setStatus('uploadStatus', String(err.message || err), true); }
     }
     async function updateEntry() {
       try {
@@ -1236,7 +1410,7 @@ def knowledge_management_page():
         tags: document.getElementById('tags').value.split(',').map(v => v.trim()).filter(Boolean),
         user_id: userId()
       };
-      const url = hasAdminToken ? adminUrl(`/api/v1/admin/knowledge/${encodeURIComponent(entryId)}`) : `/api/v1/knowledge/${encodeURIComponent(entryId)}`;
+      const url = knowledgeUrl(`/api/v1/admin/knowledge/${encodeURIComponent(entryId)}`, `/api/v1/user/knowledge/${encodeURIComponent(entryId)}`, `/api/v1/knowledge/${encodeURIComponent(entryId)}`);
       await requestJson(url, {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
@@ -1249,7 +1423,7 @@ def knowledge_management_page():
     async function deleteEntry() {
       try {
       const entryId = document.getElementById('entryId').value.trim();
-      const url = hasAdminToken ? adminUrl(`/api/v1/admin/knowledge/${encodeURIComponent(entryId)}`) : `/api/v1/knowledge/${encodeURIComponent(entryId)}?user_id=${encodeURIComponent(userId())}`;
+      const url = knowledgeUrl(`/api/v1/admin/knowledge/${encodeURIComponent(entryId)}`, `/api/v1/user/knowledge/${encodeURIComponent(entryId)}`, `/api/v1/knowledge/${encodeURIComponent(entryId)}?user_id=${encodeURIComponent(userId())}`);
       await requestJson(url, {method: 'DELETE'});
       setStatus('editStatus', '删除成功');
       await loadEntries();
@@ -1259,7 +1433,7 @@ def knowledge_management_page():
       try {
         const entryId = document.getElementById('entryId').value.trim();
         const payload = {entry_id: entryId, target_owner_type: 'auto', target_owner_id: '', user_id: userId()};
-        const url = hasAdminToken ? adminUrl('/api/v1/admin/knowledge/promote') : '/api/v1/knowledge/promote';
+        const url = knowledgeUrl('/api/v1/admin/knowledge/promote', '/api/v1/user/knowledge/promote', '/api/v1/knowledge/promote');
         await requestJson(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         setStatus('editStatus', '升级成功');
         await loadEntries();
@@ -1284,6 +1458,11 @@ def knowledge_management_page():
 </html>
         """
     )
+
+
+@app.get("/knowledge/user", response_class=HTMLResponse)
+def knowledge_user_page():
+    return knowledge_management_page()
 
 
 @app.get("/admin/console", response_class=HTMLResponse)
@@ -1786,15 +1965,41 @@ def download_document(filename: str):
     return FileResponse(filepath, filename=filename)
 
 
-def _knowledge_entry_to_dict(entry: KnowledgeEntry, *, user_id: str = "", space_id: str = "") -> dict[str, Any]:
+def _list_accessible_by_platform(kr: Any, *, user_id: str, query: str = "", space_id: str = "", limit: int = 50, platform: str = "wecom") -> list[KnowledgeEntry]:
+    from src.knowledge.acl import resolve_role, visible_scopes
+    from src.knowledge.contracts import KnowledgeOwnerType
+
+    role = resolve_role(user_id, space_id, platform=platform)
+    lowered_query = query.strip().lower()
+    results: list[KnowledgeEntry] = []
+    seen: set[str] = set()
+    for owner_type, owner_id in visible_scopes(role, user_id, platform=platform):
+        try:
+            entries = kr.list_for_owner(KnowledgeOwnerType(owner_type), owner_id)
+        except Exception:
+            entries = []
+        for entry in entries:
+            if entry.id in seen:
+                continue
+            haystack = f"{entry.metadata.get('title', '')}\n{' '.join(entry.tags)}\n{entry.content}".lower()
+            if lowered_query and lowered_query not in haystack:
+                continue
+            seen.add(entry.id)
+            results.append(entry)
+            if len(results) >= limit:
+                return results
+    return results
+
+
+def _knowledge_entry_to_dict(entry: KnowledgeEntry, *, user_id: str = "", space_id: str = "", platform: str = "wecom") -> dict[str, Any]:
     can_read = True
     can_write = False
     if user_id:
         from src.knowledge.acl import may_read, may_write, resolve_role
 
-        role = resolve_role(user_id, space_id)
-        can_read = may_read(role, entry.owner_type.value, entry.owner_id, user_id)
-        can_write = may_write(role, entry.owner_type.value, entry.owner_id, user_id)
+        role = resolve_role(user_id, space_id, platform=platform)
+        can_read = may_read(role, entry.owner_type.value, entry.owner_id, user_id, platform=platform)
+        can_write = may_write(role, entry.owner_type.value, entry.owner_id, user_id, platform=platform)
     return {
         "id": entry.id,
         "owner_type": entry.owner_type.value,

@@ -165,9 +165,13 @@ def test_knowledge_management_page_contains_business_operations() -> None:
 
     assert "--md-primary:#0b57d0" in html
     assert "新增到知识库" in html
+    assert "上传文档入库" in html
+    assert "scopeTree" in html
+    assert "uploadKnowledgeFile" in html
+    assert "renderScopeGroups" in html
     assert "升级知识条目" in html
     assert "导入公司级说明书文档" in html
-    assert "按企业微信组织权限自动适配" in html
+    assert "按企业 IM 组织权限自动适配" in html
 
 
 def test_admin_and_knowledge_page_scripts_are_valid_javascript(tmp_path) -> None:
@@ -204,3 +208,20 @@ def test_create_admin_console_link_includes_signed_token() -> None:
     assert "platform=wecom" in link
     assert "user_id=u-admin" in link
     assert "admin_token=" in link
+
+
+def test_create_knowledge_user_link_includes_signed_user_token() -> None:
+    from scripts.create_knowledge_user_link import build_knowledge_user_link
+
+    with patch.dict("os.environ", {"ANT_COLONY_ADMIN_SESSION_SECRET": "secret"}, clear=False):
+        link = build_knowledge_user_link(
+            base_url="http://example.test",
+            platform="wecom",
+            user_id="u-employee",
+            ttl_seconds=60,
+        )
+
+    assert link.startswith("http://example.test/knowledge/user?")
+    assert "platform=wecom" in link
+    assert "user_id=u-employee" in link
+    assert "user_token=" in link

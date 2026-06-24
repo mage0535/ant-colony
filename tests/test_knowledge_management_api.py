@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from io import BytesIO
 from unittest.mock import patch
 
+from starlette.datastructures import UploadFile
 from fastapi import Request, Response
 
 
@@ -102,6 +104,52 @@ class TestKnowledgeManagementApi(unittest.TestCase):
 
         self.assertEqual(saved, {"owner_type": "department", "owner_id": "dept-2"})
         self.assertEqual(result["owner_type"], "department")
+
+    def test_upload_file_uses_auto_owner_and_indexes_document(self) -> None:
+        from src.web.dashboard import upload_file
+
+        saved: dict[str, str] = {}
+
+        class FakeStore:
+            _base = "unused"
+
+            def write(self, user_id: str, space_id: str, filename: str, content: bytes) -> str:
+                saved["stored_user"] = user_id
+                saved["stored_space"] = space_id
+                saved["stored_filename"] = filename
+                saved["stored_content"] = content.decode("utf-8")
+                return "u1/demo.txt"
+
+        class FakeCollector:
+            def __init__(self, repo) -> None:
+                self.repo = repo
+
+            def collect_file(self, filepath: str, owner_type: str = "project", owner_id: str = "*", tags=None):
+                saved["owner_type"] = owner_type
+                saved["owner_id"] = owner_id
+                return type("Entry", (), {"id": "file-indexed"})()
+
+        upload = UploadFile(file=BytesIO("文档内容".encode("utf-8")), filename="demo.txt")
+        with patch("src.web.dashboard._get_file_store", return_value=FakeStore()), \
+             patch("src.web.dashboard.os.path.join", return_value="unused/u1/demo.txt"), \
+             patch("src.web.dashboard.KnowledgeCollector", FakeCollector), \
+             patch("src.web.dashboard.build_knowledge_repository", return_value=object()), \
+             patch("src.web.dashboard._resolve_auto_knowledge_owner", return_value=("department", "dept-2")), \
+             patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"value": 3})()), \
+             patch("src.knowledge.acl.may_write", return_value=True):
+            result = upload_file(
+                file=upload,
+                user_id="u1",
+                space_id="",
+                knowledge_owner_type="auto",
+                knowledge_owner_id="",
+            )
+
+        self.assertEqual(result["indexed"], "file-indexed")
+        self.assertEqual(result["knowledge_owner_type"], "department")
+        self.assertEqual(result["knowledge_owner_id"], "dept-2")
+        self.assertEqual(saved["owner_type"], "department")
+        self.assertEqual(saved["owner_id"], "dept-2")
 
     def test_knowledge_manage_page_is_public_shell_but_admin_apis_stay_protected(self) -> None:
         import asyncio

@@ -97,7 +97,7 @@ def test_upload_rejects_oversized_file_before_storage() -> None:
     get_store.assert_not_called()
 
 
-def test_upload_indexes_to_project_scope_by_default() -> None:
+def test_upload_indexes_to_auto_scope_by_default() -> None:
     upload = UploadFile(filename="demo.docx", file=io.BytesIO(b"hello"))
     fake_store = type("Store", (), {"_base": "/tmp/files", "write": lambda self, user_id, space_id, filename, content: "s1/demo.docx"})()
     fake_entry = type("Entry", (), {"id": "entry-1"})()
@@ -109,17 +109,20 @@ def test_upload_indexes_to_project_scope_by_default() -> None:
         patch("src.web.dashboard.Database.get") as get_db,
         patch("src.web.dashboard.build_knowledge_repository", return_value=object()),
         patch("src.web.dashboard.KnowledgeCollector", return_value=fake_collector),
+        patch("src.web.dashboard._resolve_auto_knowledge_owner", return_value=("department", "dept-2")),
+        patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"value": 3})()),
+        patch("src.knowledge.acl.may_write", return_value=True),
     ):
         get_db.return_value.connect.return_value = object()
         result = upload_file(file=upload, user_id="u1", space_id="proj-1")
 
     assert result["indexed"] == "entry-1"
-    assert result["knowledge_owner_type"] == "project"
-    assert result["knowledge_owner_id"] == "proj-1"
+    assert result["knowledge_owner_type"] == "department"
+    assert result["knowledge_owner_id"] == "dept-2"
     fake_collector.collect_file.assert_called_once_with(
         os.path.join("/tmp/files", "s1/demo.docx"),
-        owner_type="project",
-        owner_id="proj-1",
+        owner_type="department",
+        owner_id="dept-2",
     )
 
 
@@ -135,6 +138,8 @@ def test_upload_can_index_to_organization_scope() -> None:
         patch("src.web.dashboard.Database.get") as get_db,
         patch("src.web.dashboard.build_knowledge_repository", return_value=object()),
         patch("src.web.dashboard.KnowledgeCollector", return_value=fake_collector),
+        patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"value": 4})()),
+        patch("src.knowledge.acl.may_write", return_value=True),
     ):
         get_db.return_value.connect.return_value = object()
         result = upload_file(

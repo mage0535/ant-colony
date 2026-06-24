@@ -578,3 +578,30 @@
   - 本地定向测试：`25 passed`
   - 本地编译检查：`python -m compileall -q src tests scripts`
   - 本地 diff 检查：`git diff --check`
+
+## 2026-06-24 知识库管理页组织目录、文档上传和员工入口增强
+
+- 用户反馈：
+  - 知识库列表没有按组织架构分目录/分权限显示
+  - 知识库管理页不能直接上传文档文件并立即索引
+  - 员工需要一个单独链接直接管理自己权限范围内的知识库
+  - 说明书需要按真实页面操作验证
+  - 飞书、钉钉虽然暂无真实环境，也要按企微同构适配并做模拟测试
+- 修复：
+  - `/knowledge/manage` 页面新增“组织目录”，按当前用户 `visible_scopes` 和 `writable_scopes` 显示公司/部门/项目/个人目录、只读/可维护状态和条目数量
+  - 页面新增“上传文档入库”，上传后调用本地文档解析和知识库索引，默认使用后端自动归属范围
+  - 新增员工入口 `/knowledge/user`，用于员工通过企业 IM 身份令牌直接访问自己的知识库管理页
+  - 新增员工签名令牌 `create_im_user_token()` 和脚本 `scripts/create_knowledge_user_link.py`
+  - 新增 `/api/v1/user/knowledge/*` 员工专用 API，使用 `user_token` 校验身份，不依赖管理员令牌
+  - 上传文件接口默认 `knowledge_owner_type=auto`，并在写入前调用 ACL 校验；公司级文件写入仅管理员可执行
+  - ACL 部门成员/负责人判断增加 `platform` 参数，飞书/钉钉模拟组织图可走同一权限链路
+  - 说明书更新为：管理员用 `/knowledge/manage`，员工用 `/knowledge/user`；不再要求小白用户手填 `owner_type/owner_id`
+- 验证：
+  - 本地全量测试：`468 passed`
+  - 本地编译检查：`python -m compileall -q src tests scripts`
+  - 本地 diff 检查：`git diff --check`
+  - 服务器定向测试：`32 passed`
+  - 服务器 `/knowledge/user?...`：HTTP 200，页面包含“上传文档入库”和组织目录 `scopeTree`
+  - 服务器管理员上传文档：返回 `indexed=file-ced8137036a4`，搜索关键词可命中，归属 `organization/*`
+  - 服务器飞书/钉钉模拟员工入口：HTTP 200，默认写入范围分别为 `personal:mock-feishu-user`、`personal:mock-dingtalk-user`
+  - 公司说明书已重新导入公司级知识库，确保知识库内说明与页面功能一致

@@ -35,12 +35,12 @@ def _graph():
     return OrgGraphService()
 
 
-def _is_dept_member(user_id: str, dept_id: str) -> bool:
-    return dept_id in _graph().get_user_departments("wecom", user_id)
+def _is_dept_member(user_id: str, dept_id: str, platform: str = "wecom") -> bool:
+    return dept_id in _graph().get_user_departments(platform, user_id)
 
 
-def _is_dept_leader(user_id: str, dept_id: str) -> bool:
-    return _graph().is_department_leader("wecom", user_id, dept_id)
+def _is_dept_leader(user_id: str, dept_id: str, platform: str = "wecom") -> bool:
+    return _graph().is_department_leader(platform, user_id, dept_id)
 
 
 def _is_project_member(user_id: str, project_id: str) -> bool:
@@ -83,7 +83,7 @@ def resolve_role(user_id: str, space_id: str = "", platform: str = "wecom") -> R
     return Role.self
 
 
-def may_read(role: Role, owner_type: str, owner_id: str, user_id: str) -> bool:
+def may_read(role: Role, owner_type: str, owner_id: str, user_id: str, platform: str = "wecom") -> bool:
     """Check whether *role* can read a knowledge entry.
 
     For department scope, user must be a member of that specific department.
@@ -94,7 +94,7 @@ def may_read(role: Role, owner_type: str, owner_id: str, user_id: str) -> bool:
         return True
     if owner_type == "department":
         if role >= Role.member:
-            return _is_dept_member(user_id, owner_id) or _is_dept_leader(user_id, owner_id)
+            return _is_dept_member(user_id, owner_id, platform) or _is_dept_leader(user_id, owner_id, platform)
         return False
     if owner_type == "project":
         return role >= Role.member and _is_project_member(user_id, owner_id)
@@ -103,7 +103,7 @@ def may_read(role: Role, owner_type: str, owner_id: str, user_id: str) -> bool:
     return False
 
 
-def may_write(role: Role, owner_type: str, owner_id: str, user_id: str) -> bool:
+def may_write(role: Role, owner_type: str, owner_id: str, user_id: str, platform: str = "wecom") -> bool:
     """Check whether *role* can write/delete a knowledge entry.
 
     For department scope, user must be the leader of that specific department.
@@ -114,7 +114,7 @@ def may_write(role: Role, owner_type: str, owner_id: str, user_id: str) -> bool:
         return role >= Role.admin
     if owner_type == "department":
         if role >= Role.leader:
-            return _is_dept_leader(user_id, owner_id)
+            return _is_dept_leader(user_id, owner_id, platform)
         return False
     if owner_type == "project":
         return role >= Role.member and _is_project_member(user_id, owner_id)
