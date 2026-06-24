@@ -91,6 +91,78 @@ def test_admin_activate_bot_sets_activated_by_from_im_user() -> None:
     assert activate.call_args.args[1].activated_by == "u-admin"
 
 
+def test_admin_employee_bot_activation_uses_im_admin_context() -> None:
+    from src.web.dashboard import EmployeeBotActivationRequest, admin_activate_employee_bot
+
+    request = _request("/api/v1/admin/employee-bots/activate")
+    fake_assignment = {"platform": "wecom", "user_id": "u2", "status": "active", "notify_status": "sent"}
+
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.employee_bot_service.activate_employee_bot", return_value=fake_assignment) as activate:
+        result = admin_activate_employee_bot(
+            EmployeeBotActivationRequest(platform="wecom", user_id="u2"),
+            request,
+        )
+
+    assert result["assignment"]["status"] == "active"
+    assert activate.call_args.kwargs["activated_by"] == "u-admin"
+    assert activate.call_args.kwargs["user_id"] == "u2"
+
+
+def test_admin_employee_bot_list_requires_admin_context() -> None:
+    from src.web.dashboard import admin_list_employee_bots
+
+    request = _request("/api/v1/admin/employee-bots")
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.employee_bot_service.list_employee_bot_assignments", return_value=[{"user_id": "u2"}]):
+        result = admin_list_employee_bots(request, platform="wecom")
+
+    assert result["assignments"][0]["user_id"] == "u2"
+
+
+def test_collect_knowledge_rejects_write_without_permission() -> None:
+    from src.web.dashboard import KnowledgeCollectRequest, collect_knowledge
+
+    with patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"value": 1})()), \
+         patch("src.knowledge.acl.may_write", return_value=False):
+        with pytest.raises(HTTPException) as exc_info:
+            collect_knowledge(
+                KnowledgeCollectRequest(
+                    text="hello",
+                    title="标题",
+                    owner_type="organization",
+                    owner_id="*",
+                    user_id="u1",
+                )
+            )
+
+    assert exc_info.value.status_code == 403
+
+
+def test_admin_console_page_contains_material_business_sections() -> None:
+    from src.web.dashboard import admin_console_page
+
+    html = admin_console_page().body.decode("utf-8")
+
+    assert "--md-primary:#0b57d0" in html
+    assert "平台 Bot 开通" in html
+    assert "员工 AI 助手" in html
+    assert "开通并通知员工" in html
+    assert "保存并接管企业微信" in html
+
+
+def test_knowledge_management_page_contains_business_operations() -> None:
+    from src.web.dashboard import knowledge_management_page
+
+    html = knowledge_management_page().body.decode("utf-8")
+
+    assert "--md-primary:#0b57d0" in html
+    assert "新增到知识库" in html
+    assert "升级知识条目" in html
+    assert "导入公司说明书" in html
+    assert "按企业微信组织权限自动适配" in html
+
+
 def test_create_admin_console_link_includes_signed_token() -> None:
     from scripts.create_admin_console_link import build_admin_console_link
 

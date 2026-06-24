@@ -134,6 +134,14 @@ class PlatformBotActivationRequest(BaseModel):
     visibility_scope: str = "all"
     auto_permissions: list[str] = []
 
+class EmployeeBotActivationRequest(BaseModel):
+    platform: str = "wecom"
+    user_id: str
+    display_name: str = ""
+    scope: str = "personal"
+    permissions: list[str] = []
+    notify: bool = True
+
 class KnowledgeCreateRequest(BaseModel):
     id: str
     owner_type: str
@@ -154,6 +162,8 @@ class KnowledgeCollectRequest(BaseModel):
     owner_type: str = "project"
     owner_id: str = "*"
     tags: list[str] = []
+    user_id: str = ""
+    space_id: str = ""
 
 
 class KnowledgeUpdateRequest(BaseModel):
@@ -370,10 +380,89 @@ def admin_activate_platform_bot(platform: str, req: PlatformBotActivationRequest
     return activate_platform_bot_api(platform, req)
 
 
+@app.get("/api/v1/admin/employee-bots")
+def admin_list_employee_bots(request: Request, platform: str = "", limit: int = 200):
+    require_admin_context_from_request(request)
+    from src.platform.employee_bot_service import list_employee_bot_assignments
+
+    return {"assignments": list_employee_bot_assignments(platform=platform, limit=limit)}
+
+
+@app.post("/api/v1/admin/employee-bots/activate")
+def admin_activate_employee_bot(req: EmployeeBotActivationRequest, request: Request):
+    context = require_admin_context_from_request(request)
+    from src.platform.employee_bot_service import activate_employee_bot
+
+    try:
+        assignment = activate_employee_bot(
+            platform=req.platform,
+            user_id=req.user_id,
+            display_name=req.display_name,
+            scope=req.scope,
+            permissions=req.permissions,
+            activated_by=context["user_id"],
+            notify=req.notify,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"assignment": assignment}
+
+
+@app.post("/api/v1/admin/employee-bots/deactivate")
+def admin_deactivate_employee_bot(req: EmployeeBotActivationRequest, request: Request):
+    context = require_admin_context_from_request(request)
+    from src.platform.employee_bot_service import deactivate_employee_bot
+
+    try:
+        assignment = deactivate_employee_bot(platform=req.platform, user_id=req.user_id, updated_by=context["user_id"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"assignment": assignment}
+
+
 @app.post("/api/v1/admin/knowledge/import/company-guides")
 def admin_import_company_guides(request: Request):
     context = require_admin_context_from_request(request)
     return import_company_guides_api(user_id=context["user_id"])
+
+
+@app.get("/api/v1/admin/knowledge/entries")
+def admin_knowledge_entries(request: Request, query: str = "", space_id: str = "", limit: int = 100):
+    context = require_admin_context_from_request(request)
+    return list_accessible_knowledge(user_id=context["user_id"], query=query, space_id=space_id, limit=limit)
+
+
+@app.get("/api/v1/admin/knowledge/permissions")
+def admin_knowledge_permissions(request: Request, space_id: str = ""):
+    context = require_admin_context_from_request(request)
+    return knowledge_permissions(user_id=context["user_id"], space_id=space_id)
+
+
+@app.post("/api/v1/admin/knowledge/collect")
+def admin_collect_knowledge(req: KnowledgeCollectRequest, request: Request):
+    context = require_admin_context_from_request(request)
+    req.user_id = context["user_id"]
+    return collect_knowledge(req)
+
+
+@app.put("/api/v1/admin/knowledge/{entry_id}")
+def admin_update_knowledge(entry_id: str, req: KnowledgeUpdateRequest, request: Request):
+    context = require_admin_context_from_request(request)
+    req.user_id = context["user_id"]
+    return update_knowledge(entry_id, req)
+
+
+@app.delete("/api/v1/admin/knowledge/{entry_id}")
+def admin_delete_knowledge(entry_id: str, request: Request):
+    context = require_admin_context_from_request(request)
+    return delete_knowledge(entry_id, user_id=context["user_id"])
+
+
+@app.post("/api/v1/admin/knowledge/promote")
+def admin_promote_knowledge(req: KnowledgePromoteRequest, request: Request):
+    context = require_admin_context_from_request(request)
+    req.user_id = context["user_id"]
+    return promote_knowledge(req)
 
 
 @app.get("/api/v1/admin/runtime/status")
@@ -578,6 +667,12 @@ def import_company_guides_api(user_id: str = ""):
 
 @app.post("/api/v1/knowledge/collect")
 def collect_knowledge(req: KnowledgeCollectRequest):
+    if req.user_id:
+        from src.knowledge.acl import may_write, resolve_role
+
+        role = resolve_role(req.user_id, req.space_id)
+        if not may_write(role, req.owner_type, req.owner_id, req.user_id):
+            raise HTTPException(403, "Permission denied")
     kr = get_knowledge_repo()
     collector = KnowledgeCollector(kr)
     if req.url:
@@ -906,88 +1001,248 @@ def knowledge_management_page():
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Knowledge Manager</title>
+  <title>知识库管理</title>
+  <style>
+    :root {
+      --md-primary:#0b57d0; --md-on-primary:#fff; --md-primary-container:#d3e3fd;
+      --md-secondary:#00639b; --md-surface:#f8fafd; --md-surface-container:#eef3f8;
+      --md-surface-high:#e7edf5; --md-outline:#c4c7c5; --md-text:#1f1f1f;
+      --md-muted:#5f6368; --md-error:#b3261e; --md-success:#0b8043;
+      --radius:24px; --radius-small:14px;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--md-surface); color:var(--md-text); font-family:"Google Sans","Roboto","Noto Sans SC",Arial,sans-serif; }
+    header { padding:28px 32px 16px; display:flex; gap:20px; justify-content:space-between; align-items:flex-end; }
+    h1 { margin:0; font-size:34px; line-height:1.15; font-weight:600; }
+    h2 { margin:0 0 14px; font-size:22px; font-weight:600; }
+    h3 { margin:0 0 10px; font-size:16px; font-weight:600; }
+    p { color:var(--md-muted); margin:0 0 14px; }
+    main { padding:0 32px 32px; display:grid; grid-template-columns:360px 1fr; gap:20px; }
+    .card { background:#fff; border:1px solid #e1e3e1; border-radius:var(--radius); padding:20px; box-shadow:0 1px 2px rgba(60,64,67,.08); }
+    .stack { display:grid; gap:16px; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+    label { display:block; color:var(--md-muted); font-size:13px; margin:10px 0 6px; }
+    input, textarea, select { width:100%; border:1px solid var(--md-outline); border-radius:12px; padding:12px 14px; background:#fff; font:inherit; }
+    textarea { min-height:180px; resize:vertical; }
+    button { border:0; border-radius:999px; padding:11px 18px; background:var(--md-primary); color:var(--md-on-primary); font:inherit; cursor:pointer; }
+    button.secondary { background:var(--md-primary-container); color:#0842a0; }
+    button.tonal { background:var(--md-surface-high); color:var(--md-text); }
+    button.danger { background:var(--md-error); color:white; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+    .chip { display:inline-flex; align-items:center; border-radius:999px; padding:6px 10px; background:var(--md-surface-container); color:var(--md-muted); margin:0 6px 6px 0; font-size:13px; }
+    .chip.ok { color:var(--md-success); background:#e6f4ea; }
+    .chip.bad { color:var(--md-error); background:#fce8e6; }
+    .list { display:grid; gap:10px; max-height:580px; overflow:auto; }
+    .item { border:1px solid #e1e3e1; border-radius:18px; padding:14px; background:#fff; cursor:pointer; }
+    .item.active { border-color:var(--md-primary); background:#f4f8ff; }
+    .meta { color:var(--md-muted); font-size:13px; margin-top:6px; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th, td { padding:10px; border-bottom:1px solid #e1e3e1; text-align:left; vertical-align:top; }
+    .status { min-height:22px; color:var(--md-muted); }
+    @media (max-width: 960px) { header, main, .grid { display:block; } main { padding:0 16px 24px; } .card { margin-bottom:16px; } }
+  </style>
 </head>
-<body class="bg-light">
-  <div class="container py-4">
-    <h1 class="h3 mb-3">知识库管理</h1>
-    <div id="perm" class="alert alert-secondary">请先输入用户ID，再查看权限与知识条目。</div>
-    <div class="row g-3 mb-3">
-      <div class="col-md-3"><input id="userId" class="form-control" placeholder="用户ID"></div>
-      <div class="col-md-5"><input id="query" class="form-control" placeholder="关键词"></div>
-      <div class="col-md-2"><button class="btn btn-primary w-100" onclick="loadEntries()">搜索/查看</button></div>
-      <div class="col-md-2"><button class="btn btn-outline-secondary w-100" onclick="importGuides()">导入公司说明书</button></div>
+<body>
+  <header>
+    <div>
+      <h1>知识库管理</h1>
+      <p>按企业微信组织权限自动适配可见范围、可写范围和管理动作。</p>
     </div>
-    <div class="mb-3">
-      <textarea id="editor" class="form-control" rows="8" placeholder="点击下方条目后在这里编辑内容"></textarea>
-    </div>
-    <div class="row g-3 mb-4">
-      <div class="col-md-3"><input id="entryId" class="form-control" placeholder="条目ID"></div>
-      <div class="col-md-3"><input id="title" class="form-control" placeholder="标题"></div>
-      <div class="col-md-3"><input id="tags" class="form-control" placeholder="标签，逗号分隔"></div>
-      <div class="col-md-3 d-grid gap-2">
-        <button class="btn btn-success" onclick="updateEntry()">保存更新</button>
-        <button class="btn btn-danger" onclick="deleteEntry()">删除条目</button>
+    <div id="identity" class="chip">等待识别</div>
+  </header>
+  <main>
+    <aside class="stack">
+      <div class="card">
+        <h2>筛选</h2>
+        <label>用户 ID</label><input id="userId" placeholder="企业微信 user_id">
+        <label>关键词</label><input id="query" placeholder="标题、制度名、关键词">
+        <label>空间 ID</label><input id="spaceId" placeholder="项目或部门空间，可留空">
+        <div class="actions">
+          <button onclick="loadEntries()">查询知识</button>
+          <button class="secondary" onclick="loadPermissions()">刷新权限</button>
+        </div>
+        <div id="perm" class="status"></div>
       </div>
-    </div>
-    <div id="result" class="list-group"></div>
-  </div>
+      <div class="card">
+        <h2>新增知识</h2>
+        <label>标题</label><input id="newTitle" placeholder="例如：车间通行管理规定">
+        <label>归属范围</label>
+        <select id="newOwnerType">
+          <option value="personal">个人</option>
+          <option value="project">项目</option>
+          <option value="department">部门</option>
+          <option value="organization">公司</option>
+        </select>
+        <label>归属 ID</label><input id="newOwnerId" placeholder="个人填用户ID，部门/项目填对应ID，公司填 *">
+        <label>标签</label><input id="newTags" placeholder="逗号分隔">
+        <label>正文</label><textarea id="newContent" placeholder="粘贴要入库的内容"></textarea>
+        <button onclick="createEntry()">新增到知识库</button>
+      </div>
+    </aside>
+    <section class="stack">
+      <div class="card">
+        <div class="actions">
+          <button class="secondary" onclick="importGuides()">导入公司说明书</button>
+          <button class="tonal" onclick="openSelected()">打开选中条目</button>
+        </div>
+        <div id="guideStatus" class="status"></div>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <h2>知识条目</h2>
+          <div id="result" class="list"></div>
+        </div>
+        <div class="card">
+          <h2>编辑选中条目</h2>
+          <label>条目 ID</label><input id="entryId" readonly>
+          <label>标题</label><input id="title">
+          <label>标签</label><input id="tags">
+          <label>内容</label><textarea id="editor"></textarea>
+          <div class="actions">
+            <button id="saveBtn" onclick="updateEntry()" disabled>保存</button>
+            <button id="deleteBtn" class="danger" onclick="deleteEntry()" disabled>删除</button>
+          </div>
+          <h3>升级/复制到其他范围</h3>
+          <label>目标范围</label>
+          <select id="promoteType">
+            <option value="personal">个人</option>
+            <option value="project">项目</option>
+            <option value="department">部门</option>
+            <option value="organization">公司</option>
+          </select>
+          <label>目标 ID</label><input id="promoteOwnerId" placeholder="公司填 *">
+          <button class="secondary" onclick="promoteEntry()">升级知识条目</button>
+          <div id="editStatus" class="status"></div>
+        </div>
+      </div>
+    </section>
+  </main>
   <script>
+    const params = new URLSearchParams(location.search);
+    const hasAdminToken = !!params.get('admin_token');
+    const adminQuery = () => `platform=${encodeURIComponent(params.get('platform') || 'wecom')}&user_id=${encodeURIComponent(params.get('user_id') || '')}&admin_token=${encodeURIComponent(params.get('admin_token') || '')}`;
+    function userId() { return document.getElementById('userId').value.trim() || params.get('user_id') || ''; }
+    function setStatus(id, text, bad=false) { const el = document.getElementById(id); el.textContent = text; el.style.color = bad ? 'var(--md-error)' : 'var(--md-muted)'; }
+    async function requestJson(url, options = {}) {
+      const resp = await fetch(url, options);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || data.error || JSON.stringify(data));
+      return data;
+    }
+    function adminUrl(path) { return `${path}${path.includes('?') ? '&' : '?'}${adminQuery()}`; }
+    async function loadPermissions() {
+      try {
+        const spaceId = document.getElementById('spaceId').value.trim();
+        const url = hasAdminToken ? adminUrl(`/api/v1/admin/knowledge/permissions?space_id=${encodeURIComponent(spaceId)}`) : `/api/v1/knowledge/permissions?user_id=${encodeURIComponent(userId())}&space_id=${encodeURIComponent(spaceId)}`;
+        const perm = await requestJson(url);
+        document.getElementById('identity').textContent = `${perm.user_id || userId()} / ${perm.role || '未知'}`;
+        document.getElementById('perm').innerHTML =
+          `<span class="chip ${perm.can_manage_organization ? 'ok' : ''}">公司管理：${perm.can_manage_organization ? '是' : '否'}</span>` +
+          `<span class="chip ${perm.can_manage_department ? 'ok' : ''}">部门管理：${perm.can_manage_department ? '是' : '否'}</span>` +
+          `<span class="chip ${perm.can_manage_project ? 'ok' : ''}">项目管理：${perm.can_manage_project ? '是' : '否'}</span>`;
+      } catch (err) {
+        setStatus('perm', String(err.message || err), true);
+      }
+    }
     async function loadEntries() {
-      const userId = document.getElementById('userId').value.trim();
+      if (!document.getElementById('userId').value.trim() && params.get('user_id')) document.getElementById('userId').value = params.get('user_id');
       const query = document.getElementById('query').value.trim();
-      const perm = await fetch(`/api/v1/knowledge/permissions?user_id=${encodeURIComponent(userId)}`, {headers: {'Accept': 'application/json'}}).then(r => r.json());
-      document.getElementById('perm').textContent =
-        `当前角色: ${perm.role} | 可见范围: ${perm.visible_scopes.map(v => `${v.owner_type}/${v.owner_id}`).join(', ') || '无'} | ` +
-        `公司管理: ${perm.can_manage_organization ? '是' : '否'} | 部门管理: ${perm.can_manage_department ? '是' : '否'} | 项目管理: ${perm.can_manage_project ? '是' : '否'}`;
-      document.querySelector('button[onclick="importGuides()"]').disabled = !perm.can_manage_organization;
-      const url = query
-        ? `/api/v1/knowledge/accessible?user_id=${encodeURIComponent(userId)}&query=${encodeURIComponent(query)}`
-        : `/api/v1/knowledge?user_id=${encodeURIComponent(userId)}`;
-      const data = await fetch(url, {headers: {'Accept': 'application/json'}}).then(r => r.json());
+      const spaceId = document.getElementById('spaceId').value.trim();
+      await loadPermissions();
+      const url = hasAdminToken
+        ? adminUrl(`/api/v1/admin/knowledge/entries?query=${encodeURIComponent(query)}&space_id=${encodeURIComponent(spaceId)}`)
+        : (query ? `/api/v1/knowledge/accessible?user_id=${encodeURIComponent(userId())}&query=${encodeURIComponent(query)}&space_id=${encodeURIComponent(spaceId)}` : `/api/v1/knowledge?user_id=${encodeURIComponent(userId())}`);
+      const data = await requestJson(url);
       const root = document.getElementById('result');
       root.innerHTML = '';
       for (const item of (data.entries || data.results || [])) {
-        const btn = document.createElement('button');
-        btn.className = 'list-group-item list-group-item-action';
-        btn.textContent = `[${item.owner_type}] ${item.title || item.id}`;
-        btn.onclick = () => {
+        const row = document.createElement('div');
+        row.className = 'item';
+        row.innerHTML = `<strong>${item.title || item.id}</strong><div class="meta">${item.owner_type_label || item.owner_type} / ${item.owner_id} / ${item.can_write ? '可编辑' : '只读'}</div>`;
+        row.onclick = () => {
+          document.querySelectorAll('.item').forEach(v => v.classList.remove('active'));
+          row.classList.add('active');
           document.getElementById('entryId').value = item.id;
           document.getElementById('title').value = item.title || '';
           document.getElementById('tags').value = (item.tags || []).join(', ');
           document.getElementById('editor').value = item.content || '';
-          document.querySelector('button[onclick="updateEntry()"]').disabled = !item.can_write;
-          document.querySelector('button[onclick="deleteEntry()"]').disabled = !item.can_write;
+          document.getElementById('saveBtn').disabled = !item.can_write;
+          document.getElementById('deleteBtn').disabled = !item.can_write;
+          window.selectedOpenUrl = item.open_url;
         };
-        root.appendChild(btn);
+        root.appendChild(row);
       }
     }
     async function importGuides() {
-      const userId = document.getElementById('userId').value.trim();
-      await fetch(`/api/v1/knowledge/import/company-guides?user_id=${encodeURIComponent(userId)}`, {method: 'POST'});
-      await loadEntries();
+      try {
+        const data = hasAdminToken
+          ? await requestJson(adminUrl('/api/v1/admin/knowledge/import/company-guides'), {method: 'POST'})
+          : await requestJson(`/api/v1/knowledge/import/company-guides?user_id=${encodeURIComponent(userId())}`, {method: 'POST'});
+        setStatus('guideStatus', `已导入 ${data.imported || 0} 条公司说明书`);
+        await loadEntries();
+      } catch (err) { setStatus('guideStatus', String(err.message || err), true); }
+    }
+    async function createEntry() {
+      try {
+        const ownerType = document.getElementById('newOwnerType').value;
+        const payload = {
+          text: document.getElementById('newContent').value,
+          title: document.getElementById('newTitle').value,
+          owner_type: ownerType,
+          owner_id: document.getElementById('newOwnerId').value || (ownerType === 'organization' ? '*' : userId()),
+          tags: document.getElementById('newTags').value.split(',').map(v => v.trim()).filter(Boolean),
+          user_id: userId(),
+          space_id: document.getElementById('spaceId').value.trim()
+        };
+        const url = hasAdminToken ? adminUrl('/api/v1/admin/knowledge/collect') : '/api/v1/knowledge/collect';
+        await requestJson(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        setStatus('guideStatus', '新增知识条目成功');
+        await loadEntries();
+      } catch (err) { setStatus('guideStatus', String(err.message || err), true); }
     }
     async function updateEntry() {
+      try {
       const entryId = document.getElementById('entryId').value.trim();
       const payload = {
         title: document.getElementById('title').value.trim(),
         content: document.getElementById('editor').value,
         tags: document.getElementById('tags').value.split(',').map(v => v.trim()).filter(Boolean),
-        user_id: document.getElementById('userId').value.trim()
+        user_id: userId()
       };
-      await fetch(`/api/v1/knowledge/${encodeURIComponent(entryId)}`, {
+      const url = hasAdminToken ? adminUrl(`/api/v1/admin/knowledge/${encodeURIComponent(entryId)}`) : `/api/v1/knowledge/${encodeURIComponent(entryId)}`;
+      await requestJson(url, {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload)
       });
+      setStatus('editStatus', '保存成功');
       await loadEntries();
+      } catch (err) { setStatus('editStatus', String(err.message || err), true); }
     }
     async function deleteEntry() {
+      try {
       const entryId = document.getElementById('entryId').value.trim();
-      const userId = document.getElementById('userId').value.trim();
-      await fetch(`/api/v1/knowledge/${encodeURIComponent(entryId)}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
+      const url = hasAdminToken ? adminUrl(`/api/v1/admin/knowledge/${encodeURIComponent(entryId)}`) : `/api/v1/knowledge/${encodeURIComponent(entryId)}?user_id=${encodeURIComponent(userId())}`;
+      await requestJson(url, {method: 'DELETE'});
+      setStatus('editStatus', '删除成功');
       await loadEntries();
+      } catch (err) { setStatus('editStatus', String(err.message || err), true); }
     }
+    async function promoteEntry() {
+      try {
+        const entryId = document.getElementById('entryId').value.trim();
+        const targetType = document.getElementById('promoteType').value;
+        const payload = {entry_id: entryId, target_owner_type: targetType, target_owner_id: document.getElementById('promoteOwnerId').value || (targetType === 'organization' ? '*' : userId()), user_id: userId()};
+        const url = hasAdminToken ? adminUrl('/api/v1/admin/knowledge/promote') : '/api/v1/knowledge/promote';
+        await requestJson(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        setStatus('editStatus', '升级成功');
+        await loadEntries();
+      } catch (err) { setStatus('editStatus', String(err.message || err), true); }
+    }
+    function openSelected() { if (window.selectedOpenUrl) window.open(window.selectedOpenUrl, '_blank'); }
+    if (params.get('user_id')) document.getElementById('userId').value = params.get('user_id');
+    loadEntries();
   </script>
 </body>
 </html>
@@ -1006,92 +1261,131 @@ def admin_console_page():
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>管理员控制台</title>
   <style>
-    :root { --bg:#FFFFFF; --line:#D8DDE5; --text:#111827; --muted:#5B6472; --accent:#E4002B; --ok:#0F766E; --warn:#B45309; --bad:#B91C1C; --soft:#F7F7F8; }
+    :root {
+      --md-primary:#0b57d0; --md-on-primary:#fff; --md-primary-container:#d3e3fd;
+      --md-secondary:#00639b; --md-surface:#f8fafd; --md-surface-container:#eef3f8;
+      --md-surface-high:#e7edf5; --md-outline:#c4c7c5; --md-text:#1f1f1f;
+      --md-muted:#5f6368; --md-error:#b3261e; --md-success:#0b8043; --md-warn:#b06000;
+      --radius:24px; --radius-small:14px;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text); font-family: "Helvetica Neue", "Arial", sans-serif; line-height: 1.45; }
-    header { border-bottom: 1px solid var(--line); padding: 28px 32px 18px; display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: end; }
-    h1 { margin: 0; font-size: clamp(30px, 4vw, 56px); font-weight: 700; letter-spacing: 0; }
-    h2 { margin: 0 0 12px; font-size: 20px; }
-    h3 { margin: 0 0 10px; font-size: 16px; }
-    p { margin: 0 0 12px; color: var(--muted); }
-    main { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 104px); }
-    nav { border-right: 1px solid var(--line); padding: 24px; background: var(--soft); }
-    nav button { width: 100%; text-align: left; border: 1px solid var(--line); background: #fff; padding: 12px; margin-bottom: 8px; cursor: pointer; }
-    nav button.active { border-color: var(--accent); color: var(--accent); }
-    section { display: none; padding: 24px 32px 40px; }
+    body { margin:0; background:var(--md-surface); color:var(--md-text); font-family:"Google Sans","Roboto","Noto Sans SC",Arial,sans-serif; line-height:1.45; }
+    header { padding:28px 32px 16px; display:flex; justify-content:space-between; gap:20px; align-items:flex-end; }
+    h1 { margin:0; font-size:36px; line-height:1.1; font-weight:600; }
+    h2 { margin:0 0 14px; font-size:22px; font-weight:600; }
+    h3 { margin:0 0 10px; font-size:16px; font-weight:600; }
+    p { margin:0 0 14px; color:var(--md-muted); }
+    main { display:grid; grid-template-columns:260px 1fr; gap:20px; padding:0 32px 32px; }
+    nav { background:var(--md-surface-container); border-radius:var(--radius); padding:12px; height:max-content; position:sticky; top:16px; }
+    nav button { width:100%; text-align:left; border:0; border-radius:999px; background:transparent; color:var(--md-text); padding:12px 16px; margin:2px 0; cursor:pointer; font:inherit; }
+    nav button.active { background:var(--md-primary-container); color:#0842a0; }
+    section { display:none; }
     section.active { display: block; }
-    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .panel { border: 1px solid var(--line); padding: 16px; background: #fff; }
-    .span { grid-column: 1 / -1; }
-    label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 6px; }
-    input, textarea, select { width: 100%; border: 1px solid var(--line); padding: 10px; font: inherit; background: #fff; }
-    textarea { min-height: 150px; font-family: "Courier New", monospace; }
-    button { border: 1px solid var(--text); background: var(--text); color: #fff; padding: 10px 14px; cursor: pointer; font: inherit; }
-    button.secondary { background: #fff; color: var(--text); border-color: var(--line); }
-    button.danger { background: var(--bad); border-color: var(--bad); }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { border-bottom: 1px solid var(--line); padding: 10px; text-align: left; vertical-align: top; }
-    code, pre { font-family: "Courier New", monospace; }
-    pre { background: var(--soft); border: 1px solid var(--line); padding: 12px; white-space: pre-wrap; overflow: auto; }
-    .status { display: inline-block; padding: 2px 7px; border: 1px solid var(--line); color: var(--muted); }
-    .ok { color: var(--ok); }
-    .warn { color: var(--warn); }
-    .bad { color: var(--bad); }
-    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-    @media (max-width: 900px) { header, main, .grid, .two { display: block; } nav { border-right: 0; border-bottom: 1px solid var(--line); } section { padding: 20px; } .panel { margin-bottom: 12px; } }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+    .two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .panel { background:#fff; border:1px solid #e1e3e1; border-radius:var(--radius); padding:20px; box-shadow:0 1px 2px rgba(60,64,67,.08); }
+    .span { grid-column:1 / -1; }
+    label { display:block; color:var(--md-muted); font-size:13px; margin:10px 0 6px; }
+    input, textarea, select { width:100%; border:1px solid var(--md-outline); border-radius:12px; padding:12px 14px; background:#fff; font:inherit; }
+    textarea { min-height:92px; resize:vertical; }
+    .primary, button.primary { border:0; border-radius:999px; padding:11px 18px; background:var(--md-primary); color:#fff; font:inherit; cursor:pointer; }
+    button.secondary { border:0; border-radius:999px; padding:11px 18px; background:var(--md-primary-container); color:#0842a0; font:inherit; cursor:pointer; }
+    button.tonal { border:0; border-radius:999px; padding:11px 18px; background:var(--md-surface-high); color:var(--md-text); font:inherit; cursor:pointer; }
+    button.danger { border:0; border-radius:999px; padding:11px 18px; background:var(--md-error); color:#fff; font:inherit; cursor:pointer; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th,td { border-bottom:1px solid #e1e3e1; padding:10px; text-align:left; vertical-align:top; }
+    .chip { display:inline-flex; border-radius:999px; padding:6px 10px; background:var(--md-surface-container); color:var(--md-muted); margin:0 6px 6px 0; font-size:13px; }
+    .chip.ok { color:var(--md-success); background:#e6f4ea; }
+    .chip.warn { color:var(--md-warn); background:#fef7e0; }
+    .chip.bad { color:var(--md-error); background:#fce8e6; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+    .status { min-height:22px; color:var(--md-muted); }
+    pre { background:var(--md-surface-container); border-radius:var(--radius-small); padding:12px; white-space:pre-wrap; overflow:auto; }
+    @media (max-width: 980px) { header, main, .grid, .two { display:block; } main { padding:0 16px 24px; } nav, .panel { margin-bottom:16px; } }
   </style>
 </head>
 <body>
   <header>
     <div>
       <h1>管理员控制台</h1>
-      <p>通过企业 IM 用户身份校验管理员权限后，集中开通机器人、导入公司说明书、查看运行状态。</p>
+      <p>统一开通平台 Bot、给员工分配 AI 助手、管理公司知识库和验证运行状态。</p>
     </div>
-    <div id="identity" class="status">未验证</div>
+    <div id="identity" class="chip">未验证</div>
   </header>
   <main>
     <nav>
       <button class="active" onclick="showTab('overview', this)">总览</button>
       <button onclick="showTab('bots', this)">平台 Bot 开通</button>
-      <button onclick="showTab('knowledge', this)">知识库开通</button>
+      <button onclick="showTab('employees', this)">员工 AI 助手</button>
+      <button onclick="showTab('knowledge', this)">知识库管理</button>
       <button onclick="showTab('runtime', this)">运行验证</button>
       <button onclick="showTab('help', this)">操作说明</button>
     </nav>
     <div>
       <section id="overview" class="active">
         <div class="grid">
-          <div class="panel"><h3>管理员身份</h3><pre id="profileBox">等待验证</pre></div>
-          <div class="panel"><h3>平台状态</h3><pre id="platformSummary">等待加载</pre></div>
-          <div class="panel"><h3>运行状态</h3><pre id="runtimeSummary">等待加载</pre></div>
+          <div class="panel"><h3>管理员身份</h3><div id="profileBox" class="status">等待验证</div></div>
+          <div class="panel"><h3>平台状态</h3><div id="platformSummary" class="status">等待加载</div></div>
+          <div class="panel"><h3>运行状态</h3><div id="runtimeSummary" class="status">等待加载</div></div>
         </div>
       </section>
       <section id="bots">
         <div class="grid">
           <div class="panel span">
             <h2>平台 Bot 统一开通</h2>
-            <p>普通员工不自行创建 Bot，不配置回调。管理员在这里保存平台凭据，由系统统一接管。</p>
+            <p>先接管企业 IM 平台 Bot 凭据，再给员工分配 AI 助手。下面表单是逐字段保存，不需要粘贴 JSON。</p>
             <div id="botStatus"></div>
           </div>
           <div class="panel">
             <h3>企业微信</h3>
             <label>显示名称</label><input id="wecomName" placeholder="企业 AI 助手">
-            <label>凭据 JSON</label><textarea id="wecomCreds" placeholder='{"bot_id":"","bot_secret":"","corp_id":"","agent_id":"","secret":""}'></textarea>
-            <div class="actions"><button onclick="activateBot('wecom')">保存并接管企业微信</button></div>
+            <label>Bot ID</label><input id="wecom_bot_id">
+            <label>Bot Secret</label><input id="wecom_bot_secret" type="password">
+            <label>Corp ID</label><input id="wecom_corp_id">
+            <label>Agent ID</label><input id="wecom_agent_id">
+            <label>应用 Secret</label><input id="wecom_secret" type="password">
+            <div class="actions"><button class="primary" onclick="activatePlatformBot('wecom')">保存并接管企业微信</button></div>
           </div>
           <div class="panel">
             <h3>飞书</h3>
             <label>显示名称</label><input id="feishuName" placeholder="飞书 AI 助手">
-            <label>凭据 JSON</label><textarea id="feishuCreds" placeholder='{"app_id":"","app_secret":"","domain":"feishu"}'></textarea>
-            <div class="actions"><button onclick="activateBot('feishu')">保存并接管飞书</button></div>
+            <label>App ID</label><input id="feishu_app_id">
+            <label>App Secret</label><input id="feishu_app_secret" type="password">
+            <label>Domain</label><select id="feishu_domain"><option value="feishu">飞书国内</option><option value="lark">Lark 国际版</option></select>
+            <div class="actions"><button class="primary" onclick="activatePlatformBot('feishu')">保存并接管飞书</button></div>
           </div>
           <div class="panel">
             <h3>钉钉</h3>
             <label>显示名称</label><input id="dingtalkName" placeholder="钉钉 AI 助手">
-            <label>凭据 JSON</label><textarea id="dingtalkCreds" placeholder='{"client_id":"","client_secret":"","robot_code":""}'></textarea>
-            <div class="actions"><button onclick="activateBot('dingtalk')">保存并接管钉钉</button></div>
+            <label>Client ID</label><input id="dingtalk_client_id">
+            <label>Client Secret</label><input id="dingtalk_client_secret" type="password">
+            <label>Robot Code</label><input id="dingtalk_robot_code">
+            <div class="actions"><button class="primary" onclick="activatePlatformBot('dingtalk')">保存并接管钉钉</button></div>
           </div>
-          <div class="panel span"><h3>开通结果</h3><pre id="botResult">暂无操作</pre></div>
+          <div class="panel span"><h3>开通结果</h3><div id="botResult" class="status">暂无操作</div></div>
+        </div>
+      </section>
+      <section id="employees">
+        <div class="grid two">
+          <div class="panel">
+            <h2>给员工开通 AI 助手</h2>
+            <p>这里不是让员工自己创建独立机器人，而是把平台统一 Bot 分配给指定员工，并发送企微开通通知。</p>
+            <label>平台</label><select id="employeePlatform"><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="dingtalk">钉钉</option></select>
+            <label>员工用户 ID</label><input id="employeeUserId" placeholder="例如 MaGe 或同事企微 user_id">
+            <label>显示名称</label><input id="employeeBotName" placeholder="企业 AI 助手">
+            <label>知识范围</label><select id="employeeScope"><option value="personal">个人</option><option value="department">部门</option><option value="project">项目</option><option value="organization">公司</option></select>
+            <label>权限</label><input id="employeePermissions" value="chat.use,knowledge.read,files.process">
+            <div class="actions">
+              <button class="primary" onclick="activateEmployeeBot()">开通并通知员工</button>
+              <button class="danger" onclick="deactivateEmployeeBot()">停用员工 AI 助手</button>
+            </div>
+            <div id="employeeResult" class="status"></div>
+          </div>
+          <div class="panel">
+            <h2>已开通员工</h2>
+            <div class="actions"><button class="secondary" onclick="loadEmployeeBots()">刷新列表</button></div>
+            <div id="employeeList"></div>
+          </div>
         </div>
       </section>
       <section id="knowledge">
@@ -1100,13 +1394,12 @@ def admin_console_page():
             <h2>公司说明书导入</h2>
             <p>将激活说明书、功能说明书、知识库管理说明书导入 organization/company 级知识库。</p>
             <button onclick="importGuides()">导入或更新公司说明书</button>
-            <pre id="guideResult">暂无操作</pre>
+            <div id="guideResult" class="status">暂无操作</div>
           </div>
           <div class="panel">
             <h2>知识库管理入口</h2>
             <p>按当前管理员身份打开知识库管理页，用于查看、更新、删除和升级有权限的知识条目。</p>
             <button class="secondary" onclick="openKnowledgeManager()">打开知识库管理页</button>
-            <pre>/knowledge/manage</pre>
           </div>
         </div>
       </section>
@@ -1114,8 +1407,8 @@ def admin_console_page():
         <div class="panel">
           <h2>运行验证</h2>
           <p>查看服务端口、平台环境变量和健康状态。保存新凭据后如提示需要重启，应重启对应服务后再验证。</p>
-          <button onclick="loadRuntime()">刷新运行状态</button>
-          <pre id="runtimeResult">等待加载</pre>
+          <button class="secondary" onclick="loadRuntime()">刷新运行状态</button>
+          <div id="runtimeResult" class="status">等待加载</div>
         </div>
       </section>
       <section id="help">
@@ -1124,8 +1417,9 @@ def admin_console_page():
           <table>
             <tbody>
               <tr><th>总览</th><td>确认当前企业 IM 用户是否通过管理员校验，快速查看平台与运行状态。</td></tr>
-              <tr><th>平台 Bot 开通</th><td>分别填写企微、飞书、钉钉凭据 JSON，点击保存并接管。重点检查返回的缺少配置、是否需要重启和下一步。</td></tr>
-              <tr><th>知识库开通</th><td>导入或更新公司级说明书，保证员工询问激活、功能、知识库管理时优先命中本地知识库。</td></tr>
+              <tr><th>平台 Bot 开通</th><td>逐字段填写企微、飞书、钉钉凭据，点击保存并接管。重点看缺少配置、是否需要重启和下一步。</td></tr>
+              <tr><th>员工 AI 助手</th><td>输入同事企业 IM 用户 ID，开通后系统记录分配状态，并在企微下直接发送开通通知。</td></tr>
+              <tr><th>知识库管理</th><td>导入说明书或打开知识库业务页面，按当前企微权限管理对应范围知识。</td></tr>
               <tr><th>运行验证</th><td>检查端口和平台环境变量是否就绪。飞书、钉钉没有真实账号时只能看模拟或缺凭据状态。</td></tr>
               <tr><th>管理员身份</th><td>页面 URL 必须包含 platform、user_id、admin_token。后端会校验令牌签名和该用户是否是对应 IM 平台管理员。</td></tr>
             </tbody>
@@ -1150,46 +1444,97 @@ def admin_console_page():
       if (!resp.ok) throw new Error(data.detail || data.error || JSON.stringify(data));
       return data;
     }
-    function renderJson(id, data) { document.getElementById(id).textContent = JSON.stringify(data, null, 2); }
+    function chip(text, cls='') { return `<span class="chip ${cls}">${text}</span>`; }
+    function setHtml(id, html) { document.getElementById(id).innerHTML = html; }
+    function setText(id, text, bad=false) { const el = document.getElementById(id); el.textContent = text; el.style.color = bad ? 'var(--md-error)' : 'var(--md-muted)'; }
     async function loadProfile() {
       const profile = await api('/api/v1/admin/profile');
       document.getElementById('identity').textContent = `${profile.platform} / ${profile.user_id} / ${profile.role}`;
-      renderJson('profileBox', profile);
+      setHtml('profileBox', [
+        chip(`用户：${profile.user_id}`, 'ok'),
+        chip(`角色：${profile.role}`, 'ok'),
+        chip(`部门：${(profile.departments || []).join(', ') || '-'}`)
+      ].join(''));
     }
     async function loadBots() {
       const data = await api('/api/v1/admin/platform/bots');
-      renderJson('platformSummary', data);
-      const rows = (data.platforms || []).map(p => `<tr><td>${p.platform_label || p.platform}</td><td>${p.enabled ? '<span class="ok">已启用</span>' : '<span class="warn">未启用</span>'}</td><td>${(p.configured_keys || []).join(', ') || '-'}</td><td>${(p.missing_keys || []).join(', ') || '-'}</td><td>${p.restart_required ? '<span class="bad">需要</span>' : '不需要'}</td><td>${p.next_action || '-'}</td></tr>`).join('');
+      const enabled = (data.platforms || []).filter(p => p.enabled).length;
+      setHtml('platformSummary', chip(`已启用平台：${enabled}`, enabled ? 'ok' : 'warn') + chip(`总平台：${(data.platforms || []).length}`));
+      const rows = (data.platforms || []).map(p => `<tr><td>${p.platform_label || p.platform}</td><td>${p.enabled ? chip('已启用','ok') : chip('未启用','warn')}</td><td>${(p.configured_keys || []).join(', ') || '-'}</td><td>${(p.missing_keys || []).join(', ') || '-'}</td><td>${p.restart_required ? chip('需要','bad') : chip('不需要','ok')}</td><td>${p.next_action || '-'}</td></tr>`).join('');
       document.getElementById('botStatus').innerHTML = `<table><thead><tr><th>平台</th><th>状态</th><th>已配置</th><th>缺少配置</th><th>重启</th><th>下一步</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
-    async function activateBot(platform) {
-      const ids = {wecom:['wecomCreds','wecomName'], feishu:['feishuCreds','feishuName'], dingtalk:['dingtalkCreds','dingtalkName']}[platform];
-      const credentials = JSON.parse(document.getElementById(ids[0]).value || '{}');
-      const payload = {credentials, display_name: document.getElementById(ids[1]).value || '', visibility_scope: 'all', auto_permissions: ['docs.full','knowledge.readwrite','contacts.read']};
+    function platformCredentials(platform) {
+      if (platform === 'wecom') return {bot_id:wecom_bot_id.value, bot_secret:wecom_bot_secret.value, corp_id:wecom_corp_id.value, agent_id:wecom_agent_id.value, secret:wecom_secret.value};
+      if (platform === 'feishu') return {app_id:feishu_app_id.value, app_secret:feishu_app_secret.value, domain:feishu_domain.value};
+      return {client_id:dingtalk_client_id.value, client_secret:dingtalk_client_secret.value, robot_code:dingtalk_robot_code.value};
+    }
+    async function activatePlatformBot(platform) {
+      const nameMap = {wecom:wecomName.value, feishu:feishuName.value, dingtalk:dingtalkName.value};
+      const payload = {credentials: platformCredentials(platform), display_name: nameMap[platform] || '', visibility_scope: 'all', auto_permissions: ['docs.full','knowledge.readwrite','contacts.read']};
+      try {
       const data = await api(`/api/v1/admin/platform/bots/${platform}/activate`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-      renderJson('botResult', data);
+      setHtml('botResult', chip(`${data.display_name} 已保存`, 'ok') + chip(data.restart_required ? '需要重启' : '当前可测试', data.restart_required ? 'warn' : 'ok') + `<p>${data.next_action}</p>`);
       await loadBots();
+      } catch (err) { setText('botResult', String(err.message || err), true); }
+    }
+    async function loadEmployeeBots() {
+      try {
+        const data = await api('/api/v1/admin/employee-bots');
+        const rows = (data.assignments || []).map(a => `<tr><td>${a.platform}</td><td>${a.user_id}</td><td>${a.display_name}</td><td>${a.scope}</td><td>${a.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td><td>${a.notify_status || '-'}</td></tr>`).join('');
+        document.getElementById('employeeList').innerHTML = `<table><thead><tr><th>平台</th><th>员工</th><th>名称</th><th>范围</th><th>状态</th><th>通知</th></tr></thead><tbody>${rows}</tbody></table>`;
+      } catch (err) { setText('employeeResult', String(err.message || err), true); }
+    }
+    async function activateEmployeeBot() {
+      try {
+        const payload = {
+          platform: employeePlatform.value,
+          user_id: employeeUserId.value.trim(),
+          display_name: employeeBotName.value,
+          scope: employeeScope.value,
+          permissions: employeePermissions.value.split(',').map(v => v.trim()).filter(Boolean),
+          notify: true
+        };
+        const data = await api('/api/v1/admin/employee-bots/activate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        setHtml('employeeResult', chip('员工 AI 助手已开通','ok') + chip(`通知：${data.assignment.notify_status || '-'}`));
+        await loadEmployeeBots();
+      } catch (err) { setText('employeeResult', String(err.message || err), true); }
+    }
+    async function deactivateEmployeeBot() {
+      try {
+        const payload = {platform: employeePlatform.value, user_id: employeeUserId.value.trim()};
+        const data = await api('/api/v1/admin/employee-bots/deactivate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        setHtml('employeeResult', chip(`状态：${data.assignment.status}`, 'warn'));
+        await loadEmployeeBots();
+      } catch (err) { setText('employeeResult', String(err.message || err), true); }
+    }
     }
     async function importGuides() {
+      try {
       const data = await api('/api/v1/admin/knowledge/import/company-guides', {method:'POST'});
-      renderJson('guideResult', data);
+      setHtml('guideResult', chip(`已导入 ${data.imported || 0} 条`, 'ok'));
+      } catch (err) { setText('guideResult', String(err.message || err), true); }
     }
     function openKnowledgeManager() {
-      window.open(`/knowledge/manage?user_id=${encodeURIComponent(params.get('user_id') || '')}`, '_blank');
+      window.open(`/knowledge/manage?${authQuery()}`, '_blank');
     }
     async function loadRuntime() {
+      try {
       const data = await api('/api/v1/admin/runtime/status');
-      renderJson('runtimeSummary', data);
-      renderJson('runtimeResult', data);
+      const reachable = Object.values(data.runtime.ports || {}).filter(p => p.reachable).length;
+      setHtml('runtimeSummary', chip(`可达端口：${reachable}`, 'ok') + chip(`健康：${data.health.status}`,'ok'));
+      const platformRows = Object.entries(data.runtime.platforms || {}).map(([name, p]) => `<tr><td>${name}</td><td>${p.configured ? chip('已配置','ok') : chip('缺凭据','warn')}</td><td>${(p.present_env || []).join(', ') || '-'}</td><td>${(p.missing_env || []).join(', ') || '-'}</td></tr>`).join('');
+      document.getElementById('runtimeResult').innerHTML = `<table><thead><tr><th>平台</th><th>状态</th><th>已加载</th><th>缺少</th></tr></thead><tbody>${platformRows}</tbody></table>`;
+      } catch (err) { setText('runtimeResult', String(err.message || err), true); }
     }
     (async function init() {
       try {
         await loadProfile();
         await loadBots();
+        await loadEmployeeBots();
         await loadRuntime();
       } catch (err) {
         document.getElementById('identity').textContent = '验证失败';
-        renderJson('profileBox', {error: String(err.message || err)});
+        setText('profileBox', String(err.message || err), true);
       }
     })();
   </script>

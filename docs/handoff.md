@@ -307,6 +307,21 @@
     - 页面 URL 携带 `platform/user_id/admin_token`
     - `admin_token` 由服务端 HMAC 签名并带过期时间
     - API 层会二次校验企业 IM 用户是否在组织图谱或管理员注册表中具备管理员权限
+  - 管理员控制台已按 Material Design 3 风格重做：
+    - `GET /admin/console`
+    - 平台 Bot 开通改为逐字段表单，不再要求管理员粘贴 JSON
+    - 状态区显示中文状态、缺少配置、是否需要重启和下一步动作
+  - 新增员工 AI 助手分配能力：
+    - `src/platform/employee_bot_service.py`
+    - `GET /api/v1/admin/employee-bots`
+    - `POST /api/v1/admin/employee-bots/activate`
+    - `POST /api/v1/admin/employee-bots/deactivate`
+    - 企微下会真实尝试向员工发送开通通知
+    - 飞书/钉钉无真实凭据时保留模拟/待联调通知状态
+  - 知识库管理页已按 Material Design 3 风格重做：
+    - `GET /knowledge/manage`
+    - 按企业 IM 用户权限自适配查询、创建、编辑、删除、升级和说明书导入
+    - 管理员控制台打开时会透传 `platform/user_id/admin_token`
   - 统一开通已补充必填凭据校验：
     - 企微：`bot_id`、`bot_secret`
     - 飞书：`app_id`、`app_secret`
