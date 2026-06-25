@@ -109,6 +109,20 @@ class InboundGatewayService:
 
         if decision.kind == RouteKind.PERSONAL:
             user_msg = adapted.message.content
+            from src.gateway.entry_links import build_entry_link_reply
+
+            entry_reply = build_entry_link_reply(
+                str(adapted.context.metadata.get("platform") or adapted.context.metadata.get("provider") or "wecom"),
+                decision.target_id,
+                user_msg,
+            )
+            if entry_reply:
+                return InboundResult(
+                    route_kind=decision.kind.value,
+                    target_id=decision.target_id,
+                    response=AgentResponse(text=entry_reply),
+                    memory_context="",
+                )
             convo = self._conversations.get(decision.target_id)
 
             if payload.get("is_file_message") and should_generate_document_from_content(user_msg):

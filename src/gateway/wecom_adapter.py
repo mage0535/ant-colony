@@ -42,7 +42,7 @@ def adapt_wecom_payload(payload: dict[str, Any]) -> AdaptedInboundMessage:
     else:
         space_type = SpaceType.DEPARTMENT
 
-    provider = _pick(payload, "provider", default="wecom")
+    provider = _pick(payload, "provider", "platform", default="wecom")
     transport = _pick(payload, "transport", default="")
 
     message = Message(

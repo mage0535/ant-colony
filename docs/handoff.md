@@ -605,3 +605,28 @@
   - 服务器管理员上传文档：返回 `indexed=file-ced8137036a4`，搜索关键词可命中，归属 `organization/*`
   - 服务器飞书/钉钉模拟员工入口：HTTP 200，默认写入范围分别为 `personal:mock-feishu-user`、`personal:mock-dingtalk-user`
   - 公司说明书已重新导入公司级知识库，确保知识库内说明与页面功能一致
+
+## 2026-06-25 企业 IM 前端入口指令
+
+- 用户确认：
+  - 企业微信 Bot 没有可用的固定菜单能力，不应把企微菜单作为主入口方案
+  - 飞书可后续接机器人菜单，钉钉可后续接互动卡片/工作台入口
+  - 三个平台都需要消息指令兜底
+- 实现：
+  - 新增 `src/gateway/entry_links.py`
+  - 支持识别“打开知识库 / 知识库管理 / 上传文档入库 / 打开管理员控制台 / 进入后台”等入口指令
+  - 普通入口生成 `/knowledge/user?...user_token=...`
+  - 管理员入口先校验企业 IM 管理员身份，再生成 `/admin/console?...admin_token=...`
+  - 非管理员请求管理员控制台时返回中文拒绝提示
+  - `InboundGatewayService` 在进入 LLM 前拦截入口指令，直接返回链接，避免消耗模型
+  - 飞书/钉钉 adapter 转发的 `platform` 字段已通过 `wecom_adapter` 保留，链接会生成对应平台参数
+  - `build_platform_entry_menu()` 提供统一菜单/卡片数据，后续飞书菜单和钉钉互动卡片直接复用
+- 验证：
+  - 本地入口指令测试：`8 passed`
+  - 本地全量测试：`476 passed`
+  - 服务器已配置 `ANT_COLONY_PUBLIC_BASE_URL=http://10.12.254.122:18092`
+  - 服务器入口指令 HTTP 验证：
+    - 企微模拟“打开知识库”返回 `/knowledge/user?platform=wecom...`
+    - 企微管理员模拟“打开管理员控制台”返回 `/admin/console?platform=wecom...`
+    - 飞书模拟“打开知识库”返回 `/knowledge/user?platform=feishu...`
+    - 钉钉模拟“上传文档入库”返回 `/knowledge/user?platform=dingtalk...`
