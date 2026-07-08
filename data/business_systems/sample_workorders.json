@@ -1,0 +1,35 @@
+{
+  "WO-1001": {
+    "id": "WO-1001",
+    "title": "熔铸线冷却系统巡检",
+    "status": "blocked",
+    "owner": "u-leader",
+    "department": "生产部",
+    "pending_approval": true,
+    "pending_material": false,
+    "updated_at": "2026-07-08 10:00:00",
+    "summary": "等待安全改造审批通过后继续执行"
+  },
+  "WO-1002": {
+    "id": "WO-1002",
+    "title": "包装线异常停机处理",
+    "status": "delayed",
+    "owner": "u-member",
+    "department": "设备部",
+    "pending_approval": false,
+    "pending_material": true,
+    "updated_at": "2026-07-08 11:30:00",
+    "summary": "待关键备件到货"
+  },
+  "WO-1003": {
+    "id": "WO-1003",
+    "title": "办公区门禁权限调整",
+    "status": "in_progress",
+    "owner": "u-admin",
+    "department": "行政部",
+    "pending_approval": false,
+    "pending_material": false,
+    "updated_at": "2026-07-08 09:15:00",
+    "summary": "按计划推进中"
+  }
+}

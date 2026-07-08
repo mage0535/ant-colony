@@ -100,6 +100,12 @@ from src.tools.role_methodology_tools import (
     set_role_tool as _set_role_tool,
     spec_tool_handler as _spec_tool,
 )
+from src.tools.workflow_assistant_tools import (
+    approval_followup_workflow_tool as _approval_followup_workflow_tool,
+    meeting_coordination_workflow_tool as _meeting_coordination_workflow_tool,
+    policy_drafting_workflow_tool as _policy_drafting_workflow_tool,
+    workorder_analysis_workflow_tool as _workorder_analysis_workflow_tool,
+)
 from src.tools.document_prompt_helpers import (
     build_policy_fallback_content_helper as _build_policy_fallback_content,
     build_requirement_spec_helper as _build_requirement_spec,
@@ -251,6 +257,98 @@ BUILTIN_TOOLS: list[ToolSpec] = [
         },
 
         handler=_search_knowledge_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:approval_followup_workflow",
+
+        name="审批跟踪助手",
+
+        category="workflow",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="跨审批、文档和邮件能力，整理审批卡点、补件建议和催办方向。",
+
+        parameters={
+            "query": {"type": "string", "description": "审批主题、流程名或问题描述"},
+            "user_id": {"type": "string", "description": "当前用户ID"},
+        },
+
+        handler=_approval_followup_workflow_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:meeting_coordination_workflow",
+
+        name="会议组织助手",
+
+        category="workflow",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="跨日历、会议和资料能力，生成会议组织建议、议程和后续动作。",
+
+        parameters={
+            "query": {"type": "string", "description": "会议主题或会议需求描述"},
+            "user_id": {"type": "string", "description": "当前用户ID"},
+        },
+
+        handler=_meeting_coordination_workflow_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:policy_drafting_workflow",
+
+        name="制度起草助手",
+
+        category="workflow",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="跨文档、知识和模板参考能力，整理制度、办法、周报、方案的起草建议。",
+
+        parameters={
+            "query": {"type": "string", "description": "制度、周报、方案或通知的起草需求"},
+            "user_id": {"type": "string", "description": "当前用户ID"},
+        },
+
+        handler=_policy_drafting_workflow_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:workorder_analysis_workflow",
+
+        name="工单分析助手",
+
+        category="workflow",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="跨业务系统样板、知识和任务建议能力，分析工单状态与下一步动作。",
+
+        parameters={
+            "query": {"type": "string", "description": "工单号或工单异常描述"},
+            "user_id": {"type": "string", "description": "当前用户ID"},
+        },
+
+        handler=_workorder_analysis_workflow_tool,
 
     ),
 

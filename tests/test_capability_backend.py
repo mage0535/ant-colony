@@ -445,6 +445,26 @@ class TestCapabilityBackend(unittest.TestCase):
             },
         )
         self.assertEqual(
+            backend.describe_capability("ops.workorder.lookup"),
+            {
+                "capability_id": "ops.workorder.lookup",
+                "method_name": "lookup_workorder",
+                "providers": ["系统能力"],
+                "domain": "operations",
+                "requires_user_context": True,
+            },
+        )
+        self.assertEqual(
+            backend.describe_capability("ops.workorder.analyze"),
+            {
+                "capability_id": "ops.workorder.analyze",
+                "method_name": "analyze_workorder",
+                "providers": ["系统能力"],
+                "domain": "operations",
+                "requires_user_context": True,
+            },
+        )
+        self.assertEqual(
             backend.describe_capability("mail.get"),
             {
                 "capability_id": "mail.get",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 from src.knowledge.repository_factory import build_knowledge_repository
 
@@ -179,3 +180,38 @@ class InternalCapabilityProvider:
         from src.gateway.entry_links import build_platform_entry_payloads
 
         return json.dumps(build_platform_entry_payloads(platform, user_id, is_admin=is_admin), ensure_ascii=False)
+
+    def lookup_workorder(self, workorder_id: str) -> str | None:
+        data = _load_sample_workorders()
+        if not workorder_id:
+            return "请提供工单号"
+        item = data.get(workorder_id)
+        if not item:
+            return f"未找到工单：{workorder_id}"
+        return json.dumps(item, ensure_ascii=False, indent=2)
+
+    def analyze_workorder(self, workorder_id: str) -> str | None:
+        data = _load_sample_workorders()
+        item = data.get(workorder_id)
+        if not item:
+            return f"未找到工单：{workorder_id}"
+        status = str(item.get("status", ""))
+        risk = "低"
+        reasons: list[str] = []
+        if status in {"blocked", "delayed"}:
+            risk = "高"
+            reasons.append("工单当前处于阻塞或延迟状态")
+        if item.get("pending_approval"):
+            reasons.append("存在待审批事项")
+        if item.get("pending_material"):
+            reasons.append("存在待料风险")
+        if not reasons:
+            reasons.append("当前无明显异常，可按计划推进")
+        return f"工单 {workorder_id} 风险等级：{risk}\n" + "\n".join(f"- {r}" for r in reasons)
+
+
+def _load_sample_workorders() -> dict[str, dict]:
+    path = Path("data/business_systems/sample_workorders.json")
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))

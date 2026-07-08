@@ -382,6 +382,38 @@ class TestPersonalAgent(unittest.TestCase):
         self.assertTrue(response.text.startswith("[BOT_FILE]"))
         self.assertIn("企业微信 AI 助手激活说明书", response.text)
 
+    def test_personal_agent_shortcuts_to_approval_workflow(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        engine = AgentEngine(config)
+        agent = PersonalAgent("u1", engine)
+        context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
+
+        with patch("src.agents.personal_agent.OfficeWorkflowService.approval_followup", return_value=type("Result", (), {"content": "审批跟踪结果"})()):
+            response = agent.process_message("u1", "帮我跟踪一下付款审批进度", context)
+
+        self.assertEqual(response.text, "审批跟踪结果")
+
+    def test_personal_agent_shortcuts_to_workorder_workflow(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        engine = AgentEngine(config)
+        agent = PersonalAgent("u1", engine)
+        context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
+
+        with patch("src.agents.personal_agent.OfficeWorkflowService.workorder_analysis", return_value=type("Result", (), {"content": "工单分析结果"})()):
+            response = agent.process_message("u1", "分析工单 WO-1001 的异常", context)
+
+        self.assertEqual(response.text, "工单分析结果")
+
 
 class TestToolCalling(unittest.TestCase):
     def test_tool_call_regex_match(self) -> None:

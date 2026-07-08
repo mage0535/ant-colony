@@ -755,3 +755,63 @@
     - 企业微信：`https://developer.work.weixin.qq.com/document`
     - 飞书：`https://open.feishu.cn/changelog?lang=zh-CN`
     - 钉钉：`https://open.dingtalk.com/document/isvapp/application-development-update-log-1692847475701`
+
+## 2026-07-08 企业办公工作流助手落地
+
+- 本轮新增四类可直接触发的工作流助手：
+  - 审批跟踪助手
+  - 会议组织助手
+  - 制度 / 周报起草助手
+  - 工单分析助手
+- 代码侧新增：
+  - `src/workflows/office_workflow_service.py`
+  - `src/tools/workflow_assistant_tools.py`
+  - `data/business_systems/sample_workorders.json`
+- 已接入内容：
+  - `PersonalAgent` 对典型办公中文意图做快捷路由，不完全依赖模型自由选择工具
+  - 工作流结果会同时沉淀到：
+    - `ScopedMemoryStore`
+    - 知识库条目（通过 `KnowledgeCollector.collect_text(...)`）
+  - capability backend 新增：
+    - `ops.workorder.lookup`
+    - `ops.workorder.analyze`
+  - `InternalCapabilityProvider` 新增：
+    - `lookup_workorder(...)`
+    - `analyze_workorder(...)`
+- 当前工作流编排：
+  - 审批跟踪会组合：
+    - `approval.list`
+    - `approval.detail`
+    - `docs.read`
+    - `mail.summary`
+  - 会议组织会组合：
+    - `calendar.list`
+    - `meeting.list`
+    - `docs.read`
+  - 制度 / 周报起草会组合：
+    - `docs.search`
+    - `drive.read`
+  - 工单分析会组合：
+    - `ops.workorder.lookup`
+    - `ops.workorder.analyze`
+    - `docs.read`
+- 验证：
+  - 新增测试：
+    - `tests/test_office_workflow_service.py`
+    - `tests/test_internal_business_system_provider.py`
+  - `tests/test_engine.py` 已覆盖个人 Agent 快捷触发
+  - 本地全量测试：`502 passed`
+  - 服务器定向测试：
+    - `tests/test_office_workflow_service.py`
+    - `tests/test_internal_business_system_provider.py`
+    - `tests/test_engine.py`
+    - `tests/test_capability_backend.py`
+    - 共 `49 passed`
+  - 服务器用户侧 webhook 话术回归已验证：
+    - `帮我跟踪一下付款审批进度`
+    - `安排一次部门会议并给我议程建议`
+    - `帮我起草一个车间通行管理制度`
+    - `分析工单 WO-1001 的异常`
+  - 当前表现：
+    - 审批 / 会议能力若平台接口未开放，会优雅降级为“暂无能力”而不是返回原始 HTTP 404
+    - 工单分析样板已能返回真实样板数据、风险等级和下一步建议

@@ -7,6 +7,7 @@ from src.engine.base import AgentEngine
 from src.knowledge.contracts import KnowledgeEntry
 from src.memory.sidecar import SidecarMemory
 from src.models.contracts import AgentResponse, MessageContext
+from src.workflows.office_workflow_service import OfficeWorkflowService
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,9 @@ class PersonalAgent:
         self.engine._latest_user_id = self.user_id
         self.engine._latest_context_metadata = dict(context.metadata or {})
         self.engine._latest_context_metadata["knowledge_prefetched"] = bool(prefetched_knowledge)
+        workflow_response = _run_workflow_shortcut(user_id, text, context)
+        if workflow_response:
+            return workflow_response
         shortcut_response = _build_prefetched_answer(text, prefetched_entries, prefetched_knowledge, context)
         if shortcut_response:
             self._last_knowledge_answer = prefetched_knowledge
@@ -143,3 +147,23 @@ def _build_bot_file_payload(entries: list[KnowledgeEntry]) -> str:
         },
         ensure_ascii=False,
     )
+
+
+def _run_workflow_shortcut(user_id: str, text: str, context: MessageContext) -> AgentResponse | None:
+    normalized = text.strip()
+    if not normalized:
+        return None
+    service = OfficeWorkflowService()
+    if "审批" in normalized and any(marker in normalized for marker in ("进度", "状态", "卡", "跟踪", "催办")):
+        result = service.approval_followup(user_id, normalized, context)
+        return AgentResponse(text=result.content)
+    if "会议" in normalized and any(marker in normalized for marker in ("安排", "组织", "议程", "纪要", "约")):
+        result = service.meeting_coordination(user_id, normalized, context)
+        return AgentResponse(text=result.content)
+    if any(marker in normalized for marker in ("制度", "办法", "通知", "周报", "方案")) and any(marker in normalized for marker in ("起草", "生成", "整理", "草稿")):
+        result = service.policy_drafting(user_id, normalized, context)
+        return AgentResponse(text=result.content)
+    if any(marker in normalized for marker in ("工单", "工号", "订单", "异常")) and any(marker in normalized for marker in ("查询", "分析", "看", "跟踪")):
+        result = service.workorder_analysis(user_id, normalized, context)
+        return AgentResponse(text=result.content)
+    return None

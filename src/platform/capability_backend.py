@@ -72,6 +72,8 @@ class CapabilityBackend:
         "mail.search": CapabilitySpec("mail.search", "search_mail_messages", frozenset({"internal"}), domain="mail"),
         "mail.get": CapabilitySpec("mail.get", "get_mail_message", frozenset({"internal"}), risk_level="medium", domain="mail", requires_user_context=True),
         "mail.send": CapabilitySpec("mail.send", "send_mail_message", frozenset({"internal"}), risk_level="medium", domain="mail", requires_user_context=True, audit_scope="sensitive"),
+        "ops.workorder.lookup": CapabilitySpec("ops.workorder.lookup", "lookup_workorder", frozenset({"internal"}), domain="operations", requires_user_context=True),
+        "ops.workorder.analyze": CapabilitySpec("ops.workorder.analyze", "analyze_workorder", frozenset({"internal"}), domain="operations", requires_user_context=True),
         "files.office.service_status": CapabilitySpec("files.office.service_status", "healthcheck_office", frozenset({"officecli", "internal"})),
         "files.docx.generate": CapabilitySpec("files.docx.generate", "generate_docx_document", frozenset({"officecli", "internal"})),
         "files.xlsx.generate": CapabilitySpec("files.xlsx.generate", "generate_xlsx_document", frozenset({"officecli", "internal"})),
