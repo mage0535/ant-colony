@@ -137,6 +137,69 @@ class TestFeishuAdapter(unittest.TestCase):
         self.assertIn("制度.docx", forwarded[1])
         adapter.send_message.assert_called_once_with("chat-1", "已收到文件")
 
+    def test_handle_event_downloads_file_content_when_file_key_present(self) -> None:
+        from src.gateway.adapter_feishu import FeishuAdapter
+
+        adapter = FeishuAdapter()
+        adapter._forward_to_gateway = MagicMock(return_value="已处理文件")  # type: ignore[method-assign]
+        adapter.send_message = MagicMock(return_value=True)  # type: ignore[method-assign]
+
+        with patch.object(adapter, "_download_message_file", return_value=(b"doc-bytes", "制度.docx")) as download, \
+             patch("src.gateway.adapter_feishu.summarize_platform_file_bytes", return_value="用户发送了文件：制度.docx\n\n以下是文件内容：\n---\n正文\n---\n"):
+            result = adapter._handle_event(
+                {
+                    "header": {"event_type": "im.message.receive_v1"},
+                    "event": {
+                        "message": {
+                            "message_id": "m4",
+                            "message_type": "file",
+                            "chat_type": "p2p",
+                            "chat_id": "chat-2",
+                            "content": json.dumps({"file_key": "fk-1", "file_name": "制度.docx"}, ensure_ascii=False),
+                        },
+                        "sender": {"sender_id": {"user_id": "u2"}},
+                    },
+                },
+                "{}",
+            )
+
+        self.assertIsNone(result)
+        download.assert_called_once_with("m4", "fk-1", "制度.docx")
+        adapter._forward_to_gateway.assert_called_once()
+        forwarded = adapter._forward_to_gateway.call_args.args
+        self.assertIn("以下是文件内容", forwarded[1])
+        adapter.send_message.assert_called_once_with("chat-2", "已处理文件")
+
+    def test_handle_event_sends_entry_card_for_menu_command(self) -> None:
+        from src.gateway.adapter_feishu import FeishuAdapter
+
+        adapter = FeishuAdapter()
+        adapter.send_entry_card = MagicMock(return_value=True)  # type: ignore[method-assign]
+        adapter._forward_to_gateway = MagicMock(return_value="")  # type: ignore[method-assign]
+
+        with patch("src.gateway.adapter_feishu.build_platform_entry_payloads", return_value={"feishu_card": {"header": {"title": {"content": "Ant Colony 入口"}}}}), \
+             patch("src.web.admin_auth.is_platform_admin", return_value=True):
+            result = adapter._handle_event(
+                {
+                    "header": {"event_type": "im.message.receive_v1"},
+                    "event": {
+                        "message": {
+                            "message_id": "m5",
+                            "message_type": "text",
+                            "chat_type": "p2p",
+                            "chat_id": "chat-3",
+                            "content": json.dumps({"text": "菜单"}, ensure_ascii=False),
+                        },
+                        "sender": {"sender_id": {"user_id": "u3"}},
+                    },
+                },
+                "{}",
+            )
+
+        self.assertIsNone(result)
+        adapter.send_entry_card.assert_called_once_with("chat-3", {"header": {"title": {"content": "Ant Colony 入口"}}})
+        adapter._forward_to_gateway.assert_not_called()
+
     def test_forward_to_gateway_retries_then_returns_reply(self) -> None:
         from src.gateway.adapter_feishu import FeishuAdapter
 

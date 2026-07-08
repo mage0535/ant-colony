@@ -12,6 +12,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Event, Thread
 from typing import Any
 
+from src.gateway.entry_links import build_platform_entry_payloads, is_entry_menu_command
+from src.gateway.provider_file_ingestion import summarize_platform_file_bytes
+from src.web import admin_auth
+
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://oapi.dingtalk.com"
@@ -150,6 +154,13 @@ class DingTalkAdapter:
             logger.error("DingTalk send error: %s", e)
             return False
 
+    def send_entry_card(self, chat_id: str, card_payload: dict[str, Any]) -> bool:
+        buttons = card_payload.get("buttons", []) if isinstance(card_payload, dict) else []
+        lines = [f"# {card_payload.get('title', 'Ant Colony 入口')}"] if isinstance(card_payload, dict) else ["# Ant Colony 入口"]
+        for item in buttons[:8]:
+            lines.append(f"- [{item.get('title', '入口')}]({item.get('actionURL', '')})")
+        return self.send_message(chat_id, "\n".join(lines), title=card_payload.get("title", "Ant Colony 入口") if isinstance(card_payload, dict) else "Ant Colony 入口")
+
     def _handle_event(self, body: dict[str, Any], raw_body: str) -> dict[str, Any] | None:
         # Handle DingTalk callback event validation
         if body.get("msgtype") == "url_verify":
@@ -166,7 +177,24 @@ class DingTalkAdapter:
         elif msgtype == "file":
             file_info = body.get("file", {}) if isinstance(body.get("file"), dict) else {}
             filename = file_info.get("fileName", "") or file_info.get("file_name", "")
-            text = f"用户发送了文件：{filename or '未命名文件'}"
+            download_code = file_info.get("downloadCode", "") or body.get("downloadCode", "")
+            robot_code = body.get("robotCode", "") or body.get("robot_code", "")
+            if download_code and robot_code:
+                try:
+                    data, filename = self._download_message_file(download_code, robot_code, filename or "document")
+                    text = summarize_platform_file_bytes(
+                        platform="dingtalk",
+                        user_id=sender_id,
+                        chat_id=conversation_id,
+                        chat_type=conversation_type,
+                        data=data,
+                        filename=filename,
+                    )
+                except Exception as exc:
+                    logger.warning("DingTalk file download failed, falling back to placeholder: %s", exc)
+                    text = f"用户发送了文件：{filename or '未命名文件'}"
+            else:
+                text = f"用户发送了文件：{filename or '未命名文件'}"
         else:
             logger.debug("Ignoring unsupported message type: %s", msgtype)
             return None
@@ -188,6 +216,11 @@ class DingTalkAdapter:
 
         if self._allowed_users is not None and sender_id not in self._allowed_users:
             logger.info("Ignoring message from disallowed user: %s", sender_id)
+            return None
+
+        if is_entry_menu_command(text):
+            payloads = build_platform_entry_payloads("dingtalk", sender_id, is_admin=admin_auth.is_platform_admin("dingtalk", sender_id))
+            self.send_entry_card(conversation_id, payloads["dingtalk_card"])
             return None
 
         reply = self._forward_to_gateway(sender_id, text, conversation_id, conversation_type)
@@ -234,6 +267,23 @@ class DingTalkAdapter:
             logger.error("Gateway forwarding failed after %d attempts: %s", MAX_RETRIES, last_error)
 
         return reply
+
+    def _download_message_file(self, download_code: str, robot_code: str, filename: str) -> tuple[bytes, str]:
+        token = self._ensure_token()
+        body = json.dumps({"downloadCode": download_code, "robotCode": robot_code}, ensure_ascii=False).encode("utf-8")
+        url = f"{API_BASE}/topapi/robot/messageFiles/download?access_token={token}"
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json; charset=utf-8"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = json.loads(resp.read())
+        if payload.get("errcode", 0) != 0:
+            raise RuntimeError(payload.get("errmsg", "download api failed"))
+        result = payload.get("result") or {}
+        download_url = result.get("downloadHttpUrl", "") or result.get("download_url", "")
+        if not download_url:
+            raise RuntimeError("missing download url")
+        with urllib.request.urlopen(download_url, timeout=60) as resp:
+            data = resp.read()
+        return data, filename or download_code
 
 
 def _make_handler(adapter: DingTalkAdapter) -> type[BaseHTTPRequestHandler]:

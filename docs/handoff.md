@@ -660,21 +660,39 @@
   - 当前模拟结果显示：
     - Feishu 直聊、群 @、文件占位文本、回复链路全部通过
     - DingTalk 直聊、群 @、文件占位文本、回复链路全部通过
+  - 当前追加完成：
+    - 飞书 / 钉钉收到 `菜单 / 帮助 / 入口` 时，会直接发送结构化入口卡片
+    - 新增 `src/gateway/provider_outbound.py`
+    - 新增 `src/gateway/provider_file_ingestion.py`
+    - capability backend 新增：
+      - `im.entry.menu`
+      - `im.entry.payloads`
+    - `InternalCapabilityProvider` 新增：
+      - `build_entry_menu(...)`
+      - `build_entry_payloads(...)`
+    - 飞书文件消息若带 `file_key`，会优先尝试真实文件下载并进入统一解析链路
+    - 钉钉文件消息若带 `downloadCode + robotCode`，会优先尝试真实文件下载并进入统一解析链路
+    - 飞书 / 钉钉统一入口卡片不再只停留在 `/api/v1/*/entry-payloads`，运行时菜单命令已经直接消费 payload 并发送卡片
+  - 当前最新验证：
+    - 本地全量测试：`495 passed`
+    - 本地模拟脚本：`python scripts/simulate_platform_adapter_contracts.py` 通过
+    - 模拟脚本新增通过场景：
+      - `menu_command_sends_entry_card`
 
 ## 下一步建议
 
-1. 飞书真实菜单挂载
-   - 直接消费 `/api/v1/user/entry-payloads` 和 `/api/v1/admin/entry-payloads`
-   - 把 `feishu_card` 挂到真实机器人菜单或欢迎卡片
-2. 钉钉真实卡片挂载
-   - 直接消费同一 API 中的 `dingtalk_card`
-   - 优先验证单聊，再验证群聊 @ 场景
-3. 飞书 / 钉钉真实文件 API 对接
-   - 当前只做文件占位文本转发
-   - 下一步应补真实文件下载、文本提取、知识入库主链路
-4. 统一 outbound 抽象
-   - 当前入口菜单 payload 已统一
-   - 后续可把普通文本、文件回推、入口卡片统一收敛到 provider-aware outbound 层
+1. 飞书真实租户侧菜单 / 欢迎卡片挂载
+   - 当前代码和 payload 已就绪
+   - 剩余工作是把 `feishu_card` 挂到真实租户配置
+2. 钉钉真实租户侧入口卡片挂载
+   - 当前 payload 已就绪
+   - 剩余工作是把 `dingtalk_card` 挂到真实单聊 / 群聊入口
+3. 飞书 / 钉钉真实文件权限与样本联调
+   - 当前代码已支持真实下载路径
+   - 剩余工作是用真实凭据和真实文件消息样本验证 file_key / downloadCode 字段是否与文档一致
+4. 统一 outbound 继续下沉
+   - 当前已补 provider-aware outbound 起点
+   - 后续可把普通文本、文件回推、入口卡片进一步统一收敛到同一出站服务
 
 ## 2026-07-08 集成组件更新审计
 

@@ -48,6 +48,10 @@ def build_entry_link_reply(platform: str, user_id: str, text: str) -> str | None
     return None
 
 
+def is_entry_menu_command(text: str) -> bool:
+    return _matches(_normalize_text(text), _MENU_TRIGGERS)
+
+
 def build_platform_entry_menu(platform: str, user_id: str, *, is_admin: bool = False) -> dict[str, object]:
     normalized_platform = _normalize_platform(platform)
     items = [

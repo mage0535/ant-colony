@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Callable
 
 
@@ -11,9 +12,11 @@ def _scenario(name: str, ok: bool, **details: Any) -> dict[str, Any]:
 def simulate_feishu_contract() -> dict[str, Any]:
     from src.gateway.adapter_feishu import FeishuAdapter
 
+    os.environ.setdefault("ANT_COLONY_ADMIN_SESSION_SECRET", "simulation-secret")
     adapter = FeishuAdapter(gateway_url="http://gateway.invalid")
     forwards: list[dict[str, str]] = []
     sent: list[dict[str, str]] = []
+    cards: list[dict[str, Any]] = []
 
     def forward(user_id: str, text: str, chat_id: str, chat_type: str) -> str:
         forwards.append({"user_id": user_id, "text": text, "chat_id": chat_id, "chat_type": chat_type})
@@ -23,8 +26,13 @@ def simulate_feishu_contract() -> dict[str, Any]:
         sent.append({"chat_id": chat_id, "text": text, "msg_type": msg_type})
         return True
 
+    def send_card(chat_id: str, payload: dict[str, Any]) -> bool:
+        cards.append({"chat_id": chat_id, "payload": payload})
+        return True
+
     adapter._forward_to_gateway = forward  # type: ignore[method-assign]
     adapter.send_message = send  # type: ignore[method-assign]
+    adapter.send_entry_card = send_card  # type: ignore[method-assign]
 
     direct_event = {
         "header": {"event_type": "im.message.receive_v1"},
@@ -91,9 +99,25 @@ def simulate_feishu_contract() -> dict[str, Any]:
     }
     adapter._handle_event(file_event, json.dumps(file_event, ensure_ascii=False))
 
+    menu_event = {
+        "header": {"event_type": "im.message.receive_v1"},
+        "event": {
+            "message": {
+                "message_id": "fs-m4",
+                "message_type": "text",
+                "chat_type": "p2p",
+                "chat_id": "fs-chat-4",
+                "content": json.dumps({"text": "菜单"}, ensure_ascii=False),
+            },
+            "sender": {"sender_id": {"user_id": "fs-user-3"}},
+        },
+    }
+    before_menu_forward = len(forwards)
+    adapter._handle_event(menu_event, json.dumps(menu_event, ensure_ascii=False))
+
     return {
         "platform": "feishu",
-        "ok": len(forwards) == 3 and len(sent) == 3 and len(forwards) == before_ignored + 1 and len(forwards) == before_file + 1,
+        "ok": len(forwards) == 3 and len(sent) == 3 and len(cards) == 1 and len(forwards) == before_ignored + 1 and len(forwards) == before_file + 1,
         "scenarios": [
             _scenario(
                 "direct_text_forward_and_reply",
@@ -114,6 +138,11 @@ def simulate_feishu_contract() -> dict[str, Any]:
                 forwarded=forwards[2] if len(forwards) > 2 else {},
                 sent=sent[2] if len(sent) > 2 else {},
             ),
+            _scenario(
+                "menu_command_sends_entry_card",
+                len(cards) == 1 and len(forwards) == before_menu_forward,
+                sent=cards[0] if cards else {},
+            ),
         ],
     }
 
@@ -121,9 +150,11 @@ def simulate_feishu_contract() -> dict[str, Any]:
 def simulate_dingtalk_contract() -> dict[str, Any]:
     from src.gateway.adapter_dingtalk import DingTalkAdapter
 
+    os.environ.setdefault("ANT_COLONY_ADMIN_SESSION_SECRET", "simulation-secret")
     adapter = DingTalkAdapter(gateway_url="http://gateway.invalid")
     forwards: list[dict[str, str]] = []
     sent: list[dict[str, str]] = []
+    cards: list[dict[str, Any]] = []
 
     def forward(user_id: str, text: str, chat_id: str, chat_type: str) -> str:
         forwards.append({"user_id": user_id, "text": text, "chat_id": chat_id, "chat_type": chat_type})
@@ -133,8 +164,13 @@ def simulate_dingtalk_contract() -> dict[str, Any]:
         sent.append({"chat_id": chat_id, "text": text, "title": title})
         return True
 
+    def send_card(chat_id: str, payload: dict[str, Any]) -> bool:
+        cards.append({"chat_id": chat_id, "payload": payload})
+        return True
+
     adapter._forward_to_gateway = forward  # type: ignore[method-assign]
     adapter.send_message = send  # type: ignore[method-assign]
+    adapter.send_entry_card = send_card  # type: ignore[method-assign]
 
     direct_event = {
         "conversationType": "single",
@@ -181,9 +217,20 @@ def simulate_dingtalk_contract() -> dict[str, Any]:
     }
     adapter._handle_event(file_event, json.dumps(file_event, ensure_ascii=False))
 
+    menu_event = {
+        "conversationType": "single",
+        "conversationId": "dt-chat-4",
+        "senderStaffId": "dt-user-3",
+        "msgtype": "text",
+        "text": {"content": "帮助"},
+        "msgId": "dt-m4",
+    }
+    before_menu_forward = len(forwards)
+    adapter._handle_event(menu_event, json.dumps(menu_event, ensure_ascii=False))
+
     return {
         "platform": "dingtalk",
-        "ok": len(forwards) == 3 and len(sent) == 3 and len(forwards) == before_ignored + 1 and len(forwards) == before_file + 1,
+        "ok": len(forwards) == 3 and len(sent) == 3 and len(cards) == 1 and len(forwards) == before_ignored + 1 and len(forwards) == before_file + 1,
         "scenarios": [
             _scenario(
                 "direct_text_forward_and_reply",
@@ -203,6 +250,11 @@ def simulate_dingtalk_contract() -> dict[str, Any]:
                 len(forwards) > 2 and "制度.docx" in forwards[2]["text"] and len(sent) > 2,
                 forwarded=forwards[2] if len(forwards) > 2 else {},
                 sent=sent[2] if len(sent) > 2 else {},
+            ),
+            _scenario(
+                "menu_command_sends_entry_card",
+                len(cards) == 1 and len(forwards) == before_menu_forward,
+                sent=cards[0] if cards else {},
             ),
         ],
     }

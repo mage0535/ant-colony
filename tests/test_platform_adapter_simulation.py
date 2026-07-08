@@ -15,6 +15,7 @@ class TestPlatformAdapterSimulation(unittest.TestCase):
         scenario_names = {item["name"] for item in report["scenarios"]}
         self.assertIn("group_with_mention_forward_and_reply", scenario_names)
         self.assertIn("file_message_forwarded_as_placeholder", scenario_names)
+        self.assertIn("menu_command_sends_entry_card", scenario_names)
 
     def test_dingtalk_contract_simulation_passes_without_credentials(self) -> None:
         from scripts.simulate_platform_adapter_contracts import simulate_dingtalk_contract
@@ -27,6 +28,7 @@ class TestPlatformAdapterSimulation(unittest.TestCase):
         scenario_names = {item["name"] for item in report["scenarios"]}
         self.assertIn("group_with_mention_forward_and_reply", scenario_names)
         self.assertIn("file_message_forwarded_as_placeholder", scenario_names)
+        self.assertIn("menu_command_sends_entry_card", scenario_names)
 
     def test_combined_report_passes(self) -> None:
         from scripts.simulate_platform_adapter_contracts import build_report

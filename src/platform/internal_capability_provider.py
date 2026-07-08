@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 
 from src.knowledge.repository_factory import build_knowledge_repository
@@ -168,3 +169,13 @@ class InternalCapabilityProvider:
         from src.tools.pdf_tool import add_watermark
 
         return add_watermark(path, watermark_text, output_path)
+
+    def build_entry_menu(self, platform: str, user_id: str, is_admin: bool = False) -> str | None:
+        from src.gateway.entry_links import build_platform_entry_menu
+
+        return json.dumps(build_platform_entry_menu(platform, user_id, is_admin=is_admin), ensure_ascii=False)
+
+    def build_entry_payloads(self, platform: str, user_id: str, is_admin: bool = False) -> str | None:
+        from src.gateway.entry_links import build_platform_entry_payloads
+
+        return json.dumps(build_platform_entry_payloads(platform, user_id, is_admin=is_admin), ensure_ascii=False)

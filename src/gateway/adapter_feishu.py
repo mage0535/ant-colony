@@ -13,6 +13,10 @@ from threading import Event, Thread
 from typing import Any
 from urllib.request import Request, urlopen
 
+from src.gateway.entry_links import build_platform_entry_payloads, is_entry_menu_command
+from src.gateway.provider_file_ingestion import summarize_platform_file_bytes
+from src.web import admin_auth
+
 logger = logging.getLogger(__name__)
 
 FEISHU_DOMAINS = {
@@ -156,6 +160,33 @@ class FeishuAdapter:
             return False
         return self.send_message(self._home_chat_id, text)
 
+    def send_entry_card(self, chat_id: str, card_payload: dict[str, Any]) -> bool:
+        if not chat_id or not card_payload:
+            return False
+        try:
+            token = self._get_tenant_token()
+            if not token:
+                return False
+            payload = json.dumps(
+                {
+                    "receive_id": chat_id,
+                    "msg_type": "interactive",
+                    "content": json.dumps(card_payload, ensure_ascii=False),
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            url = f"{self._domain}/open-apis/im/v1/messages?receive_id_type=chat_id"
+            req = Request(url, data=payload, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            })
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            return data.get("code", 0) == 0
+        except Exception as exc:
+            logger.error("Feishu entry card send error: %s", exc)
+            return False
+
     def _get_tenant_token(self) -> str:
         token, expires = self._token_cache
         if token and time.time() < expires - 60:
@@ -214,8 +245,30 @@ class FeishuAdapter:
             except (json.JSONDecodeError, TypeError):
                 text = ""
         elif message_type == "file":
-            filename = message.get("file_name", "") or message.get("file", {}).get("file_name", "")
-            text = f"用户发送了文件：{filename or '未命名文件'}"
+            filename = ""
+            file_key = ""
+            try:
+                content_obj = json.loads(message.get("content", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                content_obj = {}
+            filename = message.get("file_name", "") or message.get("file", {}).get("file_name", "") or content_obj.get("file_name", "")
+            file_key = content_obj.get("file_key", "") or message.get("file_key", "")
+            if file_key:
+                try:
+                    data, filename = self._download_message_file(message.get("message_id", ""), file_key, filename or "document")
+                    text = summarize_platform_file_bytes(
+                        platform="feishu",
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        chat_type=chat_type,
+                        data=data,
+                        filename=filename,
+                    )
+                except Exception as exc:
+                    logger.warning("Feishu file download failed, falling back to placeholder: %s", exc)
+                    text = f"用户发送了文件：{filename or '未命名文件'}"
+            else:
+                text = f"用户发送了文件：{filename or '未命名文件'}"
         else:
             logger.debug("Ignoring unsupported message type: %s", message_type)
             return None
@@ -231,6 +284,11 @@ class FeishuAdapter:
 
         if self._allowed_users is not None and user_id not in self._allowed_users:
             logger.info("Ignoring message from disallowed user: %s", user_id)
+            return None
+
+        if is_entry_menu_command(text):
+            payloads = build_platform_entry_payloads("feishu", user_id, is_admin=admin_auth.is_platform_admin("feishu", user_id))
+            self.send_entry_card(chat_id, payloads["feishu_card"])
             return None
 
         reply = self._forward_to_gateway(user_id, text, chat_id, chat_type)
@@ -278,6 +336,16 @@ class FeishuAdapter:
             logger.error("Gateway forwarding failed after %d attempts: %s", MAX_RETRIES, last_error)
 
         return reply
+
+    def _download_message_file(self, message_id: str, file_key: str, filename: str) -> tuple[bytes, str]:
+        token = self._get_tenant_token()
+        if not token:
+            raise RuntimeError("no tenant token")
+        url = f"{self._domain}/open-apis/im/v1/messages/{message_id}/resources/{file_key}"
+        req = Request(url, headers={"Authorization": f"Bearer {token}"})
+        with urlopen(req, timeout=60) as resp:
+            data = resp.read()
+        return data, filename or file_key
 
 
 def _make_handler(adapter: FeishuAdapter) -> type[BaseHTTPRequestHandler]:

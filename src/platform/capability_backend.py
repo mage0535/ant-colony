@@ -65,6 +65,8 @@ class CapabilityBackend:
         "drive.read": CapabilitySpec("drive.read", "read_drive_doc", domain="drive", requires_user_context=True),
         "drive.list": CapabilitySpec("drive.list", "list_drive_docs", frozenset({"internal"}), domain="drive"),
         "drive.sync": CapabilitySpec("drive.sync", "sync_drive_docs", frozenset({"internal"}), risk_level="medium", domain="drive", requires_user_context=True),
+        "im.entry.menu": CapabilitySpec("im.entry.menu", "build_entry_menu", frozenset({"internal"}), domain="im", requires_user_context=True),
+        "im.entry.payloads": CapabilitySpec("im.entry.payloads", "build_entry_payloads", frozenset({"internal"}), domain="im", requires_user_context=True),
         "mail.summary": CapabilitySpec("mail.summary", "summarize_mailbox"),
         "mail.list": CapabilitySpec("mail.list", "list_mail_messages", frozenset({"internal"}), domain="mail"),
         "mail.search": CapabilitySpec("mail.search", "search_mail_messages", frozenset({"internal"}), domain="mail"),

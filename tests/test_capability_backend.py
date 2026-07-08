@@ -425,6 +425,26 @@ class TestCapabilityBackend(unittest.TestCase):
             },
         )
         self.assertEqual(
+            backend.describe_capability("im.entry.menu"),
+            {
+                "capability_id": "im.entry.menu",
+                "method_name": "build_entry_menu",
+                "providers": ["系统能力"],
+                "domain": "im",
+                "requires_user_context": True,
+            },
+        )
+        self.assertEqual(
+            backend.describe_capability("im.entry.payloads"),
+            {
+                "capability_id": "im.entry.payloads",
+                "method_name": "build_entry_payloads",
+                "providers": ["系统能力"],
+                "domain": "im",
+                "requires_user_context": True,
+            },
+        )
+        self.assertEqual(
             backend.describe_capability("mail.get"),
             {
                 "capability_id": "mail.get",
