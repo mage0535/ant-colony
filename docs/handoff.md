@@ -675,3 +675,39 @@
 4. 统一 outbound 抽象
    - 当前入口菜单 payload 已统一
    - 后续可把普通文本、文件回推、入口卡片统一收敛到 provider-aware outbound 层
+
+## 2026-07-08 集成组件更新审计
+
+- 本轮审计对象：
+  - `OfficeCLI`
+  - `Stirling-PDF`
+  - `OCRmyPDF`
+  - `SearXNG`
+- 代码侧新增：
+  - `scripts/check_integrated_component_updates.py`
+  - `tests/test_integrated_component_updates.py`
+- 配置侧调整：
+  - `infra/stirling-pdf.compose.yml`
+  - 从 `stirlingtools/stirling-pdf:latest` 改为 `stirlingtools/stirling-pdf:v2.14.1`
+  - 目的：避免 `latest` 漂移，固定到已核对的当前上游版本
+- 服务器实际结果：
+  - `OfficeCLI`
+    - 更新前：`1.0.105`
+    - 更新后：`1.0.131`
+    - 已完成实际替换安装并验证 `--version`
+  - `SearXNG`
+    - 当前仍使用 `ghcr.io/searxng/searxng:latest`
+    - 服务器 `docker pull` 时访问 `ghcr.io` 返回 EOF
+    - 本轮未能完成镜像刷新，阻塞点是外部 registry 连通性
+  - `Stirling-PDF`
+    - 代码配置已升级到 `v2.14.1`
+    - 服务器 `docker pull stirlingtools/stirling-pdf:v2.14.1` 时访问 Docker Hub 出现 TLS handshake timeout
+    - 本轮未能完成镜像拉取与容器刷新，阻塞点是外部 registry 连通性
+  - `OCRmyPDF`
+    - 服务器当前未安装
+    - 同时缺少 `tesseract` / `ghostscript` 可执行程序
+    - 本轮未直接安装，原因是它不是单一二进制更新，而是完整 OCR 依赖链新增
+- 建议后续动作：
+  1. 先恢复服务器到 `ghcr.io` / `docker.io` 的稳定拉取能力
+  2. 再执行 `docker compose pull && docker compose up -d`
+  3. 单独评估是否要在测试服务器正式安装 OCRmyPDF 依赖链
