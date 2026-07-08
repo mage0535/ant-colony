@@ -710,4 +710,30 @@
 - 建议后续动作：
   1. 先恢复服务器到 `ghcr.io` / `docker.io` 的稳定拉取能力
   2. 再执行 `docker compose pull && docker compose up -d`
-  3. 单独评估是否要在测试服务器正式安装 OCRmyPDF 依赖链
+3. 单独评估是否要在测试服务器正式安装 OCRmyPDF 依赖链
+
+## 2026-07-08 三平台接口项目更新审计
+
+- 审计结论：
+  - 当前飞书、企微、钉钉接入层都不是“外部接口项目集成”
+  - 也没有独立的第三方 SDK 包在 `pyproject.toml` 中被集成
+  - 当前三平台都是仓库内自写 HTTP client / adapter：
+    - `src/platform/api_wecom.py`
+    - `src/platform/api_feishu.py`
+    - `src/platform/api_dingtalk.py`
+    - `src/gateway/wecom_bot_bridge.py`
+    - `src/gateway/adapter_feishu.py`
+    - `src/gateway/adapter_dingtalk.py`
+- 代码侧新增：
+  - `scripts/check_platform_interface_updates.py`
+  - `tests/test_platform_interface_updates.py`
+- 结果：
+  - 企微：无可同步升级的外部接口项目
+  - 飞书：无可同步升级的外部接口项目
+  - 钉钉：无可同步升级的外部接口项目
+- 当前同步内容：
+  - 没有做 SDK 升级，因为项目内不存在对应 SDK 依赖
+  - 已把官方更新源整理进审计脚本，便于后续人工核对：
+    - 企业微信：`https://developer.work.weixin.qq.com/document`
+    - 飞书：`https://open.feishu.cn/changelog?lang=zh-CN`
+    - 钉钉：`https://open.dingtalk.com/document/isvapp/application-development-update-log-1692847475701`
