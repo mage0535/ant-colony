@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Ant Colony API", version="0.3.0")
 
 _PUBLIC_PATHS = {"/", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/admin/console", "/knowledge/manage", "/knowledge/user"}
-_PUBLIC_PREFIXES = ("/api/v1/user/knowledge/",)
+_PUBLIC_PREFIXES = ("/api/v1/user/",)
 _ADMIN_API_PREFIX = "/api/v1/admin/"
 MAX_UPLOAD_BYTES = int(os.environ.get("ANT_COLONY_MAX_FILE_BYTES", str(50 * 1024 * 1024)))
 
@@ -397,6 +397,22 @@ def admin_list_employee_bots(request: Request, platform: str = "", limit: int = 
     return {"assignments": list_employee_bot_assignments(platform=platform, limit=limit)}
 
 
+@app.get("/api/v1/admin/entry-menu")
+def admin_entry_menu(request: Request):
+    context = require_admin_context_from_request(request)
+    from src.gateway.entry_links import build_platform_entry_menu
+
+    return build_platform_entry_menu(context["platform"], context["user_id"], is_admin=True)
+
+
+@app.get("/api/v1/admin/entry-payloads")
+def admin_entry_payloads(request: Request):
+    context = require_admin_context_from_request(request)
+    from src.gateway.entry_links import build_platform_entry_payloads
+
+    return build_platform_entry_payloads(context["platform"], context["user_id"], is_admin=True)
+
+
 @app.post("/api/v1/admin/employee-bots/activate")
 def admin_activate_employee_bot(req: EmployeeBotActivationRequest, request: Request):
     context = require_admin_context_from_request(request)
@@ -509,6 +525,22 @@ def admin_promote_knowledge(req: KnowledgePromoteRequest, request: Request):
 def user_knowledge_permissions(request: Request, space_id: str = ""):
     context = require_user_context_from_request(request)
     return knowledge_permissions(user_id=context["user_id"], space_id=space_id, platform=context["platform"])
+
+
+@app.get("/api/v1/user/entry-menu")
+def user_entry_menu(request: Request):
+    context = require_user_context_from_request(request)
+    from src.gateway.entry_links import build_platform_entry_menu
+
+    return build_platform_entry_menu(context["platform"], context["user_id"], is_admin=False)
+
+
+@app.get("/api/v1/user/entry-payloads")
+def user_entry_payloads(request: Request):
+    context = require_user_context_from_request(request)
+    from src.gateway.entry_links import build_platform_entry_payloads
+
+    return build_platform_entry_payloads(context["platform"], context["user_id"], is_admin=False)
 
 
 @app.get("/api/v1/user/knowledge/entries")

@@ -22,6 +22,13 @@ _ADMIN_TRIGGERS = (
     "开通员工助手",
     "平台管理",
 )
+_MENU_TRIGGERS = (
+    "菜单",
+    "帮助",
+    "入口",
+    "后台入口",
+    "功能菜单",
+)
 
 
 def build_entry_link_reply(platform: str, user_id: str, text: str) -> str | None:
@@ -30,6 +37,8 @@ def build_entry_link_reply(platform: str, user_id: str, text: str) -> str | None
     normalized_text = _normalize_text(text)
     if not normalized_user_id or not normalized_text:
         return None
+    if _matches(normalized_text, _MENU_TRIGGERS):
+        return _menu_reply(normalized_platform, normalized_user_id)
     if _matches(normalized_text, _ADMIN_TRIGGERS):
         if not admin_auth.is_platform_admin(normalized_platform, normalized_user_id):
             return "你当前没有管理员权限，不能打开管理员控制台。你可以发送“打开知识库”进入自己的知识库管理页面。"
@@ -67,6 +76,23 @@ def build_platform_entry_menu(platform: str, user_id: str, *, is_admin: bool = F
     return {"platform": normalized_platform, "user_id": user_id, "items": items}
 
 
+def build_platform_entry_payloads(platform: str, user_id: str, *, is_admin: bool = False) -> dict[str, object]:
+    menu = build_platform_entry_menu(platform, user_id, is_admin=is_admin)
+    items = menu["items"]
+    lines = ["可用入口："]
+    for index, item in enumerate(items, start=1):
+        lines.append(f"{index}. {item['title']}: {item['url']}")
+    text = "\n".join(lines)
+    return {
+        "platform": menu["platform"],
+        "user_id": user_id,
+        "text": text,
+        "menu": menu,
+        "feishu_card": _build_feishu_entry_card(items),
+        "dingtalk_card": _build_dingtalk_entry_card(items),
+    }
+
+
 def _knowledge_reply(platform: str, user_id: str) -> str:
     return (
         "知识库管理入口：\n"
@@ -81,6 +107,12 @@ def _admin_reply(platform: str, user_id: str) -> str:
         f"{_admin_url(platform, user_id)}\n\n"
         "进入后可以开通平台 Bot、管理员工 AI 助手、导入公司说明书和管理公司级知识库。"
     )
+
+
+def _menu_reply(platform: str, user_id: str) -> str:
+    is_admin = admin_auth.is_platform_admin(platform, user_id)
+    payloads = build_platform_entry_payloads(platform, user_id, is_admin=is_admin)
+    return payloads["text"]
 
 
 def _knowledge_url(platform: str, user_id: str) -> str:
@@ -128,3 +160,33 @@ def _normalize_platform(platform: str) -> str:
     if normalized in {"dingtalk", "钉钉"}:
         return "dingtalk"
     return normalized
+
+
+def _build_feishu_entry_card(items: list[dict[str, str]]) -> dict[str, object]:
+    elements = []
+    for item in items:
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": item["title"]},
+                        "type": "primary",
+                        "url": item["url"],
+                    }
+                ],
+            }
+        )
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "Ant Colony 入口"}},
+        "elements": elements,
+    }
+
+
+def _build_dingtalk_entry_card(items: list[dict[str, str]]) -> dict[str, object]:
+    return {
+        "title": "Ant Colony 入口",
+        "buttons": [{"title": item["title"], "actionURL": item["url"]} for item in items],
+    }

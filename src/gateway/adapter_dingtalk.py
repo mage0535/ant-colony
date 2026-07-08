@@ -158,14 +158,18 @@ class DingTalkAdapter:
         # Parse DingTalk event format
         # DingTalk robot webhook events come as: {"conversationId": "...", "atUsers": [...], "chatbotUserId": "...", "isInAtList": ..., "msgtype": "text", "text": {"content": "..."}, "senderId": "...", "conversationTitle": "...", "senderNick": "...", "sessionWebhook": "", "senderStaffId": "...", "createAt": ...}
         conversation_type = body.get("conversationType", "")
-        msgtype = body.get("msgtype", "")
-        if msgtype != "text":
-            logger.debug("Ignoring non-text message type: %s", msgtype)
-            return None
-
         conversation_id = body.get("conversationId", "")
         sender_id = body.get("senderStaffId", "") or body.get("senderId", "") or body.get("senderUserId", "")
-        text = body.get("text", {}).get("content", "") if isinstance(body.get("text"), dict) else ""
+        msgtype = body.get("msgtype", "")
+        if msgtype == "text":
+            text = body.get("text", {}).get("content", "") if isinstance(body.get("text"), dict) else ""
+        elif msgtype == "file":
+            file_info = body.get("file", {}) if isinstance(body.get("file"), dict) else {}
+            filename = file_info.get("fileName", "") or file_info.get("file_name", "")
+            text = f"用户发送了文件：{filename or '未命名文件'}"
+        else:
+            logger.debug("Ignoring unsupported message type: %s", msgtype)
+            return None
 
         msg_id = body.get("msgId", "") or str(body.get("createAt", ""))
         if self._deduper.seen(msg_id):

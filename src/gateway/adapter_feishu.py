@@ -197,11 +197,6 @@ class FeishuAdapter:
             logger.debug("Deduped message %s", message_id)
             return None
 
-        message_type = message.get("message_type", "")
-        if message_type != "text":
-            logger.debug("Ignoring non-text message type: %s", message_type)
-            return None
-
         chat_type = message.get("chat_type", "")
         chat_id = message.get("chat_id", "")
         sender_id_info = sender.get("sender_id", {})
@@ -211,11 +206,19 @@ class FeishuAdapter:
             logger.warning("Missing user_id or chat_id in Feishu event")
             return None
 
-        try:
-            content_obj = json.loads(message.get("content", "{}"))
-            text = content_obj.get("text", "")
-        except (json.JSONDecodeError, TypeError):
-            text = ""
+        message_type = message.get("message_type", "")
+        if message_type == "text":
+            try:
+                content_obj = json.loads(message.get("content", "{}"))
+                text = content_obj.get("text", "")
+            except (json.JSONDecodeError, TypeError):
+                text = ""
+        elif message_type == "file":
+            filename = message.get("file_name", "") or message.get("file", {}).get("file_name", "")
+            text = f"用户发送了文件：{filename or '未命名文件'}"
+        else:
+            logger.debug("Ignoring unsupported message type: %s", message_type)
+            return None
 
         if not text:
             return None

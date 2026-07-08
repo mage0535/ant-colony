@@ -73,9 +73,10 @@ def simulate_feishu_contract() -> dict[str, Any]:
     }
     before_ignored = len(forwards)
     adapter._handle_event(ignored_group, json.dumps(ignored_group, ensure_ascii=False))
+    after_ignored = len(forwards)
 
     before_file = len(forwards)
-    ignored_file = {
+    file_event = {
         "header": {"event_type": "im.message.receive_v1"},
         "event": {
             "message": {
@@ -83,15 +84,16 @@ def simulate_feishu_contract() -> dict[str, Any]:
                 "message_type": "file",
                 "chat_type": "p2p",
                 "chat_id": "fs-chat-3",
+                "file_name": "制度.docx",
             },
             "sender": {"sender_id": {"user_id": "fs-user-1"}},
         },
     }
-    adapter._handle_event(ignored_file, json.dumps(ignored_file, ensure_ascii=False))
+    adapter._handle_event(file_event, json.dumps(file_event, ensure_ascii=False))
 
     return {
         "platform": "feishu",
-        "ok": len(forwards) == 2 and len(sent) == 2 and len(forwards) == before_ignored and len(forwards) == before_file,
+        "ok": len(forwards) == 3 and len(sent) == 3 and len(forwards) == before_ignored + 1 and len(forwards) == before_file + 1,
         "scenarios": [
             _scenario(
                 "direct_text_forward_and_reply",
@@ -105,8 +107,13 @@ def simulate_feishu_contract() -> dict[str, Any]:
                 forwarded=forwards[1] if len(forwards) > 1 else {},
                 sent=sent[1] if len(sent) > 1 else {},
             ),
-            _scenario("group_without_mention_ignored", len(forwards) == before_ignored),
-            _scenario("file_message_ignored", len(forwards) == before_file),
+            _scenario("group_without_mention_ignored", after_ignored == before_ignored),
+            _scenario(
+                "file_message_forwarded_as_placeholder",
+                len(forwards) > 2 and "制度.docx" in forwards[2]["text"] and len(sent) > 2,
+                forwarded=forwards[2] if len(forwards) > 2 else {},
+                sent=sent[2] if len(sent) > 2 else {},
+            ),
         ],
     }
 
@@ -161,20 +168,22 @@ def simulate_dingtalk_contract() -> dict[str, Any]:
     }
     before_ignored = len(forwards)
     adapter._handle_event(ignored_group, json.dumps(ignored_group, ensure_ascii=False))
+    after_ignored = len(forwards)
 
     before_file = len(forwards)
-    ignored_file = {
+    file_event = {
         "conversationType": "single",
         "conversationId": "dt-chat-3",
         "senderStaffId": "dt-user-1",
         "msgtype": "file",
         "msgId": "dt-m3",
+        "file": {"fileName": "制度.docx"},
     }
-    adapter._handle_event(ignored_file, json.dumps(ignored_file, ensure_ascii=False))
+    adapter._handle_event(file_event, json.dumps(file_event, ensure_ascii=False))
 
     return {
         "platform": "dingtalk",
-        "ok": len(forwards) == 2 and len(sent) == 2 and len(forwards) == before_ignored and len(forwards) == before_file,
+        "ok": len(forwards) == 3 and len(sent) == 3 and len(forwards) == before_ignored + 1 and len(forwards) == before_file + 1,
         "scenarios": [
             _scenario(
                 "direct_text_forward_and_reply",
@@ -188,8 +197,13 @@ def simulate_dingtalk_contract() -> dict[str, Any]:
                 forwarded=forwards[1] if len(forwards) > 1 else {},
                 sent=sent[1] if len(sent) > 1 else {},
             ),
-            _scenario("group_without_mention_ignored", len(forwards) == before_ignored),
-            _scenario("file_message_ignored", len(forwards) == before_file),
+            _scenario("group_without_mention_ignored", after_ignored == before_ignored),
+            _scenario(
+                "file_message_forwarded_as_placeholder",
+                len(forwards) > 2 and "制度.docx" in forwards[2]["text"] and len(sent) > 2,
+                forwarded=forwards[2] if len(forwards) > 2 else {},
+                sent=sent[2] if len(sent) > 2 else {},
+            ),
         ],
     }
 

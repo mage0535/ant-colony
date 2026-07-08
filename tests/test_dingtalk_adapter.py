@@ -71,7 +71,7 @@ class TestDingTalkAdapter(unittest.TestCase):
         self.assertEqual(payload["targetId"], "chat-1")
         self.assertEqual(payload["msgKey"], "sampleMarkdown")
 
-    def test_handle_event_ignores_non_text_message(self) -> None:
+    def test_handle_event_ignores_unsupported_message_type(self) -> None:
         from src.gateway.adapter_dingtalk import DingTalkAdapter
 
         adapter = DingTalkAdapter()
@@ -82,7 +82,7 @@ class TestDingTalkAdapter(unittest.TestCase):
                 "conversationType": "single",
                 "conversationId": "chat-1",
                 "senderStaffId": "u1",
-                "msgtype": "file",
+                "msgtype": "image",
                 "msgId": "m2",
             },
             "{}",
@@ -90,6 +90,32 @@ class TestDingTalkAdapter(unittest.TestCase):
 
         self.assertIsNone(result)
         adapter._forward_to_gateway.assert_not_called()
+
+    def test_handle_event_accepts_file_message_and_forwards_placeholder(self) -> None:
+        from src.gateway.adapter_dingtalk import DingTalkAdapter
+
+        adapter = DingTalkAdapter()
+        adapter._forward_to_gateway = MagicMock(return_value="已收到文件")  # type: ignore[method-assign]
+        adapter.send_message = MagicMock(return_value=True)  # type: ignore[method-assign]
+
+        result = adapter._handle_event(
+            {
+                "conversationType": "single",
+                "conversationId": "chat-1",
+                "senderStaffId": "u1",
+                "msgtype": "file",
+                "msgId": "m3",
+                "file": {"fileName": "制度.docx"},
+            },
+            "{}",
+        )
+
+        self.assertIsNone(result)
+        adapter._forward_to_gateway.assert_called_once()
+        forwarded = adapter._forward_to_gateway.call_args.args
+        self.assertEqual(forwarded[0], "u1")
+        self.assertIn("制度.docx", forwarded[1])
+        adapter.send_message.assert_called_once_with("chat-1", "已收到文件")
 
     def test_forward_to_gateway_retries_then_returns_reply(self) -> None:
         from src.gateway.adapter_dingtalk import DingTalkAdapter

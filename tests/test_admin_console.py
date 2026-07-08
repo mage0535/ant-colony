@@ -65,6 +65,19 @@ def test_admin_api_uses_admin_auth_instead_of_dashboard_bearer() -> None:
     auth.assert_not_called()
 
 
+def test_user_entry_api_is_public_and_skips_dashboard_bearer() -> None:
+    request = _request("/api/v1/user/entry-payloads")
+
+    async def call_next(_: Request) -> Response:
+        return Response("ok")
+
+    with patch("src.web.dashboard.require_auth") as auth, patch("src.web.dashboard.check_rate_limit"):
+        response = asyncio.run(auth_and_rate_limit(request, call_next))
+
+    assert response.status_code == 200
+    auth.assert_not_called()
+
+
 def test_admin_activate_bot_sets_activated_by_from_im_user() -> None:
     from src.web.dashboard import PlatformBotActivationRequest, admin_activate_platform_bot
 
@@ -121,6 +134,62 @@ def test_admin_employee_bot_list_requires_admin_context() -> None:
         result = admin_list_employee_bots(request, platform="wecom")
 
     assert result["assignments"][0]["user_id"] == "u2"
+
+
+def test_admin_entry_menu_uses_admin_context() -> None:
+    from src.web.dashboard import admin_entry_menu
+
+    request = _request("/api/v1/admin/entry-menu")
+    fake_menu = {"platform": "wecom", "user_id": "u-admin", "items": [{"title": "管理员控制台"}]}
+
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.gateway.entry_links.build_platform_entry_menu", return_value=fake_menu) as build_menu:
+        result = admin_entry_menu(request)
+
+    assert result["items"][0]["title"] == "管理员控制台"
+    build_menu.assert_called_once_with("wecom", "u-admin", is_admin=True)
+
+
+def test_user_entry_menu_uses_user_context() -> None:
+    from src.web.dashboard import user_entry_menu
+
+    request = _request("/api/v1/user/entry-menu")
+    fake_menu = {"platform": "feishu", "user_id": "u1", "items": [{"title": "知识库管理"}]}
+
+    with patch("src.web.dashboard.require_user_context_from_request", return_value={"platform": "feishu", "user_id": "u1"}), \
+         patch("src.gateway.entry_links.build_platform_entry_menu", return_value=fake_menu) as build_menu:
+        result = user_entry_menu(request)
+
+    assert result["platform"] == "feishu"
+    build_menu.assert_called_once_with("feishu", "u1", is_admin=False)
+
+
+def test_admin_entry_payloads_uses_admin_context() -> None:
+    from src.web.dashboard import admin_entry_payloads
+
+    request = _request("/api/v1/admin/entry-payloads")
+    fake_payloads = {"platform": "wecom", "text": "可用入口", "feishu_card": {}, "dingtalk_card": {}}
+
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.gateway.entry_links.build_platform_entry_payloads", return_value=fake_payloads) as build_payloads:
+        result = admin_entry_payloads(request)
+
+    assert result["text"] == "可用入口"
+    build_payloads.assert_called_once_with("wecom", "u-admin", is_admin=True)
+
+
+def test_user_entry_payloads_uses_user_context() -> None:
+    from src.web.dashboard import user_entry_payloads
+
+    request = _request("/api/v1/user/entry-payloads")
+    fake_payloads = {"platform": "dingtalk", "text": "可用入口", "feishu_card": {}, "dingtalk_card": {}}
+
+    with patch("src.web.dashboard.require_user_context_from_request", return_value={"platform": "dingtalk", "user_id": "u1"}), \
+         patch("src.gateway.entry_links.build_platform_entry_payloads", return_value=fake_payloads) as build_payloads:
+        result = user_entry_payloads(request)
+
+    assert result["platform"] == "dingtalk"
+    build_payloads.assert_called_once_with("dingtalk", "u1", is_admin=False)
 
 
 def test_collect_knowledge_rejects_write_without_permission() -> None:

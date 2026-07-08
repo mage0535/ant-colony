@@ -80,6 +80,23 @@ def test_platform_entry_menu_contains_user_and_admin_items() -> None:
     assert any("/admin/console?" in url for url in urls)
 
 
+def test_entry_menu_reply_contains_all_available_items_for_admin() -> None:
+    from src.gateway.entry_links import build_entry_link_reply
+
+    with patch.dict(
+        "os.environ",
+        {"ANT_COLONY_PUBLIC_BASE_URL": "http://example.test", "ANT_COLONY_ADMIN_SESSION_SECRET": "secret"},
+        clear=False,
+    ), patch("src.web.admin_auth.is_platform_admin", return_value=True):
+        reply = build_entry_link_reply("wecom", "u-admin", "菜单")
+
+    assert reply is not None
+    assert "可用入口" in reply
+    assert "知识库管理" in reply
+    assert "上传文档入库" in reply
+    assert "管理员控制台" in reply
+
+
 def test_entry_link_uses_document_base_url_when_public_base_missing() -> None:
     from src.gateway.entry_links import build_entry_link_reply
 
@@ -97,3 +114,19 @@ def test_entry_link_uses_document_base_url_when_public_base_missing() -> None:
 
     assert reply is not None
     assert "http://docs.example.test/knowledge/user?" in reply
+
+
+def test_platform_entry_payloads_include_feishu_and_dingtalk_structures() -> None:
+    from src.gateway.entry_links import build_platform_entry_payloads
+
+    with patch.dict(
+        "os.environ",
+        {"ANT_COLONY_PUBLIC_BASE_URL": "http://example.test", "ANT_COLONY_ADMIN_SESSION_SECRET": "secret"},
+        clear=False,
+    ):
+        payloads = build_platform_entry_payloads("dingtalk", "u1", is_admin=True)
+
+    assert payloads["platform"] == "dingtalk"
+    assert "可用入口" in payloads["text"]
+    assert payloads["feishu_card"]["header"]["title"]["content"] == "Ant Colony 入口"
+    assert payloads["dingtalk_card"]["title"] == "Ant Colony 入口"

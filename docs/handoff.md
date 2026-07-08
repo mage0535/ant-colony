@@ -630,3 +630,48 @@
     - 企微管理员模拟“打开管理员控制台”返回 `/admin/console?platform=wecom...`
     - 飞书模拟“打开知识库”返回 `/knowledge/user?platform=feishu...`
     - 钉钉模拟“上传文档入库”返回 `/knowledge/user?platform=dingtalk...`
+
+## 2026-07-08 三端一致更新
+
+- 本轮目标：
+  - 不再只做“企微可用、飞书/钉钉模拟”，而是把三端入口协议、结构化菜单载荷和文件消息最小行为对齐
+- 完成内容：
+  - 入口命令中心继续收敛到 `src/gateway/entry_links.py`
+  - 新增统一菜单触发词：
+    - `菜单`
+    - `帮助`
+    - `入口`
+    - `后台入口`
+  - 新增统一菜单/卡片数据输出：
+    - `build_platform_entry_menu(...)`
+    - `build_platform_entry_payloads(...)`
+  - 新增统一入口 API：
+    - `GET /api/v1/admin/entry-menu`
+    - `GET /api/v1/admin/entry-payloads`
+    - `GET /api/v1/user/entry-menu`
+    - `GET /api/v1/user/entry-payloads`
+  - 飞书和钉钉现在不再把文件消息直接忽略：
+    - 会转为“用户发送了文件：xxx”占位文本进入统一 gateway
+    - 用户仍可继续发送要求，交互链路与企微对齐
+  - 企微仍保持文本链接主方案；飞书/钉钉的结构化菜单/卡片 payload 已生成，但是否真正挂载到平台侧，仍取决于真实租户配置
+- 验证：
+  - 本地全量测试：`484 passed`
+  - 本地模拟脚本：`python scripts/simulate_platform_adapter_contracts.py` 通过
+  - 当前模拟结果显示：
+    - Feishu 直聊、群 @、文件占位文本、回复链路全部通过
+    - DingTalk 直聊、群 @、文件占位文本、回复链路全部通过
+
+## 下一步建议
+
+1. 飞书真实菜单挂载
+   - 直接消费 `/api/v1/user/entry-payloads` 和 `/api/v1/admin/entry-payloads`
+   - 把 `feishu_card` 挂到真实机器人菜单或欢迎卡片
+2. 钉钉真实卡片挂载
+   - 直接消费同一 API 中的 `dingtalk_card`
+   - 优先验证单聊，再验证群聊 @ 场景
+3. 飞书 / 钉钉真实文件 API 对接
+   - 当前只做文件占位文本转发
+   - 下一步应补真实文件下载、文本提取、知识入库主链路
+4. 统一 outbound 抽象
+   - 当前入口菜单 payload 已统一
+   - 后续可把普通文本、文件回推、入口卡片统一收敛到 provider-aware outbound 层
