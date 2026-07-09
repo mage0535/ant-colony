@@ -1312,7 +1312,9 @@ def knowledge_management_page():
     .chip.bad { color:var(--md-error); background:#fce8e6; }
     .list { display:grid; gap:10px; max-height:580px; overflow:auto; }
     .scope-tree { display:grid; gap:8px; }
-    .scope-node { border:1px solid #e1e3e1; border-radius:16px; padding:12px; background:#fff; }
+    .scope-node { border:1px solid #e1e3e1; border-radius:16px; padding:12px; background:#fff; cursor:pointer; transition:background .15s; }
+    .scope-node:hover { background:var(--md-primary-container); }
+    .scope-node.active-scope { border-color:var(--md-primary); background:#f4f8ff; }
     .scope-node strong { display:block; margin-bottom:4px; }
     .scope-node.readonly { background:#fafafa; }
     .item { border:1px solid #e1e3e1; border-radius:18px; padding:14px; background:#fff; cursor:pointer; }
@@ -1379,6 +1381,8 @@ def knowledge_management_page():
       <div class="grid">
         <div class="card">
           <h2>知识条目</h2>
+          <div class="actions"><button class="tonal" onclick="clearScopeFilter()">清除筛选</button></div>
+          <div id="scopeFilter" class="status"></div>
           <div id="result" class="list"></div>
         </div>
         <div class="card">
@@ -1440,8 +1444,48 @@ def knowledge_management_page():
       root.innerHTML = visible.map(scope => {
         const key = `${scope.owner_type}:${scope.owner_id}`;
         const canWrite = writable.has(key);
-        return `<div class="scope-node ${canWrite ? '' : 'readonly'}"><strong>${scopeLabel(scope)}</strong><span class="chip ${canWrite ? 'ok' : ''}">${canWrite ? '可维护' : '只读'}</span><span class="chip">条目 ${counts[key] || 0}</span></div>`;
+        return `<div class="scope-node ${canWrite ? '' : 'readonly'}" onclick="filterByScope('${key}')" style="cursor:pointer">
+          <strong>${scopeLabel(scope)}</strong>
+          <span class="chip ${canWrite ? 'ok' : ''}">${canWrite ? '可维护' : '只读'}</span>
+          <span class="chip">条目 ${counts[key] || 0}</span>
+        </div>`;
       }).join('');
+    }
+    function filterByScope(key) {
+      document.querySelectorAll('.scope-node').forEach(n => n.classList.remove('active-scope'));
+      const nodes = document.querySelectorAll('.scope-node');
+      nodes.forEach(n => { if (n.innerHTML.includes(key)) n.classList.add('active-scope'); });
+      const entries = window.currentEntries || [];
+      const [type, id] = key.split(':');
+      const filtered = entries.filter(e => e.owner_type === type && e.owner_id === id);
+      renderEntries(filtered);
+      document.getElementById('scopeFilter').textContent = `当前筛选：${type} / ${id}（${filtered.length} 条）`;
+    }
+    function clearScopeFilter() {
+      document.querySelectorAll('.scope-node').forEach(n => n.classList.remove('active-scope'));
+      document.getElementById('scopeFilter').textContent = '';
+      renderEntries(window.currentEntries || []);
+    }
+    function renderEntries(entries) {
+      const root = document.getElementById('result');
+      root.innerHTML = '';
+      for (const item of entries) {
+        const row = document.createElement('div');
+        row.className = 'item';
+        row.innerHTML = `<strong>${item.title || item.id}</strong><div class="meta">${item.owner_type_label || item.owner_type} / ${item.owner_id} / ${item.can_write ? '可编辑' : '只读'}</div>`;
+        row.onclick = () => {
+          document.querySelectorAll('.item').forEach(v => v.classList.remove('active'));
+          row.classList.add('active');
+          document.getElementById('entryId').value = item.id;
+          document.getElementById('title').value = item.title || '';
+          document.getElementById('tags').value = (item.tags || []).join(', ');
+          document.getElementById('editor').value = item.content || '';
+          document.getElementById('saveBtn').disabled = !item.can_write;
+          document.getElementById('deleteBtn').disabled = !item.can_write;
+          window.selectedOpenUrl = item.open_url;
+        };
+        root.appendChild(row);
+      }
     }
     async function loadPermissions() {
       try {
@@ -1477,28 +1521,10 @@ def knowledge_management_page():
         (query ? `/api/v1/knowledge/accessible?user_id=${encodeURIComponent(userId())}&query=${encodeURIComponent(query)}&space_id=${encodeURIComponent(spaceId)}` : `/api/v1/knowledge?user_id=${encodeURIComponent(userId())}`)
       );
       const data = await requestJson(url);
-      const root = document.getElementById('result');
-      root.innerHTML = '';
       const entries = data.entries || data.results || [];
       window.currentEntries = entries;
       renderScopeGroups(window.currentPermissions || {}, entries);
-      for (const item of entries) {
-        const row = document.createElement('div');
-        row.className = 'item';
-        row.innerHTML = `<strong>${item.title || item.id}</strong><div class="meta">${item.owner_type_label || item.owner_type} / ${item.owner_id} / ${item.can_write ? '可编辑' : '只读'}</div>`;
-        row.onclick = () => {
-          document.querySelectorAll('.item').forEach(v => v.classList.remove('active'));
-          row.classList.add('active');
-          document.getElementById('entryId').value = item.id;
-          document.getElementById('title').value = item.title || '';
-          document.getElementById('tags').value = (item.tags || []).join(', ');
-          document.getElementById('editor').value = item.content || '';
-          document.getElementById('saveBtn').disabled = !item.can_write;
-          document.getElementById('deleteBtn').disabled = !item.can_write;
-          window.selectedOpenUrl = item.open_url;
-        };
-        root.appendChild(row);
-      }
+      renderEntries(entries);
     }
     async function importGuides() {
       try {
@@ -1683,13 +1709,24 @@ def admin_console_page():
       <button onclick="showTab('help', this)">操作说明</button>
     </nav>
     <div>
-      <section id="overview" class="active">
-        <div class="grid">
-          <div class="panel"><h3>管理员身份</h3><div id="profileBox" class="status">等待验证</div></div>
-          <div class="panel"><h3>平台状态</h3><div id="platformSummary" class="status">等待加载</div></div>
-          <div class="panel"><h3>运行状态</h3><div id="runtimeSummary" class="status">等待加载</div></div>
-        </div>
-      </section>
+       <section id="overview" class="active">
+         <div class="grid">
+           <div class="panel"><h3>管理员身份</h3><div id="profileBox" class="status">等待验证</div></div>
+           <div class="panel"><h3>平台 Bot</h3><div id="platformSummary" class="status">等待加载</div></div>
+           <div class="panel"><h3>服务运行</h3><div id="runtimeSummary" class="status">等待加载</div></div>
+           <div class="panel"><h3>员工统计</h3><div id="userStats" class="status">等待加载</div></div>
+           <div class="panel"><h3>AI 助手开通</h3><div id="botStats" class="status">等待加载</div></div>
+           <div class="panel"><h3>知识库</h3><div id="knowledgeStats" class="status">等待加载</div></div>
+         </div>
+         <div class="panel" style="margin-top:16px">
+           <div class="actions">
+             <button class="secondary" onclick="loadOverviewStats()">刷新全部统计</button>
+             <button class="tonal" onclick="showTab('users', document.querySelector('nav button:nth-child(4)'))">进入用户管理</button>
+             <button class="tonal" onclick="showTab('runtime', document.querySelector('nav button:nth-child(7)'))">运行验证</button>
+           </div>
+           <div id="statsTime" class="status"></div>
+         </div>
+       </section>
       <section id="bots">
         <div class="grid">
           <div class="panel span">
@@ -1745,10 +1782,12 @@ def admin_console_page():
             <p>这里不是让员工自己创建独立机器人，而是把平台统一 Bot 分配给指定员工，并发送企微开通通知。</p>
             <p class="muted">知识范围和操作权限由平台根据员工在企业 IM 中的组织架构、部门归属、负责人/管理员身份自动计算，管理员只确认开通，不手工指定范围。</p>
             <label>平台</label><select id="employeePlatform"><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="dingtalk">钉钉</option></select>
-            <label>员工用户 ID</label><input id="employeeUserId" placeholder="例如 MaGe 或同事企微 user_id">
-            <label>显示名称</label><input id="employeeBotName" placeholder="企业 AI 助手">
-            <div class="actions">
-              <button class="primary" onclick="activateEmployeeBot()">开通并通知员工</button>
+             <label>员工用户 ID</label><input id="employeeUserId" placeholder="例如 MaGe 或同事企微 user_id">
+             <label>员工姓名（可选，替代 ID 搜索）</label><input id="employeeName" placeholder="例如 马戈，按姓名检索">
+             <label>显示名称</label><input id="employeeBotName" placeholder="企业 AI 助手">
+             <div class="actions">
+               <button class="secondary" onclick="searchEmployeeByName()">按姓名查找用户</button>
+               <button class="primary" onclick="activateEmployeeBot()">开通并通知员工</button>
               <button class="danger" onclick="deactivateEmployeeBot()">停用员工 AI 助手</button>
             </div>
             <div id="employeeResult" class="status"></div>
@@ -1760,21 +1799,22 @@ def admin_console_page():
           </div>
         </div>
       </section>
-      <section id="users">
-        <div class="panel">
-          <h2>用户状态详情</h2>
-          <p>用户清单按企业 IM 通讯录组织架构同步，合并在线活跃状态、AI 助手状态、角色权限和按日/周/月/年统计的用量。</p>
-          <div class="actions">
-            <select id="userPlatform" style="max-width:180px"><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="dingtalk">钉钉</option></select>
-            <button class="secondary" onclick="loadAdminUsers(true)">同步通讯录并刷新</button>
-            <button class="primary" onclick="batchSetSelectedUsers('active')">批量开通</button>
-            <button class="tonal" onclick="batchSetSelectedUsers('paused')">批量暂停</button>
-            <button class="danger" onclick="batchSetSelectedUsers('disabled')">批量关闭</button>
-          </div>
-          <div id="userBulkStatus" class="status"></div>
-          <div id="adminUserList"></div>
-        </div>
-      </section>
+       <section id="users">
+         <div class="panel">
+           <h2>用户状态详情</h2>
+           <p>用户清单按企业 IM 通讯录组织架构同步，合并在线活跃状态、AI 助手状态、角色权限和按日/周/月/年统计的用量。</p>
+           <div class="actions">
+             <select id="userPlatform" style="max-width:180px"><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="dingtalk">钉钉</option></select>
+             <input id="userSearch" placeholder="搜索部门、姓名、user_id..." style="max-width:240px" oninput="filterUsers()">
+             <button class="secondary" onclick="loadAdminUsers(true)">同步通讯录并刷新</button>
+             <button class="primary" onclick="batchSetSelectedUsers('active')">批量开通</button>
+             <button class="tonal" onclick="batchSetSelectedUsers('paused')">批量暂停</button>
+             <button class="danger" onclick="batchSetSelectedUsers('disabled')">批量关闭</button>
+           </div>
+           <div id="userBulkStatus" class="status"></div>
+           <div id="adminUserList"></div>
+         </div>
+       </section>
       <section id="models">
         <div class="grid two">
           <div class="panel">
@@ -1861,6 +1901,7 @@ def admin_console_page():
       return data;
     }
     function chip(text, cls='') { return `<span class="chip ${safe(cls)}">${safe(text)}</span>`; }
+    function sortHeader(key, label) { return `${label} <span style="cursor:pointer;font-size:11px" onclick="sortUsers('${key}')">${userSortKey===key ? (userSortAsc ? '▲' : '▼') : '⇅'}</span>`; }
     function setHtml(id, html) { el(id).innerHTML = html; }
     function setText(id, text, bad=false) {
       const node = el(id);
@@ -1918,18 +1959,38 @@ def admin_console_page():
         setText('employeeResult', String(err.message || err), true);
       }
     }
+    let userSortKey = '', userSortAsc = true;
+    function sortUsers(key) {
+      if (userSortKey === key) { userSortAsc = !userSortAsc; } else { userSortKey = key; userSortAsc = true; }
+      renderUserTable();
+    }
+    function filterUsers() { renderUserTable(); }
+    function renderUserTable() {
+      const search = (val('userSearch') || '').toLowerCase();
+      let users = window.allUsers || [];
+      if (search) users = users.filter(u => (u.department_path||'').toLowerCase().includes(search) || (u.name||'').toLowerCase().includes(search) || (u.user_id||'').toLowerCase().includes(search));
+      if (userSortKey) users = [...users].sort((a,b) => {
+        const va = (a[userSortKey] || '').toString().toLowerCase(), vb = (b[userSortKey] || '').toString().toLowerCase();
+        return userSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+      });
+      const mkHeader = (key,label) => `<th onclick="sortUsers('${key}')" style="cursor:pointer">${label}${userSortKey===key ? (userSortAsc ? ' ▲' : ' ▼') : ''}</th>`;
+      const rows = users.map((user) => {
+        const usage = user.usage || {};
+        const checked = `<input type="checkbox" class="user-check" value="${safe(user.user_id)}">`;
+        const bot = user.bot_status === 'active' ? chip('已开通','ok') : (user.bot_status === 'paused' ? chip('已暂停','warn') : (user.bot_status === 'disabled' ? chip('已关闭','bad') : chip('未开通','warn')));
+        const online = user.online_status === 'recently_active' ? chip('近期活跃','ok') : chip(user.online_status || '未知');
+        return `<tr><td>${checked}</td><td>${safe(user.department_path || '-')}</td><td>${safe(user.name || user.user_id)}<br><span class="chip">${safe(user.user_id)}</span></td><td>${user.is_admin ? chip('管理员','ok') : ''}${user.is_leader ? chip('负责人','warn') : chip('员工')}</td><td>${online}</td><td>${bot}</td><td>日 ${safe(usage.day?.estimated_tokens || 0)} / 周 ${safe(usage.week?.estimated_tokens || 0)} / 月 ${safe(usage.month?.estimated_tokens || 0)} / 年 ${safe(usage.year?.estimated_tokens || 0)}</td><td><button class="secondary" onclick="setOneUserBot('${safe(user.user_id)}','active')">开通</button> <button class="tonal" onclick="setOneUserBot('${safe(user.user_id)}','paused')">暂停</button> <button class="danger" onclick="setOneUserBot('${safe(user.user_id)}','disabled')">关闭</button></td></tr>`;
+      });
+      const headers = ['选择', `${sortHeader('department_path','部门')}`, `${sortHeader('name','用户')}`, `${sortHeader('is_admin','权限')}`, `${sortHeader('online_status','状态')}`, `${sortHeader('bot_status','AI 助手')}`, 'Token 估算', '操作'];
+      const headerRow = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
+      setHtml('adminUserList', `<table><thead>${headerRow}</thead><tbody>${rows.length ? rows.join('') : '<tr><td colspan="'+headers.length+'">暂无匹配用户</td></tr>'}</tbody></table>`);
+    }
     async function loadAdminUsers(sync=false) {
       try {
         const platform = val('userPlatform') || params.get('platform') || 'wecom';
         const data = await api(`/api/v1/admin/users?platform=${encodeURIComponent(platform)}&sync=${sync ? 'true' : 'false'}`);
-        const rows = (data.users || []).map((user) => {
-          const usage = user.usage || {};
-          const checked = `<input type="checkbox" class="user-check" value="${safe(user.user_id)}">`;
-          const bot = user.bot_status === 'active' ? chip('已开通','ok') : (user.bot_status === 'paused' ? chip('已暂停','warn') : (user.bot_status === 'disabled' ? chip('已关闭','bad') : chip('未开通','warn')));
-          const online = user.online_status === 'recently_active' ? chip('近期活跃','ok') : chip(user.online_status || '未知');
-          return `<tr><td>${checked}</td><td>${safe(user.department_path || '-')}</td><td>${safe(user.name || user.user_id)}<br><span class="chip">${safe(user.user_id)}</span></td><td>${user.is_admin ? chip('管理员','ok') : ''}${user.is_leader ? chip('负责人','warn') : chip('员工')}</td><td>${online}</td><td>${bot}</td><td>日 ${safe(usage.day?.estimated_tokens || 0)} / 周 ${safe(usage.week?.estimated_tokens || 0)} / 月 ${safe(usage.month?.estimated_tokens || 0)} / 年 ${safe(usage.year?.estimated_tokens || 0)}</td><td><button class="secondary" onclick="setOneUserBot('${safe(user.user_id)}','active')">开通</button> <button class="tonal" onclick="setOneUserBot('${safe(user.user_id)}','paused')">暂停</button> <button class="danger" onclick="setOneUserBot('${safe(user.user_id)}','disabled')">关闭</button></td></tr>`;
-        });
-        setHtml('adminUserList', table(['选择','组织目录','用户','权限','状态','AI 助手','Token 估算','操作'], rows));
+        window.allUsers = data.users || [];
+        renderUserTable();
       } catch (err) {
         setText('userBulkStatus', String(err.message || err), true);
       }
@@ -1994,6 +2055,24 @@ def admin_console_page():
         setText('modelActionStatus', String(err.message || err), true);
       }
     }
+    async function searchEmployeeByName() {
+      try {
+        const name = val('employeeName');
+        if (!name) throw new Error('请先填写员工姓名');
+        const platform = val('employeePlatform') || 'wecom';
+        const data = await api(`/api/v1/admin/users?platform=${encodeURIComponent(platform)}&search=${encodeURIComponent(name)}`);
+        const matches = (data.users || []).filter(u => (u.name || '').includes(name) || (u.user_id || '').toLowerCase().includes(name.toLowerCase()));
+        if (!matches.length) { setHtml('employeeResult', '未找到匹配员工'); return; }
+        if (matches.length === 1) {
+          el('employeeUserId').value = matches[0].user_id;
+          el('employeeBotName').value = matches[0].name || matches[0].user_id;
+          setHtml('employeeResult', chip(`已选择：${safe(matches[0].name)} (${safe(matches[0].user_id)})`, 'ok'));
+        } else {
+          const rows = matches.map(u => `<tr><td><button class="secondary" onclick="el('employeeUserId').value='${safe(u.user_id)}';el('employeeBotName').value='${safe(u.name||u.user_id)}';setHtml('employeeResult',chip('已选择：${safe(u.name||u.user_id)}','ok'))">选择</button></td><td>${safe(u.name||'-')}</td><td>${safe(u.user_id)}</td><td>${safe(u.department_path||'-')}</td></tr>`);
+          setHtml('employeeResult', '<p>找到多个匹配：</p>'+table(['操作','姓名','用户ID','部门'], rows));
+        }
+      } catch (err) { setText('employeeResult', String(err.message || err), true); }
+    }
     async function activateEmployeeBot() {
       try {
         const payload = {
@@ -2051,11 +2130,34 @@ def admin_console_page():
         await loadAdminUsers(false);
         await loadModels();
         await loadRuntime();
+        await loadOverviewStats();
       } catch (err) {
         el('identity').textContent = '验证失败';
         setText('profileBox', String(err.message || err), true);
       }
     })();
+    async function loadOverviewStats() {
+      try {
+        const now = new Date();
+        setHtml('statsTime', `<span class="chip">统计时间：${now.toLocaleString('zh-CN')}</span> <button class="secondary" onclick="loadOverviewStats()">刷新</button>`);
+        // User stats
+        if (window.allUsers && window.allUsers.length) {
+          const total = window.allUsers.length;
+          const active = window.allUsers.filter(u => u.bot_status === 'active').length;
+          const paused = window.allUsers.filter(u => u.bot_status === 'paused').length;
+          const disabled = window.allUsers.filter(u => u.bot_status === 'disabled').length;
+          setHtml('userStats', `总计 ${total} 人 | ${chip('已开通','ok')} ${active} | ${chip('已暂停','warn')} ${paused} | ${chip('已关闭','bad')} ${disabled}`);
+          setHtml('botStats', `开通率 ${total ? Math.round(active/total*100) : 0}% (${active}/${total})`);
+        }
+        // Knowledge stats
+        try {
+          const kb = await api('/api/v1/admin/knowledge/permissions?space_id=');
+          setHtml('knowledgeStats', `可见范围 ${(kb.visible_scopes||[]).length} 个 | ${chip('管理员:'+(kb.can_manage_organization?'是':'否'))}`);
+        } catch(err) { setHtml('knowledgeStats', '暂无知识库数据'); }
+      } catch (err) {
+        setText('statsTime', String(err.message || err), true);
+      }
+    }
   </script>
 </body>
 </html>
