@@ -236,6 +236,11 @@ class AgentEngine:
                 if meta.get("transport"):
                     args["_source_transport"] = meta.get("transport")
                 print("[BASE] after inject: from=%s" % args.get("from"), file=_sys.stderr, flush=True)
+            elif not args.get("from"):
+                uid = getattr(self, "_latest_user_id", "")
+                args["from"] = uid
+                if not args.get("user_id"):
+                    args["user_id"] = uid
             replacement = self._dispatch_tool(name, args, tools)
             result = result.replace(
                 f"<tool_call>{name}({raw_args})</tool_call>",
