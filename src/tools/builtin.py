@@ -164,6 +164,19 @@ def _generate_report_handler(args):
 
 
 
+def _get_entry_link_tool(args: dict[str, Any]) -> str:
+    target = str(args.get("target", "menu")).strip().lower()
+    user_id = str(args.get("user_id") or args.get("from") or "")
+    platform = str(args.get("platform", "") or args.get("_source_provider", "")) or "wecom"
+    from src.gateway.entry_links import _admin_reply, _knowledge_reply, _menu_reply
+
+    if target == "admin":
+        return _admin_reply(platform, user_id)
+    if target == "knowledge":
+        return _knowledge_reply(platform, user_id)
+    return _menu_reply(platform, user_id)
+
+
 BUILTIN_TOOLS: list[ToolSpec] = [
 
     ToolSpec(
@@ -2455,6 +2468,18 @@ BUILTIN_TOOLS: list[ToolSpec] = [
             "text": {"type": "string", "description": "要处理的文本（必填）"},
         },
         handler=_humanize_tool,
+    ),
+    ToolSpec(
+        id="builtin:get_entry_link",
+        name="获取入口链接",
+        category="productivity",
+        risk_level="none",
+        allowed_roles=["personal", "project"],
+        description="当用户需要打开后台管理、管理员控制台、知识库管理、上传文档入口等管理页面时使用。target可填'admin'管理员控制台、'knowledge'知识库管理、'menu'入口菜单。用户说'后台'、'管理'、'控制台'、'知识库'、'上传文档'、'管理页面'、'管理员页面'、'帮我打开后台'等意图时调用。",
+        parameters={
+            "target": {"type": "string", "description": "目标页面：'admin'管理员控制台、'knowledge'知识库管理、'menu'入口菜单"},
+        },
+        handler=_get_entry_link_tool,
     ),
 ]
 

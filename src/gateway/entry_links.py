@@ -19,6 +19,7 @@ _ADMIN_TRIGGERS = (
     "管理员控制台",
     "进入后台",
     "打开后台",
+    "后台",
     "开通员工助手",
     "平台管理",
 )
@@ -49,7 +50,12 @@ def build_entry_link_reply(platform: str, user_id: str, text: str) -> str | None
 
 
 def is_entry_menu_command(text: str) -> bool:
-    return _matches(_normalize_text(text), _MENU_TRIGGERS)
+    """Only match single-word obvious commands for zero-cost pre-filter."""
+    normalized = _normalize_text(text)
+    # Only match 1-3 character obvious commands to avoid false positives
+    if len(normalized) > 3:
+        return False
+    return normalized in _MENU_TRIGGERS
 
 
 def build_platform_entry_menu(platform: str, user_id: str, *, is_admin: bool = False) -> dict[str, object]:
