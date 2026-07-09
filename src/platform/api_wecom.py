@@ -175,45 +175,76 @@ class WeComClient:
         sections: list[str] = []
         errors: list[str] = []
         payloads: list[dict[str, Any]] = []
-        for path, body in (
-            ("oa/meetingroom/get_booking_info", {"start_time": start, "end_time": end, "city": "", "building": "", "floor": ""}),
-            ("oa/meetingroom/bookinfo/get", {"start_time": start, "end_time": end, "room_name": room_name}),
-            ("meeting/get_user_meetinglist", {"begin_time": start, "end_time": end, "limit": 50}),
-        ):
-            resp, error = _post_optional_diagnostic(
-                path,
-                body,
-                secret=_resolve_domain_secret("meeting"),
-            )
-            if not resp:
-                if error:
-                    errors.append(error)
+
+        secret = _resolve_domain_secret("meeting")
+
+        # Step 1: list all meeting rooms (bonus, may fail)
+        room_list_resp = _post_optional("oa/meetingroom/list", {
+            "city": "", "building": "", "floor": "",
+        }, secret=secret)
+        room_list: list[dict[str, Any]] = []
+        room_names: list[str] = []
+        if room_list_resp:
+            room_list = room_list_resp.get("meetingroom_list", [])
+            room_names = [r.get("name", "") for r in room_list if r.get("name")]
+            payloads.append(room_list_resp)
+
+        # Step 2: match user's spoken room name to real room name
+        matched_rooms: list[str] = []
+        if room_name and room_name != "会议室":
+            if room_name in room_names:
+                matched_rooms.append(room_name)
+            else:
+                numbers = _extract_numbers(room_name)
+                for rn in room_names:
+                    if any(n in rn for n in numbers):
+                        matched_rooms.append(rn)
+                if not matched_rooms:
+                    matched_rooms = room_names[:3]
+
+        # Step 3: try booking info for found rooms (always runs at least once)
+        for query_room in (matched_rooms or room_names or [room_name]):
+            if not query_room or query_room == "会议室":
                 continue
-            payloads.append(resp)
-            text = _format_room_payload(resp, room_name)
-            if text:
-                sections.append(text)
+            info, err = _post_optional_diagnostic("oa/meetingroom/bookinfo/get", {
+                "start_time": start, "end_time": end,
+                "room_name": query_room,
+            }, secret=secret)
+            if info:
+                payloads.append(info)
+                text = _format_room_payload(info, query_room)
+                if text:
+                    sections.append(text)
+            elif err:
+                errors.append(err)
+
+        # Step 4: fallback meeting API
+        meeting_resp, meeting_err = _post_optional_diagnostic("meeting/list", {
+            "begin_time": start, "end_time": end, "limit": 50,
+        }, secret=secret)
+        if meeting_resp:
+            payloads.append(meeting_resp)
+        elif meeting_err:
+            errors.append(meeting_err)
+
         if plan.operation == "availability" and payloads:
             availability = _format_room_availability(payloads)
             if availability:
                 return availability
+
         if sections:
             return "\n".join(dict.fromkeys(sections))
-        try:
-            meeting_text = self.list_meetings()
-        except Exception as exc:
-            logger.info("WeCom meeting fallback failed: %s", exc)
-            meeting_text = None
-            errors.append(str(exc))
-        try:
-            agenda_text = self.get_agenda(days=days)
-        except Exception as exc:
-            logger.info("WeCom agenda fallback failed: %s", exc)
-            agenda_text = None
-            errors.append(str(exc))
-        candidates = _filter_lines_by_keyword("\n".join(x for x in [meeting_text, agenda_text] if x), room_name)
-        if candidates:
-            return f"{room_name or '会议室'}相关占用信息：\n{candidates}"
+
+        # Step 5: if no booking data, return room list as fallback
+        if room_list:
+            lines = [f"{r.get('name', '')} (容纳{r.get('capacity', '?')}人)" for r in room_list]
+            first_room = lines[0].split("(")[0].strip() if lines else "会议室"
+            return (
+                f"当前企业共 {len(room_list)} 间会议室：\n"
+                + "\n".join(lines)
+                + f"\n\n暂未获取到今日占用详情。可使用具体会议室名称（如\"{first_room}\"）查询占用情况。"
+            )
+
         if errors:
             if any("48002" in error or "forbidden" in error.lower() for error in errors):
                 return (
@@ -221,10 +252,7 @@ class WeComClient:
                     "当前企业微信应用缺少会议室或会议数据接口权限（错误码 48002）。"
                     "请由企业管理员为承载 AI 助手的自建应用补充会议室、会议和日程只读权限后重试。"
                 )
-            return (
-                f"暂时无法读取{room_name or '该会议室'}的真实占用数据："
-                "当前租户未开放可用的会议室查询接口。系统没有使用模拟数据代替真实结果。"
-            )
+            return f"暂时无法读取{room_name or '该会议室'}的真实占用数据。"
         return f"没有查到{room_name or '该会议室'}在当前查询时段的真实占用记录。"
 
     def create_event(self, summary: str, start_at: str, end_at: str) -> str | None:
@@ -295,7 +323,7 @@ class WeComClient:
     def list_meetings(self) -> str | None:
         try:
             now = int(time.time())
-            resp = _post("meeting/get_user_meetinglist", {
+            resp = _post("meeting/list", {
                 "begin_time": now - 30 * 86400,
                 "end_time": now + 30 * 86400,
                 "limit": 10,
@@ -340,7 +368,17 @@ class WeComClient:
         if str(status).lower() not in {"pending", "all", "approved", "rejected", "审批中", "所有"}:
             query = query or str(status)
             status = "all"
-        loaded = self._load_user_approval_details(capability_context)
+        # When user provides a specific query (name, type), don't pre-filter by status
+        search_status = status
+        if query:
+            search_status = "all"
+        # Determine if user wants personal scope vs all
+        force_personal = _looks_personal_approval_query(query)
+        if str(search_status).lower() in ("pending", "审批中") and not query:
+            force_personal = True
+        # If query contains a person name, try to resolve to userid for precise match
+        target_userid = _resolve_query_name_to_userid(query)
+        loaded = self._load_user_approval_details(capability_context, force_personal=force_personal)
         if isinstance(loaded, tuple):
             details, error = loaded
         else:
@@ -366,7 +404,7 @@ class WeComClient:
         filtered = [
             item
             for item in details
-            if _approval_matches(item, terms, status)
+            if _approval_matches(item, terms, search_status, target_userid=target_userid)
         ]
         return "\n".join(
             f"{item['name']}（{item['sp_no']}）：{item['status']}，申请人 {item['applicant']}"
@@ -376,9 +414,11 @@ class WeComClient:
     def _load_user_approval_details(
         self,
         capability_context: CapabilityInvocationContext | None = None,
+        *,
+        force_personal: bool = False,
     ) -> tuple[list[dict[str, str]], str]:
         now = int(time.time())
-        start = now - 30 * 86400
+        start = now - 14 * 86400
         end = now + 7 * 86400
         approval_secret = _resolve_domain_secret("approval")
         response, error = _post_optional_diagnostic(
@@ -389,8 +429,11 @@ class WeComClient:
         if not response:
             return [], error
         user_id = capability_context.user_id if capability_context else ""
-        can_view_all = _is_approval_admin(user_id)
+        can_view_all = not force_personal and _is_approval_admin(user_id)
+        # Resolve user IDs to display names
+        user_ids_to_resolve: set[str] = set()
         details: list[dict[str, str]] = []
+        raw_details: list[dict[str, Any]] = []
         for sp_no in response.get("sp_no_list", [])[:100]:
             detail = _post_optional(
                 "oa/getapprovaldetail",
@@ -403,14 +446,28 @@ class WeComClient:
             participants = _approval_participants(info)
             if user_id and not can_view_all and user_id not in participants:
                 continue
-            details.append(
-                {
-                    "sp_no": str(info.get("sp_no") or sp_no),
-                    "name": str(info.get("sp_name") or info.get("template_name") or "未命名审批"),
-                    "status": _approval_status_label(info.get("sp_status")),
-                    "applicant": str((info.get("applyer") or {}).get("userid") or ""),
-                }
-            )
+            applyer = info.get("applyer") or {}
+            applicant_uid = applyer.get("userid", "")
+            if applicant_uid:
+                user_ids_to_resolve.add(applicant_uid)
+            raw_details.append({
+                "sp_no": str(info.get("sp_no") or sp_no),
+                "name": str(info.get("sp_name") or info.get("template_name") or "未命名审批"),
+                "status": _approval_status_label(info.get("sp_status")),
+                "applicant": applicant_uid,
+                "applicant_uid": applicant_uid,
+            })
+        # Batch resolve user names
+        name_map = _batch_resolve_user_names(user_ids_to_resolve)
+        for rd in raw_details:
+            resolved = name_map.get(rd["applicant"], rd["applicant"])
+            details.append({
+                "sp_no": rd["sp_no"],
+                "name": rd["name"],
+                "status": rd["status"],
+                "applicant": resolved,
+                "applicant_uid": rd["applicant_uid"],
+            })
         return details, ""
 
     def create_meeting(self, title: str, start_at: str, end_at: str, attendees: list[str] | None = None) -> str | None:
@@ -603,13 +660,13 @@ def _extract_room_name(query: str) -> str:
 def _format_room_payload(payload: dict[str, Any], room_name: str) -> str:
     lines: list[str] = []
     raw_items: list[Any] = []
-    for key in ("booking_list", "bookings", "meeting_room_list", "room_list", "meeting_list", "schedule_items"):
+    for key in ("booking_list", "bookings", "meetingroom_list", "meeting_room_list", "room_list", "meeting_list", "schedule_items"):
         value = payload.get(key)
         if isinstance(value, list):
             raw_items.extend(value)
     for value in payload.values():
         if isinstance(value, dict):
-            for nested_key in ("booking_list", "meeting_room_list", "room_list", "meeting_list", "schedule_items"):
+            for nested_key in ("booking_list", "meetingroom_list", "meeting_room_list", "room_list", "meeting_list", "schedule_items"):
                 nested = value.get(nested_key)
                 if isinstance(nested, list):
                     raw_items.extend(nested)
@@ -668,7 +725,7 @@ def _format_room_availability(payloads: list[dict[str, Any]]) -> str:
     rooms: dict[str, str] = {}
     bookings: dict[str, list[str]] = {}
     for payload in payloads:
-        for item in _nested_list_items(payload, ("room_list", "meeting_room_list")):
+        for item in _nested_list_items(payload, ("meetingroom_list", "room_list", "meeting_room_list")):
             room_id = str(item.get("room_id") or item.get("meeting_room_id") or item.get("id") or "")
             room_name = str(item.get("room_name") or item.get("meeting_room_name") or item.get("name") or "")
             if room_name:
@@ -749,14 +806,29 @@ def _approval_status_label(value: Any) -> str:
     }.get(status, f"状态 {status}")
 
 
-def _approval_matches(item: dict[str, str], terms: tuple[str, ...], status: str) -> bool:
+def _approval_matches(item: dict[str, str], terms: tuple[str, ...], status: str, *, target_userid: str = "") -> bool:
     normalized_status = str(status or "").lower()
     if normalized_status in {"pending", "审批中"} and item.get("status") != "审批中":
         return False
+    # Fuzzy person name match: check if cleaned name overlaps with applicant
+    if target_userid:
+        applicant_name = str(item.get("applicant", ""))
+        if _fuzzy_name_match(target_userid, applicant_name):
+            return True
     if not terms:
-        return True
+        return True if not target_userid else False
     name = _normalize_match_text(item.get("name", ""))
-    return any(_normalize_match_text(term) in name or name in _normalize_match_text(term) for term in terms)
+    applicant = _normalize_match_text(item.get("applicant", ""))
+    applicant_uid = str(item.get("applicant_uid", "")).lower()
+    for term in terms:
+        nt = _normalize_match_text(term)
+        if nt in name or name in nt:
+            return True
+        if nt in applicant or applicant in nt:
+            return True
+        if applicant_uid and (nt in applicant_uid or applicant_uid in nt):
+            return True
+    return False
 
 
 def _normalize_match_text(value: str) -> str:
@@ -771,6 +843,49 @@ def _normalize_match_text(value: str) -> str:
     for source, target in replacements.items():
         normalized = normalized.replace(source, target)
     return normalized
+
+
+def _fuzzy_name_match(query_name: str, applicant_name: str) -> bool:
+    """Fuzzy match for Chinese names — allows one-character difference."""
+    if not query_name or not applicant_name:
+        return False
+    qc = set(query_name)
+    ac = set(applicant_name)
+    overlap = qc & ac
+    if len(overlap) >= len(qc) - 1 and len(overlap) >= 1:
+        return True
+    return False
+
+
+def _looks_personal_approval_query(query: str) -> bool:
+    """Returns True if the query asks for the user's own approvals."""
+    normalized = str(query or "").replace(" ", "").lower()
+    personal_words = ("我的", "我", "个人", "自己", "本人")
+    all_words = ("所有", "全部", "所有人员", "公司", "全员", "全部审批")
+    if any(w in normalized for w in all_words):
+        return False
+    return any(w in normalized for w in personal_words)
+
+
+def _resolve_query_name_to_userid(query: str) -> str:
+    """Try to find a person name in the query. Returns cleaned name string for fuzzy matching."""
+    if not query:
+        return ""
+    if _looks_personal_approval_query(query):
+        return ""
+    normalized = str(query).replace(" ", "").lower()
+    if any(w in normalized for w in ("所有", "全部", "公司", "全员")):
+        return ""
+    cleaned = normalized
+    for _domain, aliases in (
+        ("approval", ("审批", "申批")),
+    ):
+        for alias in aliases:
+            cleaned = cleaned.replace(alias, "")
+    for word in ("查询", "查一下", "查", "看看", "的", "情况", "状态", "进度"):
+        cleaned = cleaned.replace(word, "")
+    cleaned = cleaned.strip()
+    return cleaned if len(cleaned) >= 2 else ""
 
 
 def _is_approval_admin(user_id: str) -> bool:
@@ -813,3 +928,35 @@ def _optional_client_call(method, *args: Any, **kwargs: Any) -> Any | None:
     except Exception as exc:
         logger.info("Optional WeCom application capability failed: %s", exc)
         return None
+
+
+def _extract_numbers(text: str) -> list[str]:
+    import re
+    nums = re.findall(r'[0-9零一二三四五六七八九十百千万]+', text)
+    cn_map = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5",
+              "六": "6", "七": "7", "八": "8", "九": "9", "十": "10", "零": "0"}
+    result = []
+    for n in nums:
+        if n.isdigit():
+            result.append(n)
+        else:
+            mapped = "".join(cn_map.get(c, c) for c in n)
+            result.append(mapped)
+    return list(dict.fromkeys(result))
+
+
+def _batch_resolve_user_names(user_ids: set[str]) -> dict[str, str]:
+    """Resolve WeCom userids to display names via contacts API."""
+    name_map: dict[str, str] = {}
+    if not user_ids:
+        return name_map
+    for uid in user_ids:
+        try:
+            resp = _get("user/get", f"userid={uid}", secret=None)  # use app secret, not contacts sync secret
+            name = resp.get("name", "")
+            if name:
+                name_map[uid] = name
+                logger.debug("Resolved user %s -> %s", uid, name)
+        except Exception:
+            logger.info("Could not resolve user name for %s", uid)
+    return name_map

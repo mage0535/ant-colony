@@ -15,6 +15,9 @@ def test_enterprise_app_samples_are_disabled_by_default(monkeypatch) -> None:
 
 def test_wecom_room_query_reports_permission_failure_without_fake_result() -> None:
     with patch(
+        "src.platform.api_wecom._post_optional",
+        return_value=None,
+    ), patch(
         "src.platform.api_wecom._post_optional_diagnostic",
         return_value=(None, "WeCom API error 48002: api forbidden"),
     ), patch.object(WeComClient, "list_meetings", return_value=None), patch.object(
@@ -29,6 +32,9 @@ def test_wecom_room_query_reports_permission_failure_without_fake_result() -> No
 
 def test_wecom_room_query_keeps_diagnostic_when_legacy_fallback_raises() -> None:
     with patch(
+        "src.platform.api_wecom._post_optional",
+        return_value=None,
+    ), patch(
         "src.platform.api_wecom._post_optional_diagnostic",
         return_value=(None, "WeCom API error 48002: api forbidden"),
     ), patch.object(

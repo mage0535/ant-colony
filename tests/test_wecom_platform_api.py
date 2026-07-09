@@ -33,10 +33,18 @@ def test_wecom_query_meeting_room_uses_available_room_payload() -> None:
             }
         ]
     }
+    room_payload = {
+        "meetingroom_list": [
+            {"meetingroom_id": 1, "name": "三号会议室", "capacity": 10},
+        ]
+    }
 
     with patch(
+        "src.platform.api_wecom._post_optional",
+        return_value=room_payload,
+    ), patch(
         "src.platform.api_wecom._post_optional_diagnostic",
-        side_effect=[(payload, ""), (None, ""), (None, "")],
+        side_effect=[(payload, ""), (None, "")],
     ):
         result = WeComClient().query_meeting_room("三号会议室有人申请吗")
 

@@ -31,9 +31,9 @@ def test_room_query_does_not_call_approval_domain() -> None:
 def test_room_availability_is_computed_from_inventory_minus_bookings() -> None:
     client = WeComClient()
     inventory = {
-        "room_list": [
-            {"room_id": "r1", "room_name": "一号会议室"},
-            {"room_id": "r2", "room_name": "三号会议室"},
+        "meetingroom_list": [
+            {"meetingroom_id": "r1", "name": "一号会议室"},
+            {"meetingroom_id": "r2", "name": "三号会议室"},
         ]
     }
     bookings = {
@@ -48,8 +48,11 @@ def test_room_availability_is_computed_from_inventory_minus_bookings() -> None:
         ]
     }
     with patch(
+        "src.platform.api_wecom._post_optional",
+        return_value=inventory,
+    ), patch(
         "src.platform.api_wecom._post_optional_diagnostic",
-        side_effect=[(inventory, ""), (bookings, ""), (None, "")],
+        side_effect=[(bookings, ""), (None, ""), (None, "")],
     ):
         result = client.query_meeting_room("哪个会议室今天可以申请")
 
