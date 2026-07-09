@@ -87,6 +87,22 @@ def deactivate_employee_bot(*, platform: str, user_id: str, updated_by: str = ""
     return set_employee_bot_status(platform=platform, user_id=user_id, status="disabled", updated_by=updated_by)
 
 
+def update_employee_bot_name(*, platform: str, user_id: str, display_name: str) -> dict[str, Any]:
+    normalized_platform = _normalize_platform(platform)
+    normalized_user_id = user_id.strip()
+    conn = _conn()
+    conn.execute(
+        """
+        UPDATE employee_bot_assignments
+        SET display_name = ?, updated_at = ?
+        WHERE platform = ? AND user_id = ?
+        """,
+        (display_name.strip() or _default_bot_name(normalized_platform), time.time(), normalized_platform, normalized_user_id),
+    )
+    conn.commit()
+    return get_employee_bot_assignment(normalized_platform, normalized_user_id) or {}
+
+
 def pause_employee_bot(*, platform: str, user_id: str, updated_by: str = "") -> dict[str, Any]:
     return set_employee_bot_status(platform=platform, user_id=user_id, status="paused", updated_by=updated_by)
 

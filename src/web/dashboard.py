@@ -495,6 +495,14 @@ def admin_deactivate_employee_bot(req: EmployeeBotActivationRequest, request: Re
     return {"assignment": assignment}
 
 
+@app.post("/api/v1/admin/employee-bots/rename")
+def admin_rename_employee_bot(request: Request, platform: str = Form(...), user_id: str = Form(...), display_name: str = Form("")):
+    require_admin_context_from_request(request)
+    from src.platform.employee_bot_service import update_employee_bot_name
+
+    return update_employee_bot_name(platform=platform, user_id=user_id, display_name=display_name)
+
+
 @app.post("/api/v1/admin/employee-bots/status")
 def admin_set_employee_bot_status(req: EmployeeBotActivationRequest, request: Request):
     context = require_admin_context_from_request(request)
@@ -1952,7 +1960,7 @@ def admin_console_page():
             <tbody>
               <tr><th>总览</th><td>确认当前企业 IM 用户是否通过管理员校验，快速查看平台与运行状态。</td></tr>
               <tr><th>平台 Bot 开通</th><td>系统会自动检查服务器环境变量、配置文件和历史配置。管理员先审核状态，再点击确认自动接管；只有系统明确提示仍缺少凭据时，才展开高级配置补录。</td></tr>
-              <tr><th>员工 AI 助手</th><td>输入同事企业 IM 用户 ID，管理员确认后平台自动按企业 IM 组织架构分配知识范围和权限，并在企微下直接发送开通通知。</td></tr>
+               <tr><th>员工 AI 助手</th><td>输入同事企业 IM 用户 ID 或姓名，管理员确认后平台自动按企业 IM 组织架构分配知识范围和权限，并在企微下直接发送开通通知。员工列显示用户中文姓名，通知列显示是否向该员工推送了开通消息。</td></tr>
               <tr><th>知识库管理</th><td>说明书作为普通公司级知识文档统一纳入知识库；所有新增、更新、删除、升级操作都按当前企微组织权限自动适配。</td></tr>
               <tr><th>运行验证</th><td>检查端口和平台环境变量是否就绪。飞书、钉钉没有真实账号时只能看模拟或缺凭据状态。</td></tr>
               <tr><th>管理员身份</th><td>页面 URL 必须包含 platform、user_id、admin_token。后端会校验令牌签名和该用户是否是对应 IM 平台管理员。</td></tr>
@@ -2035,19 +2043,47 @@ def admin_console_page():
     async function loadEmployeeBots() {
       try {
         const data = await api('/api/v1/admin/employee-bots');
-        const rows = (data.assignments || []).map((assignment) => `<tr><td>${safe(assignment.platform)}</td><td>${safe(assignment.user_id)}</td><td><span id="empname_${safe(assignment.user_id)}">${safe(assignment.display_name)}</span> <button class="secondary" onclick="editEmployeeName('${safe(assignment.platform)}','${safe(assignment.user_id)}','${safe(assignment.display_name)}')" style="font-size:11px;padding:2px 8px">✎</button></td><td>${safe(assignment.scope)}</td><td>${assignment.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td><td>${safe(assignment.notify_status || '-')}</td></tr>`);
-        setHtml('employeeList', table(['平台','员工','名称','自动范围','状态','通知'], rows));
+        // Build user name map from loaded user data
+        const nameMap = {};
+        if (window.allUsers) {
+          window.allUsers.forEach(u => { nameMap[u.user_id] = u.name || u.user_id; });
+        }
+        const rows = (data.assignments || []).map((assignment) => {
+          const displayName = assignment.display_name || '';
+          // Auto-fix garbled names
+          const isGarbled = displayName.includes('??') || (!/[^\x00-\x7F]/.test(displayName) && displayName.length < 3);
+          const fixedName = (isGarbled || !displayName.trim()) ? '企业 AI 助手' : displayName;
+          const empName = nameMap[assignment.user_id] || assignment.user_id;
+          const notifLabels = {not_requested:'未请求', sent:'已发送', failed:'发送失败', pending:'待发送'};
+          const notif = notifLabels[assignment.notify_status] || assignment.notify_status || '-';
+          const notifHint = assignment.notify_status === 'not_requested' ? '（开通时未勾选通知）' : '';
+          return `<tr>
+            <td>${safe(assignment.platform)}</td>
+            <td>${safe(empName)}<br><span style="font-size:11px;color:#8a8a8a">${safe(assignment.user_id)}</span></td>
+            <td><span id="empname_${safe(empName).replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g,'_')}">${safe(fixedName)}</span>
+              ${isGarbled ? '<span class="chip bad" title="名称已损坏，点击编辑修复">需修复</span>' : ''}
+              <button class="secondary" onclick="editEmployeeNameFix(\'${safe(assignment.platform)}\',\'${safe(assignment.user_id)}\',\'${safe(fixedName)}\')" style="font-size:11px;padding:2px 8px;margin-left:4px">编辑</button></td>
+            <td>${safe(assignment.scope)}</td>
+            <td>${assignment.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td>
+            <td title="开通时是否向员工发送通知消息">${safe(notif)}<span style="font-size:10px;color:#8a8a8a">${notifHint}</span></td>
+          </tr>`;
+        });
+        setHtml('employeeList', table(['平台','员工','AI 助手名称','自动范围','状态','通知'], rows));
       } catch (err) {
         setText('employeeResult', String(err.message || err), true);
       }
     }
-    async function editEmployeeName(platform, userId, currentName) {
-      const newName = prompt('编辑员工 AI 助手显示名称', currentName);
+    async function editEmployeeNameFix(platform, userId, currentName) {
+      const newName = prompt('编辑 AI 助手显示名称：', currentName);
       if (newName === null || newName === currentName) return;
       try {
-        const payload = {platform, user_id: userId, display_name: newName, notify: false};
-        await api('/api/v1/admin/employee-bots/activate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-        document.getElementById('empname_' + userId.replace(/[&<>"']/g, '_')).textContent = newName;
+        const form = new URLSearchParams();
+        form.append('platform', platform);
+        form.append('user_id', userId);
+        form.append('display_name', newName);
+        const url = `/api/v1/admin/employee-bots/rename?${authQuery()}`;
+        await fetch(url, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:form});
+        await loadEmployeeBots();
       } catch (err) { alert('修改失败：' + String(err.message || err)); }
     }
     let userSortKey = '', userSortAsc = true;
