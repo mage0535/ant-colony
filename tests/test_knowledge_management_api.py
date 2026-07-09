@@ -146,8 +146,8 @@ class TestKnowledgeManagementApi(unittest.TestCase):
             )
 
         self.assertEqual(result["indexed"], "file-indexed")
-        self.assertEqual(result["knowledge_owner_type"], "department")
-        self.assertEqual(result["knowledge_owner_id"], "dept-2")
+        self.assertEqual(result["owner_type"], "department")
+        self.assertEqual(result["owner_id"], "dept-2")
         self.assertEqual(saved["owner_type"], "department")
         self.assertEqual(saved["owner_id"], "dept-2")
 

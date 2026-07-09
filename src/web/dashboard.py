@@ -433,11 +433,18 @@ def admin_list_employee_bots(request: Request, platform: str = "", limit: int = 
 
 
 @app.get("/api/v1/admin/users")
-def admin_user_details(request: Request, platform: str = "", sync: bool = True):
+def admin_user_details(request: Request, platform: str = "", sync: bool = True, search: str = ""):
     context = require_admin_context_from_request(request)
     from src.platform.user_management_service import list_admin_user_details
 
-    return list_admin_user_details(platform=platform or context["platform"], sync=sync)
+    result = list_admin_user_details(platform=platform or context["platform"], sync=sync)
+    if search and result.get("users"):
+        term = search.lower()
+        result["users"] = [
+            u for u in result["users"]
+            if term in (u.get("name") or "").lower() or term in (u.get("user_id") or "").lower() or term in (u.get("department_path") or "").lower()
+        ]
+    return result
 
 
 @app.get("/api/v1/admin/entry-menu")
@@ -1139,16 +1146,22 @@ def upload_file(
         collector = KnowledgeCollector(build_knowledge_repository())
         entry = collector.collect_file(fpath, owner_type=owner_type, owner_id=owner_id)
         indexed = entry.id if entry else None
+        tags = list(entry.tags) if entry and getattr(entry, "tags", None) else []
+        preview = (entry.content or "")[:300] if entry and getattr(entry, "content", None) else ""
     except Exception as e:
         logger.warning("File index failed: %s", e)
         indexed = None
+        tags = []
+        preview = ""
     return {
         "path": rel_path,
         "filename": file.filename,
         "size": len(content),
         "indexed": indexed,
-        "knowledge_owner_type": owner_type,
-        "knowledge_owner_id": owner_id,
+        "owner_type": owner_type,
+        "owner_id": owner_id,
+        "tags": tags,
+        "content_preview": preview,
     }
 
 
@@ -1356,7 +1369,10 @@ def knowledge_management_page():
       <div class="card">
         <h2>新增知识</h2>
         <label>标题</label><input id="newTitle" placeholder="例如：车间通行管理规定">
-        <p>系统会根据当前用户在企业微信中的角色、部门和负责人权限自动决定入库范围。</p>
+        <label>入库范围</label>
+        <select id="newOwnerType">
+          <option value="auto">自动（系统选择）</option>
+        </select>
         <div id="autoOwner" class="status">等待权限识别</div>
         <label>标签</label><input id="newTags" placeholder="逗号分隔">
         <label>正文</label><textarea id="newContent" placeholder="粘贴要入库的内容"></textarea>
@@ -1364,10 +1380,15 @@ def knowledge_management_page():
       </div>
       <div class="card">
         <h2>上传文档入库</h2>
-        <p>上传后系统会立即解析并索引文档内容，默认归入当前用户有权限写入的知识库。</p>
-        <input id="knowledgeFile" type="file" accept=".txt,.md,.docx,.pdf,.xlsx,.pptx,.csv,.json">
-        <button onclick="uploadKnowledgeFile()">上传并索引</button>
+        <p>支持批量选择文件，系统会解析文档内容并自动提取关键字和摘要。</p>
+        <label>目标入库范围</label>
+        <select id="uploadOwnerType">
+          <option value="auto">自动（系统选择）</option>
+        </select>
+        <input id="knowledgeFile" type="file" accept=".txt,.md,.docx,.pdf,.xlsx,.pptx,.csv,.json" multiple>
+        <button onclick="uploadKnowledgeFiles()">上传并索引</button>
         <div id="uploadStatus" class="status"></div>
+        <div id="uploadResults" class="list" style="margin-top:12px"></div>
       </div>
     </aside>
     <section class="stack">
@@ -1413,8 +1434,11 @@ def knowledge_management_page():
     function setStatus(id, text, bad=false) { const el = document.getElementById(id); el.textContent = text; el.style.color = bad ? 'var(--md-error)' : 'var(--md-muted)'; }
     function scopeLabel(scope) {
       const labels = {organization:'公司', department:'部门', project:'项目', personal:'个人'};
-      return `${labels[scope.owner_type] || scope.owner_type} / ${scope.owner_id}`;
+      const label = labels[scope.owner_type] || scope.owner_type;
+      const id = scope.owner_id === '*' ? '全公司' : scope.owner_id || '';
+      return id ? `${label} / ${id}` : label;
     }
+    function scopeValue(scope) { return `${scope.owner_type}:${scope.owner_id}`; }
     async function requestJson(url, options = {}) {
       const resp = await fetch(url, options);
       const data = await resp.json();
@@ -1505,6 +1529,15 @@ def knowledge_management_page():
           `<span class="chip ${perm.can_manage_project ? 'ok' : ''}">项目管理：${perm.can_manage_project ? '是' : '否'}</span>` +
           `<div class="meta">可写范围：${(perm.writable_scopes || []).map(scopeLabel).join('；') || '仅可查看'}</div>`;
         document.getElementById('autoOwner').innerHTML = `<span class="chip ok">默认入库：${scopeLabel(window.defaultWriteScope)}</span>`;
+        // Populate scope selectors
+        const writable = perm.writable_scopes || [];
+        const populateSelect = (selId) => {
+          const sel = document.getElementById(selId);
+          sel.innerHTML = '<option value="auto">自动（系统选择）</option>';
+          writable.forEach(s => { sel.innerHTML += `<option value="${scopeValue(s)}">${scopeLabel(s)}</option>`; });
+        };
+        populateSelect('newOwnerType');
+        populateSelect('uploadOwnerType');
         renderScopeGroups(perm, window.currentEntries || []);
       } catch (err) {
         setStatus('perm', String(err.message || err), true);
@@ -1539,11 +1572,12 @@ def knowledge_management_page():
     async function createEntry() {
       try {
         await loadPermissions();
+        const sel = val('newOwnerType');
+        const [owner_type, owner_id] = sel !== 'auto' && sel.includes(':') ? sel.split(':', 2) : ['auto', ''];
         const payload = {
           text: document.getElementById('newContent').value,
           title: document.getElementById('newTitle').value,
-          owner_type: 'auto',
-          owner_id: '',
+          owner_type, owner_id,
           tags: document.getElementById('newTags').value.split(',').map(v => v.trim()).filter(Boolean),
           user_id: userId(),
           space_id: document.getElementById('spaceId').value.trim()
@@ -1554,20 +1588,40 @@ def knowledge_management_page():
         await loadEntries();
       } catch (err) { setStatus('guideStatus', String(err.message || err), true); }
     }
-    async function uploadKnowledgeFile() {
+    async function uploadKnowledgeFiles() {
       try {
         await loadPermissions();
         const fileInput = document.getElementById('knowledgeFile');
         if (!fileInput.files || !fileInput.files.length) throw new Error('请先选择要上传的文档文件');
-        const form = new FormData();
-        form.append('file', fileInput.files[0]);
-        form.append('user_id', userId());
-        form.append('space_id', document.getElementById('spaceId').value.trim());
-        form.append('knowledge_owner_type', 'auto');
-        form.append('knowledge_owner_id', '');
-        const url = knowledgeUrl('/api/v1/admin/knowledge/files/upload', '/api/v1/user/knowledge/files/upload', '/api/v1/files');
-        const data = await requestJson(url, {method:'POST', body:form});
-        setStatus('uploadStatus', data.indexed ? `上传并索引成功：${data.filename}` : `文件已上传，但未提取到可索引内容：${data.filename}`, !data.indexed);
+        const sel = val('uploadOwnerType');
+        const [owner_type, owner_id] = sel !== 'auto' && sel.includes(':') ? sel.split(':', 2) : ['auto', ''];
+        setStatus('uploadStatus', `正在上传并解析 ${fileInput.files.length} 个文件...`);
+        const results = [];
+        for (let i = 0; i < fileInput.files.length; i++) {
+          const form = new FormData();
+          form.append('file', fileInput.files[i]);
+          form.append('user_id', userId());
+          form.append('space_id', document.getElementById('spaceId').value.trim());
+          form.append('knowledge_owner_type', owner_type);
+          form.append('knowledge_owner_id', owner_id);
+          const url = knowledgeUrl('/api/v1/admin/knowledge/files/upload', '/api/v1/user/knowledge/files/upload', '/api/v1/files');
+          const data = await requestJson(url, {method:'POST', body:form});
+          results.push(data);
+        }
+        setStatus('uploadStatus', `上传完成：${results.length} 个文件`);
+        // Show extraction results
+        const display = results.map(r => {
+          const tags = (r.tags || []).join(', ');
+          const summary = (r.content_preview || '').substring(0, 200);
+          return `<div class="item">
+            <strong>${r.filename || r.id}</strong>
+            <span class="chip ${r.indexed ? 'ok' : 'bad'}">${r.indexed ? '已索引' : '未索引'}</span>
+            ${r.owner_type ? `<span class="chip">${scopeLabel({owner_type:r.owner_type, owner_id:r.owner_id})}</span>` : ''}
+            ${tags ? `<div class="meta">标签：${tags}</div>` : ''}
+            ${summary ? `<div class="meta">内容摘要：${summary}...</div>` : ''}
+          </div>`;
+        }).join('');
+        document.getElementById('uploadResults').innerHTML = display;
         await loadEntries();
       } catch (err) { setStatus('uploadStatus', String(err.message || err), true); }
     }
@@ -1953,11 +2007,20 @@ def admin_console_page():
     async function loadEmployeeBots() {
       try {
         const data = await api('/api/v1/admin/employee-bots');
-        const rows = (data.assignments || []).map((assignment) => `<tr><td>${safe(assignment.platform)}</td><td>${safe(assignment.user_id)}</td><td>${safe(assignment.display_name)}</td><td>${safe(assignment.scope)}</td><td>${assignment.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td><td>${safe(assignment.notify_status || '-')}</td></tr>`);
+        const rows = (data.assignments || []).map((assignment) => `<tr><td>${safe(assignment.platform)}</td><td>${safe(assignment.user_id)}</td><td><span id="empname_${safe(assignment.user_id)}">${safe(assignment.display_name)}</span> <button class="secondary" onclick="editEmployeeName('${safe(assignment.platform)}','${safe(assignment.user_id)}','${safe(assignment.display_name)}')" style="font-size:11px;padding:2px 8px">✎</button></td><td>${safe(assignment.scope)}</td><td>${assignment.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td><td>${safe(assignment.notify_status || '-')}</td></tr>`);
         setHtml('employeeList', table(['平台','员工','名称','自动范围','状态','通知'], rows));
       } catch (err) {
         setText('employeeResult', String(err.message || err), true);
       }
+    }
+    async function editEmployeeName(platform, userId, currentName) {
+      const newName = prompt('编辑员工 AI 助手显示名称', currentName);
+      if (newName === null || newName === currentName) return;
+      try {
+        const payload = {platform, user_id: userId, display_name: newName, notify: false};
+        await api('/api/v1/admin/employee-bots/activate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        document.getElementById('empname_' + userId.replace(/[&<>"']/g, '_')).textContent = newName;
+      } catch (err) { alert('修改失败：' + String(err.message || err)); }
     }
     let userSortKey = '', userSortAsc = true;
     function sortUsers(key) {
