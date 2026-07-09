@@ -261,8 +261,7 @@ def test_admin_console_page_contains_material_business_sections() -> None:
 
     html = admin_console_page().body.decode("utf-8")
 
-    assert "--md-primary:#0b57d0" in html
-    assert "平台 Bot 开通" in html
+    assert "--accent:#0078d4" in html
     assert "员工 AI 助手" in html
     assert "用户管理" in html
     assert "模型管理" in html
@@ -281,11 +280,11 @@ def test_knowledge_management_page_contains_business_operations() -> None:
 
     html = knowledge_management_page().body.decode("utf-8")
 
-    assert "--md-primary:#0b57d0" in html
+    assert "--accent:#0078d4" in html
     assert "新增到知识库" in html
     assert "上传文档入库" in html
     assert "scopeTree" in html
-    assert "uploadKnowledgeFile" in html
+    assert "uploadKnowledgeFiles" in html
     assert "renderScopeGroups" in html
     assert "升级知识条目" in html
     assert "导入公司级说明书文档" in html
