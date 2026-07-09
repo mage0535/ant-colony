@@ -95,6 +95,12 @@ def get_group_analyzer() -> GroupMessageAnalyzer:
     return _group_msg_analyzer
 
 
+def _model_payload(req: BaseModel) -> dict[str, Any]:
+    if hasattr(req, "model_dump"):
+        return req.model_dump()
+    return req.dict()
+
+
 # ---- Request models ----
 
 class ConfirmRequest(BaseModel):
@@ -146,6 +152,35 @@ class EmployeeBotActivationRequest(BaseModel):
     scope: str = "personal"
     permissions: list[str] = []
     notify: bool = True
+    status: str = "active"
+
+
+class EmployeeBotBatchRequest(BaseModel):
+    platform: str = "wecom"
+    user_ids: list[str] = []
+    display_name: str = ""
+    status: str = "active"
+    notify: bool = True
+
+
+class ModelProfileRequest(BaseModel):
+    profile_id: str
+    provider: str = "openai_compatible"
+    sdk_format: str = "openai"
+    display_name: str = ""
+    api_base: str = ""
+    api_key: str = ""
+    model_name: str = ""
+    max_tokens: int = 4096
+    timeout_seconds: int = 120
+    enabled: bool = True
+
+
+class ModelDiscoverRequest(BaseModel):
+    provider: str = "openai"
+    sdk_format: str = "openai"
+    api_base: str = ""
+    api_key: str = ""
 
 class KnowledgeCreateRequest(BaseModel):
     id: str
@@ -397,6 +432,14 @@ def admin_list_employee_bots(request: Request, platform: str = "", limit: int = 
     return {"assignments": list_employee_bot_assignments(platform=platform, limit=limit)}
 
 
+@app.get("/api/v1/admin/users")
+def admin_user_details(request: Request, platform: str = "", sync: bool = True):
+    context = require_admin_context_from_request(request)
+    from src.platform.user_management_service import list_admin_user_details
+
+    return list_admin_user_details(platform=platform or context["platform"], sync=sync)
+
+
 @app.get("/api/v1/admin/entry-menu")
 def admin_entry_menu(request: Request):
     context = require_admin_context_from_request(request)
@@ -443,6 +486,75 @@ def admin_deactivate_employee_bot(req: EmployeeBotActivationRequest, request: Re
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return {"assignment": assignment}
+
+
+@app.post("/api/v1/admin/employee-bots/status")
+def admin_set_employee_bot_status(req: EmployeeBotActivationRequest, request: Request):
+    context = require_admin_context_from_request(request)
+    from src.platform.employee_bot_service import activate_employee_bot, set_employee_bot_status
+
+    target_status = str(req.status or "").strip().lower() or "active"
+    if target_status == "active":
+        assignment = activate_employee_bot(
+            platform=req.platform,
+            user_id=req.user_id,
+            display_name=req.display_name,
+            activated_by=context["user_id"],
+            notify=req.notify,
+        )
+    else:
+        assignment = set_employee_bot_status(platform=req.platform, user_id=req.user_id, status=target_status, updated_by=context["user_id"])
+    return {"assignment": assignment}
+
+
+@app.post("/api/v1/admin/employee-bots/batch")
+def admin_batch_employee_bots(req: EmployeeBotBatchRequest, request: Request):
+    context = require_admin_context_from_request(request)
+    from src.platform.employee_bot_service import activate_employee_bot, set_employee_bot_status
+
+    results = []
+    for user_id in req.user_ids:
+        if not str(user_id).strip():
+            continue
+        if req.status == "active":
+            item = activate_employee_bot(
+                platform=req.platform,
+                user_id=str(user_id),
+                display_name=req.display_name,
+                activated_by=context["user_id"],
+                notify=req.notify,
+            )
+        else:
+            item = set_employee_bot_status(platform=req.platform, user_id=str(user_id), status=req.status, updated_by=context["user_id"])
+        results.append(item)
+    return {"updated": len(results), "results": results}
+
+
+@app.get("/api/v1/admin/models")
+def admin_model_profiles(request: Request):
+    require_admin_context_from_request(request)
+    from src.platform.model_management_service import list_model_profiles
+
+    return list_model_profiles()
+
+
+@app.post("/api/v1/admin/models")
+def admin_save_model_profile(req: ModelProfileRequest, request: Request):
+    require_admin_context_from_request(request)
+    from src.platform.model_management_service import save_model_profile
+
+    try:
+        return {"profile": save_model_profile(_model_payload(req))}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/v1/admin/models/discover")
+def admin_discover_models(req: ModelDiscoverRequest, request: Request):
+    require_admin_context_from_request(request)
+    from src.platform.model_management_service import discover_models
+
+    return discover_models(_model_payload(req))
 
 
 @app.post("/api/v1/admin/knowledge/import/company-guides")
@@ -1564,6 +1676,8 @@ def admin_console_page():
       <button class="active" onclick="showTab('overview', this)">总览</button>
       <button onclick="showTab('bots', this)">平台 Bot 开通</button>
       <button onclick="showTab('employees', this)">员工 AI 助手</button>
+      <button onclick="showTab('users', this)">用户管理</button>
+      <button onclick="showTab('models', this)">模型管理</button>
       <button onclick="showTab('knowledge', this)">知识库管理</button>
       <button onclick="showTab('runtime', this)">运行验证</button>
       <button onclick="showTab('help', this)">操作说明</button>
@@ -1643,6 +1757,46 @@ def admin_console_page():
             <h2>已开通员工</h2>
             <div class="actions"><button class="secondary" onclick="loadEmployeeBots()">刷新列表</button></div>
             <div id="employeeList"></div>
+          </div>
+        </div>
+      </section>
+      <section id="users">
+        <div class="panel">
+          <h2>用户状态详情</h2>
+          <p>用户清单按企业 IM 通讯录组织架构同步，合并在线活跃状态、AI 助手状态、角色权限和按日/周/月/年统计的用量。</p>
+          <div class="actions">
+            <select id="userPlatform" style="max-width:180px"><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="dingtalk">钉钉</option></select>
+            <button class="secondary" onclick="loadAdminUsers(true)">同步通讯录并刷新</button>
+            <button class="primary" onclick="batchSetSelectedUsers('active')">批量开通</button>
+            <button class="tonal" onclick="batchSetSelectedUsers('paused')">批量暂停</button>
+            <button class="danger" onclick="batchSetSelectedUsers('disabled')">批量关闭</button>
+          </div>
+          <div id="userBulkStatus" class="status"></div>
+          <div id="adminUserList"></div>
+        </div>
+      </section>
+      <section id="models">
+        <div class="grid two">
+          <div class="panel">
+            <h2>模型服务商</h2>
+            <label>配置名称</label><input id="modelProfileId" placeholder="default-openai">
+            <label>服务商</label><select id="modelProvider"><option value="openai_compatible">OpenAI 兼容</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="deepseek">DeepSeek</option></select>
+            <label>SDK 格式</label><select id="modelSdkFormat"><option value="openai">OpenAI 格式</option><option value="anthropic">Anthropic 格式</option></select>
+            <label>服务商 URL</label><input id="modelApiBase" placeholder="https://api.openai.com/v1">
+            <label>API Key</label><input id="modelApiKey" type="password" placeholder="留空则保留已保存密钥">
+            <label>模型名称 / ID</label><input id="modelName" placeholder="gpt-4.1-mini">
+            <label>最大输出 Token</label><input id="modelMaxTokens" type="number" value="4096">
+            <div class="actions">
+              <button class="secondary" onclick="discoverModels()">自动读取模型清单</button>
+              <button class="primary" onclick="saveModelProfile()">保存模型配置</button>
+            </div>
+            <div id="modelActionStatus" class="status"></div>
+            <div id="modelDiscovery"></div>
+          </div>
+          <div class="panel">
+            <h2>已配置模型</h2>
+            <div class="actions"><button class="secondary" onclick="loadModels()">刷新模型配置</button></div>
+            <div id="modelProfiles"></div>
           </div>
         </div>
       </section>
@@ -1764,6 +1918,82 @@ def admin_console_page():
         setText('employeeResult', String(err.message || err), true);
       }
     }
+    async function loadAdminUsers(sync=false) {
+      try {
+        const platform = val('userPlatform') || params.get('platform') || 'wecom';
+        const data = await api(`/api/v1/admin/users?platform=${encodeURIComponent(platform)}&sync=${sync ? 'true' : 'false'}`);
+        const rows = (data.users || []).map((user) => {
+          const usage = user.usage || {};
+          const checked = `<input type="checkbox" class="user-check" value="${safe(user.user_id)}">`;
+          const bot = user.bot_status === 'active' ? chip('已开通','ok') : (user.bot_status === 'paused' ? chip('已暂停','warn') : (user.bot_status === 'disabled' ? chip('已关闭','bad') : chip('未开通','warn')));
+          const online = user.online_status === 'recently_active' ? chip('近期活跃','ok') : chip(user.online_status || '未知');
+          return `<tr><td>${checked}</td><td>${safe(user.department_path || '-')}</td><td>${safe(user.name || user.user_id)}<br><span class="chip">${safe(user.user_id)}</span></td><td>${user.is_admin ? chip('管理员','ok') : ''}${user.is_leader ? chip('负责人','warn') : chip('员工')}</td><td>${online}</td><td>${bot}</td><td>日 ${safe(usage.day?.estimated_tokens || 0)} / 周 ${safe(usage.week?.estimated_tokens || 0)} / 月 ${safe(usage.month?.estimated_tokens || 0)} / 年 ${safe(usage.year?.estimated_tokens || 0)}</td><td><button class="secondary" onclick="setOneUserBot('${safe(user.user_id)}','active')">开通</button> <button class="tonal" onclick="setOneUserBot('${safe(user.user_id)}','paused')">暂停</button> <button class="danger" onclick="setOneUserBot('${safe(user.user_id)}','disabled')">关闭</button></td></tr>`;
+        });
+        setHtml('adminUserList', table(['选择','组织目录','用户','权限','状态','AI 助手','Token 估算','操作'], rows));
+      } catch (err) {
+        setText('userBulkStatus', String(err.message || err), true);
+      }
+    }
+    function selectedUserIds() {
+      return Array.from(document.querySelectorAll('.user-check:checked')).map((item) => item.value);
+    }
+    async function setOneUserBot(userId, status) {
+      const platform = val('userPlatform') || params.get('platform') || 'wecom';
+      const payload = {platform, user_id:userId, status, display_name:'企业 AI 助手', notify: status === 'active'};
+      await api('/api/v1/admin/employee-bots/status', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+      await loadAdminUsers(false);
+    }
+    async function batchSetSelectedUsers(status) {
+      try {
+        const user_ids = selectedUserIds();
+        if (!user_ids.length) throw new Error('请先勾选用户');
+        const payload = {platform: val('userPlatform') || params.get('platform') || 'wecom', user_ids, status, display_name:'企业 AI 助手', notify: status === 'active'};
+        const data = await api('/api/v1/admin/employee-bots/batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        setHtml('userBulkStatus', chip(`已更新 ${data.updated || 0} 个用户`, 'ok'));
+        await loadAdminUsers(false);
+      } catch (err) {
+        setText('userBulkStatus', String(err.message || err), true);
+      }
+    }
+    async function loadModels() {
+      try {
+        const data = await api('/api/v1/admin/models');
+        const rows = (data.profiles || []).map((profile) => `<tr><td>${safe(profile.profile_id)}</td><td>${safe(profile.provider)}</td><td>${safe(profile.model_name)}</td><td>${safe(profile.api_base || '-')}</td><td>${profile.api_key_configured ? chip('已配置','ok') : chip('缺少','bad')}</td><td>${profile.enabled ? chip('启用','ok') : chip('停用','warn')}</td></tr>`);
+        setHtml('modelProfiles', table(['配置','服务商','模型','URL','API Key','状态'], rows));
+      } catch (err) {
+        setText('modelActionStatus', String(err.message || err), true);
+      }
+    }
+    async function discoverModels() {
+      try {
+        const payload = {provider: val('modelProvider'), sdk_format: val('modelSdkFormat'), api_base: val('modelApiBase'), api_key: val('modelApiKey')};
+        const data = await api('/api/v1/admin/models/discover', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        const rows = (data.models || []).map((model) => `<tr><td>${safe(model.id)}</td><td>${safe(model.name)}</td><td><button class="secondary" onclick="chooseModel('${safe(model.id)}')">选择</button></td></tr>`);
+        setHtml('modelDiscovery', `<p>${safe(data.message || '')}</p>` + table(['模型 ID','名称','操作'], rows));
+      } catch (err) {
+        setText('modelActionStatus', String(err.message || err), true);
+      }
+    }
+    function chooseModel(modelId) { el('modelName').value = modelId; }
+    async function saveModelProfile() {
+      try {
+        const payload = {
+          profile_id: val('modelProfileId'),
+          provider: val('modelProvider'),
+          sdk_format: val('modelSdkFormat'),
+          api_base: val('modelApiBase'),
+          api_key: val('modelApiKey'),
+          model_name: val('modelName'),
+          max_tokens: Number(val('modelMaxTokens') || 4096),
+          enabled: true
+        };
+        const data = await api('/api/v1/admin/models', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        setHtml('modelActionStatus', chip(`已保存 ${data.profile?.profile_id || payload.profile_id}`, 'ok'));
+        await loadModels();
+      } catch (err) {
+        setText('modelActionStatus', String(err.message || err), true);
+      }
+    }
     async function activateEmployeeBot() {
       try {
         const payload = {
@@ -1818,6 +2048,8 @@ def admin_console_page():
         await loadProfile();
         await loadBots();
         await loadEmployeeBots();
+        await loadAdminUsers(false);
+        await loadModels();
         await loadRuntime();
       } catch (err) {
         el('identity').textContent = '验证失败';

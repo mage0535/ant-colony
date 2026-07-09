@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import os
 from pathlib import Path
 
 from src.knowledge.repository_factory import build_knowledge_repository
@@ -181,6 +182,48 @@ class InternalCapabilityProvider:
 
         return json.dumps(build_platform_entry_payloads(platform, user_id, is_admin=is_admin), ensure_ascii=False)
 
+    def query_meeting_room(self, query: str, days: int = 1) -> str | None:
+        if not _sample_enterprise_apps_enabled():
+            return None
+        samples = _load_sample_enterprise_apps()
+        rooms = samples.get("meeting_rooms", [])
+        keyword = _extract_room_keyword(query)
+        matches = []
+        for item in rooms:
+            name = str(item.get("room_name", ""))
+            if keyword and keyword not in name:
+                continue
+            matches.append(f"{name}：{item.get('date', '')} {item.get('start', '')}-{item.get('end', '')}，{item.get('title', '')}，申请人 {item.get('applicant', '')}")
+        if matches:
+            return "\n".join(matches)
+        return f"本地样例数据中未发现{keyword or '会议室'}占用记录"
+
+    def query_enterprise_apps(self, query: str, action: str = "query") -> str | None:
+        if not _sample_enterprise_apps_enabled():
+            return None
+        samples = _load_sample_enterprise_apps()
+        sections: list[str] = []
+        if any(word in query for word in ("会议室", "会议", "占用", "申请")):
+            room = self.query_meeting_room(query)
+            if room:
+                sections.append("【会议室/会议】\n" + room)
+        if "审批" in query or "流程" in query or "申请" in query:
+            approvals = samples.get("approvals", [])
+            if approvals:
+                lines = [f"{item.get('title', '')}：{item.get('status', '')}，申请人 {item.get('applicant', '')}，当前节点 {item.get('current_node', '')}" for item in approvals]
+                sections.append("【审批/流程】\n" + "\n".join(lines))
+        if "第三方" in query or "工单" in query or "订单" in query:
+            apps = samples.get("third_party_apps", [])
+            if apps:
+                lines = [f"{item.get('name', '')}：{item.get('summary', '')}" for item in apps]
+                sections.append("【第三方应用】\n" + "\n".join(lines))
+        return "\n\n".join(sections) if sections else None
+
+    def run_enterprise_app_action(self, action: str, payload: dict | None = None) -> str | None:
+        if not _sample_enterprise_apps_enabled():
+            return None
+        return f"本地能力已收到动作请求：{action}。真实执行会按平台权限进入对应 IM 应用 API。"
+
     def lookup_workorder(self, workorder_id: str) -> str | None:
         data = _load_sample_workorders()
         if not workorder_id:
@@ -215,3 +258,26 @@ def _load_sample_workorders() -> dict[str, dict]:
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_sample_enterprise_apps() -> dict[str, list[dict]]:
+    path = Path("data/business_systems/sample_enterprise_apps.json")
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _sample_enterprise_apps_enabled() -> bool:
+    return os.environ.get("ANT_COLONY_ENABLE_SAMPLE_BUSINESS_DATA", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _extract_room_keyword(query: str) -> str:
+    import re
+
+    match = re.search(r"([\u4e00-\u9fffA-Za-z0-9一二三四五六七八九十]+号?会议室)", query)
+    return match.group(1) if match else ("会议室" if "会议室" in query else "")

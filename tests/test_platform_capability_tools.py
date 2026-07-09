@@ -76,3 +76,22 @@ class TestPlatformCapabilityTools(unittest.TestCase):
 
         self.assertEqual(mock_invoke.call_args.args[:2], ("files.docx.read", "/tmp/a.docx"))
         self.assertEqual(result, "docx-text")
+
+    def test_enterprise_app_query_tool_delegates_to_platform(self) -> None:
+        from src.tools.platform_capability_tools import enterprise_app_query_tool
+
+        with patch("src.platform.invoke_capability", return_value="room-result") as mock_invoke:
+            result = enterprise_app_query_tool({"query": "三号会议室有人申请吗", "user_id": "u1", "platform": "wecom"})
+
+        self.assertEqual(mock_invoke.call_args.args[:2], ("apps.query", "三号会议室有人申请吗"))
+        self.assertEqual(result, "room-result")
+
+    def test_enterprise_app_action_tool_delegates_to_platform(self) -> None:
+        from src.tools.platform_capability_tools import enterprise_app_action_tool
+
+        with patch("src.platform.invoke_capability_first", return_value="created") as mock_invoke:
+            result = enterprise_app_action_tool({"action": "meeting.create", "title": "周会", "user_id": "u1"})
+
+        self.assertEqual(mock_invoke.call_args.args[0], "apps.action")
+        self.assertEqual(mock_invoke.call_args.args[1], "meeting.create")
+        self.assertEqual(result, "created")

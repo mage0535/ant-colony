@@ -154,6 +154,9 @@ def _run_workflow_shortcut(user_id: str, text: str, context: MessageContext) -> 
     if not normalized:
         return None
     service = OfficeWorkflowService()
+    if any(marker in normalized for marker in ("会议室", "审批流程", "申请流程", "第三方应用", "内置应用")) and any(marker in normalized for marker in ("有人", "占用", "申请", "查询", "查一下", "状态", "进度", "汇总")):
+        result = service.enterprise_app_query(user_id, normalized, context)
+        return AgentResponse(text=result.content)
     if "审批" in normalized and any(marker in normalized for marker in ("进度", "状态", "卡", "跟踪", "催办")):
         result = service.approval_followup(user_id, normalized, context)
         return AgentResponse(text=result.content)

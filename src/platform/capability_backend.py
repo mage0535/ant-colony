@@ -53,12 +53,15 @@ class CapabilityBackend:
         "docs.search": CapabilitySpec("docs.search", "search_docs"),
         "docs.read": CapabilitySpec("docs.read", "read_docs_document", domain="docs", requires_user_context=True),
         "docs.create": CapabilitySpec("docs.create", "create_doc", frozenset({"wecom"})),
-        "approval.list": CapabilitySpec("approval.list", "list_approvals", frozenset({"feishu", "dingtalk"})),
+        "approval.list": CapabilitySpec("approval.list", "list_approvals", frozenset({"wecom", "feishu", "dingtalk"})),
         "approval.detail": CapabilitySpec("approval.detail", "get_approval_detail", risk_level="medium", domain="approval", requires_user_context=True),
         "meeting.list": CapabilitySpec("meeting.list", "list_meetings", frozenset({"wecom", "dingtalk"})),
         "meeting.get": CapabilitySpec("meeting.get", "get_meeting_detail", risk_level="medium", domain="meeting", requires_user_context=True),
         "meeting.create": CapabilitySpec("meeting.create", "create_meeting", frozenset({"wecom"})),
         "calendar.detail": CapabilitySpec("calendar.detail", "get_event_detail", risk_level="medium", domain="calendar", requires_user_context=True),
+        "apps.query": CapabilitySpec("apps.query", "query_enterprise_apps", domain="apps", requires_user_context=True),
+        "apps.action": CapabilitySpec("apps.action", "run_enterprise_app_action", risk_level="medium", domain="apps", requires_user_context=True, audit_scope="sensitive"),
+        "meeting.room.query": CapabilitySpec("meeting.room.query", "query_meeting_room", domain="meeting", requires_user_context=True),
         "org.admins": CapabilitySpec("org.admins", "get_admin_users"),
         "org.leaders": CapabilitySpec("org.leaders", "get_department_leaders", frozenset({"wecom"})),
         "drive.search": CapabilitySpec("drive.search", "search_drive_docs"),
@@ -176,9 +179,10 @@ class CapabilityBackend:
         return results[0] if results else None
 
     def format_results(self, results: list[PlatformCapabilityResult], empty_message: str) -> str:
-        if not results:
+        safe_results = [item for item in results if item.success and item.content.strip()]
+        if not safe_results:
             return empty_message
-        return "\n".join(f"[{item.provider_label}] {item.content}" for item in results)
+        return "\n".join(f"[{item.provider_label}] {item.content}" for item in safe_results)
 
     @traceable_op("capability_invoke", run_type="tool")
     def invoke(
@@ -216,7 +220,7 @@ class CapabilityBackend:
         for item in results:
             if item.success:
                 return item
-        return results[0]
+        return None
 
     def supports(self, capability_id: str) -> bool:
         return capability_id in self.capabilities

@@ -84,16 +84,27 @@ def activate_employee_bot(
 
 
 def deactivate_employee_bot(*, platform: str, user_id: str, updated_by: str = "") -> dict[str, Any]:
+    return set_employee_bot_status(platform=platform, user_id=user_id, status="disabled", updated_by=updated_by)
+
+
+def pause_employee_bot(*, platform: str, user_id: str, updated_by: str = "") -> dict[str, Any]:
+    return set_employee_bot_status(platform=platform, user_id=user_id, status="paused", updated_by=updated_by)
+
+
+def set_employee_bot_status(*, platform: str, user_id: str, status: str, updated_by: str = "") -> dict[str, Any]:
     normalized_platform = _normalize_platform(platform)
     normalized_user_id = user_id.strip()
+    normalized_status = status.strip().lower()
+    if normalized_status not in {"active", "disabled", "paused"}:
+        raise ValueError(f"不支持的员工 AI 助手状态：{status}")
     conn = _conn()
     conn.execute(
         """
         UPDATE employee_bot_assignments
-        SET status = 'disabled', activated_by = ?, updated_at = ?
+        SET status = ?, activated_by = ?, updated_at = ?
         WHERE platform = ? AND user_id = ?
         """,
-        (updated_by, time.time(), normalized_platform, normalized_user_id),
+        (normalized_status, updated_by, time.time(), normalized_platform, normalized_user_id),
     )
     conn.commit()
     return get_employee_bot_assignment(normalized_platform, normalized_user_id) or {

@@ -21,6 +21,8 @@ from src.tools.platform_capability_tools import (
     compress_pdf_tool as _compress_pdf_tool,
     create_doc_tool as _create_doc_tool,
     create_meeting_tool as _create_meeting_tool,
+    enterprise_app_action_tool as _enterprise_app_action_tool,
+    enterprise_app_query_tool as _enterprise_app_query_tool,
     doc_search_tool as _doc_search_tool,
     read_docs_tool as _read_docs_tool,
     docx_template_outline_tool as _docx_template_outline_tool,
@@ -1822,6 +1824,64 @@ BUILTIN_TOOLS: list[ToolSpec] = [
         },
 
         handler=_approval_detail_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:enterprise_app_query",
+
+        name="查询企业应用和流程数据",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="查询企业 IM 内置应用、审批流程、会议室、日程、在线文档、第三方应用或内部业务系统数据。用户问会议室是否被申请、审批流程进度、多个应用数据汇总时优先使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "用户要查询的企业应用、流程、会议室、审批或第三方系统问题"},
+
+        },
+
+        handler=_enterprise_app_query_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:enterprise_app_action",
+
+        name="执行企业应用动作",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="根据用户明确指令调用企业应用或流程执行动作，例如创建会议、创建日程或后续接入的审批催办。执行前应确认动作、对象和时间等关键参数。",
+
+        parameters={
+
+            "action": {"type": "string", "description": "动作 ID，例如 meeting.create 或 calendar.create"},
+
+            "title": {"type": "string", "description": "会议或流程标题，可选"},
+
+            "summary": {"type": "string", "description": "日程标题，可选"},
+
+            "start_at": {"type": "string", "description": "开始时间，可选"},
+
+            "end_at": {"type": "string", "description": "结束时间，可选"},
+
+            "attendees": {"type": "string", "description": "参与人 UserID，逗号分隔，可选"},
+
+        },
+
+        handler=_enterprise_app_action_tool,
 
     ),
 

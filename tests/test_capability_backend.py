@@ -130,6 +130,17 @@ class TestCapabilityBackend(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.content, "provider-b ok")
 
+    def test_failed_provider_errors_are_not_formatted_for_users(self) -> None:
+        from src.platform.capability_backend import CapabilityBackend, PlatformCapabilityResult
+
+        backend = CapabilityBackend([])
+        text = backend.format_results(
+            [PlatformCapabilityResult("wecom", "企业微信", "HTTP Error 404: Not Found", success=False)],
+            "empty",
+        )
+
+        self.assertEqual(text, "empty")
+
     def test_supports_reports_known_capability(self) -> None:
         from src.platform.capability_backend import CapabilityBackend
 
@@ -461,6 +472,26 @@ class TestCapabilityBackend(unittest.TestCase):
                 "method_name": "analyze_workorder",
                 "providers": ["系统能力"],
                 "domain": "operations",
+                "requires_user_context": True,
+            },
+        )
+        self.assertEqual(
+            backend.describe_capability("apps.query"),
+            {
+                "capability_id": "apps.query",
+                "method_name": "query_enterprise_apps",
+                "providers": ["系统能力"],
+                "domain": "apps",
+                "requires_user_context": True,
+            },
+        )
+        self.assertEqual(
+            backend.describe_capability("meeting.room.query"),
+            {
+                "capability_id": "meeting.room.query",
+                "method_name": "query_meeting_room",
+                "providers": ["系统能力"],
+                "domain": "meeting",
                 "requires_user_context": True,
             },
         )

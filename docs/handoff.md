@@ -815,3 +815,83 @@
   - 当前表现：
     - 审批 / 会议能力若平台接口未开放，会优雅降级为“暂无能力”而不是返回原始 HTTP 404
     - 工单分析样板已能返回真实样板数据、风险等级和下一步建议
+
+## 2026-07-09 企业应用数据聚合、后台用户管理与模型管理
+
+- 本轮用户反馈：
+  - Bot 查询企业微信内置应用数据仍会暴露 `[企业微信] HTTP Error 404: Not Found`，典型场景是“三号会议室有人申请吗？”
+  - 需要真正打通企微内置应用、审批流程、第三方应用/内部系统数据，并能汇总多应用结果。
+  - 管理员后台需要新增用户管理二级页面：按通讯录组织架构展示用户、在线/活跃状态、AI 助手开通状态、权限角色、日/周/月/年 token 估算，并支持单人/批量开通、暂停、关闭员工 AI 助手。
+  - 管理员后台首页需要新增模型管理：配置服务商 URL、API Key、模型名，支持 OpenAI 和 Anthropic SDK 格式，能自动读取模型清单时自动加载，否则允许手工录入。
+- 本轮实现：
+  - capability backend 新增：
+    - `apps.query`
+    - `apps.action`
+    - `meeting.room.query`
+  - `approval.list` 已纳入企微 provider，不再只过滤到飞书/钉钉。
+  - `CapabilityBackend.format_results(...)` 现在只把成功 provider 结果返回给用户；失败仍进入 capability audit，但不会把底层 `HTTP 404` 等异常文本直接发给 Bot 用户。
+  - `WeComClient` 新增企业应用聚合能力：
+    - `query_meeting_room(...)`
+    - `query_enterprise_apps(...)`
+    - `run_enterprise_app_action(...)`
+    - `list_approvals(...)`
+  - 飞书/钉钉客户端补齐同名企业应用查询/动作接口，当前无真实租户时可走模拟和已有日程/审批/文档能力。
+  - `InternalCapabilityProvider` 新增本地企业应用样例闭环，数据文件：
+    - `data/business_systems/sample_enterprise_apps.json`
+  - `OfficeWorkflowService` 新增 `enterprise_app_query(...)`，用于把会议室、审批、内置应用、第三方系统查询汇总为一个可读结果。
+  - `PersonalAgent` 对“会议室/审批流程/第三方应用/内置应用 + 查询/状态/占用/申请”等意图做快捷路由，优先走企业应用聚合能力。
+  - 工具层新增：
+    - `builtin:enterprise_app_query`
+    - `builtin:enterprise_app_action`
+  - 后台新增用户管理服务：
+    - `src/platform/user_management_service.py`
+    - `GET /api/v1/admin/users`
+    - `POST /api/v1/admin/employee-bots/status`
+    - `POST /api/v1/admin/employee-bots/batch`
+  - 员工 AI 助手状态支持：
+    - `active`
+    - `paused`
+    - `disabled`
+  - 后台新增模型管理服务：
+    - `src/platform/model_management_service.py`
+    - `GET /api/v1/admin/models`
+    - `POST /api/v1/admin/models`
+    - `POST /api/v1/admin/models/discover`
+  - `/admin/console` 新增两个真实可交互标签：
+    - `用户管理`
+    - `模型管理`
+  - `.gitignore` 新增 `.omx/`，避免本地自动化上下文进入可发布代码。
+- 验证：
+  - 定向测试：
+    - `python -m pytest tests/test_capability_backend.py tests/test_wecom_platform_api.py tests/test_office_workflow_service.py tests/test_admin_console.py tests/test_admin_user_and_model_services.py tests/test_engine.py tests/test_platform_capability_tools.py -q`
+    - 结果：`85 passed`
+  - 本地编译：
+    - `python -m compileall -q src tests scripts`
+    - 结果：通过
+  - 本地全量测试：
+    - `python -m pytest -q`
+    - 结果：`514 passed`
+  - diff 检查：
+    - `git diff --check`
+    - 结果：通过，仅存在 Git 换行提示
+- 真实环境注意事项：
+  - 企微会议室、审批和部分第三方应用 API 是否可返回真实数据，仍取决于企业微信后台是否给当前 AI 助手应用授予对应应用/流程的数据读取权限。
+  - 代码侧已做到：有权限时走真实 provider，无权限或接口不可用时记录审计并返回中文可操作提示，不再向用户暴露原始 HTTP 404。
+## 2026-07-09 卡住任务恢复与真实数据边界修正
+
+- 已恢复并完成上次中断的企微企业应用、用户管理和模型管理任务验证。
+- 修正了企业应用样例数据可能在生产环境被误当成真实结果的问题：
+  - `InternalCapabilityProvider` 的会议室、审批和第三方应用样例数据默认关闭。
+  - 仅在显式设置 `ANT_COLONY_ENABLE_SAMPLE_BUSINESS_DATA=true` 时用于本地或飞书/钉钉模拟测试。
+  - 生产环境不会用样例数据替代真实企业应用结果。
+- 企微会议室查询现在保留接口诊断：
+  - 真实接口有数据时返回真实占用记录。
+  - 企业应用缺少权限并返回 `48002 api forbidden` 时，向用户明确说明缺少会议室/会议/日程只读权限。
+  - 租户没有可用接口时明确说明未获得真实数据，不再错误回答“没有占用记录”。
+- 本地恢复验证：
+  - 定向测试 `48 passed`。
+  - 最终本地完整回归 `518 passed`。
+  - 测试服务器完整回归 `518 passed`。
+  - 测试服务器网关和管理后台健康检查通过。
+  - 真实网关消息“`三号会议室有人申请吗？`”已验证：不再返回 HTTP 404，不使用样例数据；当前租户因企微应用权限不足返回准确的 `48002` 诊断。
+  - 企微后台补充会议室、会议和日程只读权限后，同一链路会直接返回真实数据，无需再次修改代码。

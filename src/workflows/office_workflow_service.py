@@ -94,6 +94,33 @@ class WorkflowResult:
 
 
 class OfficeWorkflowService:
+    def enterprise_app_query(self, user_id: str, query: str, context: MessageContext) -> WorkflowResult:
+        cap_ctx = _context_dict(user_id, context)
+        app_data = _clean_capability_text(
+            invoke_capability("apps.query", query, context=cap_ctx, empty_message=""),
+            "暂未查询到企业应用数据。可能原因是对应应用未授权给当前 AI 助手，或该应用没有当前条件下的数据。",
+        )
+        room_data = ""
+        if "会议室" in query and "暂未查询到企业应用数据" in app_data:
+            room_data = _clean_capability_text(
+                invoke_capability("meeting.room.query", query, context=cap_ctx, empty_message=""),
+                "",
+            )
+        body = (
+            _role_prefix(query or "企业应用查询")
+            + f"【企业应用查询结果】\n{app_data}\n\n"
+        )
+        if room_data and room_data not in app_data:
+            body += f"【会议室专项核对】\n{room_data}\n\n"
+        body += (
+            "【下一步建议】\n"
+            "1. 如果结果来自真实企业微信应用，可直接按返回的申请人、时间和节点继续处理。\n"
+            "2. 如果提示权限不足，请让管理员在企业微信后台给 AI 助手应用补充会议室、日程、审批或对应第三方应用的数据读取权限。\n"
+            "3. 需要我继续发起会议、催办审批或汇总多个流程时，可以直接说明动作和对象。"
+        )
+        _record_artifacts(user_id, context, "企业应用查询结果", body, "enterprise_app_query")
+        return WorkflowResult("企业应用查询结果", body)
+
     def approval_followup(self, user_id: str, query: str, context: MessageContext) -> WorkflowResult:
         cap_ctx = _context_dict(user_id, context)
         approvals = _clean_capability_text(invoke_capability("approval.list", "pending", context=cap_ctx, empty_message=""), "暂无审批列表能力")

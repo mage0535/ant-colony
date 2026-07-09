@@ -235,6 +235,35 @@ class FeishuClient:
     def get_event_detail(self, query: str) -> str | None:
         return self.get_agenda(days=30)
 
+    def query_meeting_room(self, query: str, days: int = 1) -> str | None:
+        agenda = self.get_agenda(days=days)
+        if not agenda:
+            return None
+        lines = [line for line in agenda.splitlines() if "会议室" in line or "会议" in line or query in line]
+        return "\n".join(lines[:20]) if lines else None
+
+    def query_enterprise_apps(self, query: str, action: str = "query") -> str | None:
+        sections: list[str] = []
+        if any(word in query for word in ("会议室", "会议", "日程")):
+            agenda = self.get_agenda(days=7)
+            if agenda:
+                sections.append("【日程/会议】\n" + agenda)
+        if "审批" in query or "流程" in query or "申请" in query:
+            approvals = self.list_approvals("pending")
+            if approvals:
+                sections.append("【审批/流程】\n" + approvals)
+        if "文档" in query or "资料" in query:
+            docs = self.search_docs(query)
+            if docs:
+                sections.append("【云文档】\n" + docs)
+        return "\n\n".join(sections) if sections else None
+
+    def run_enterprise_app_action(self, action: str, payload: dict | None = None) -> str | None:
+        payload = payload or {}
+        if action == "calendar.create":
+            return self.create_event(str(payload.get("summary", "日程")), str(payload.get("start_at", "")), str(payload.get("end_at", "")))
+        return f"飞书暂未开放该动作的自动执行器：{action}"
+
     def create_event(self, summary: str, start_at: str, end_at: str) -> str | None:
         """Create a calendar event.
 

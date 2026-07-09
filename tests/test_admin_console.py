@@ -136,6 +136,51 @@ def test_admin_employee_bot_list_requires_admin_context() -> None:
     assert result["assignments"][0]["user_id"] == "u2"
 
 
+def test_admin_user_details_api_requires_admin_context() -> None:
+    from src.web.dashboard import admin_user_details
+
+    request = _request("/api/v1/admin/users")
+    fake = {"platform": "wecom", "users": [{"user_id": "u2", "bot_status": "active"}]}
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.user_management_service.list_admin_user_details", return_value=fake) as list_users:
+        result = admin_user_details(request, platform="wecom", sync=False)
+
+    assert result["users"][0]["user_id"] == "u2"
+    list_users.assert_called_once_with(platform="wecom", sync=False)
+
+
+def test_admin_batch_employee_bots_updates_selected_users() -> None:
+    from src.web.dashboard import EmployeeBotBatchRequest, admin_batch_employee_bots
+
+    request = _request("/api/v1/admin/employee-bots/batch")
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.employee_bot_service.activate_employee_bot", side_effect=lambda **kw: {"user_id": kw["user_id"], "status": "active"}) as activate:
+        result = admin_batch_employee_bots(EmployeeBotBatchRequest(platform="wecom", user_ids=["u1", "u2"], status="active"), request)
+
+    assert result["updated"] == 2
+    assert activate.call_count == 2
+
+
+def test_admin_model_management_apis() -> None:
+    from src.web.dashboard import ModelDiscoverRequest, ModelProfileRequest, admin_discover_models, admin_model_profiles, admin_save_model_profile
+
+    request = _request("/api/v1/admin/models")
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.model_management_service.list_model_profiles", return_value={"profiles": []}):
+        assert admin_model_profiles(request)["profiles"] == []
+
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.model_management_service.save_model_profile", return_value={"profile_id": "default", "api_key_configured": True}) as save:
+        result = admin_save_model_profile(ModelProfileRequest(profile_id="default", model_name="gpt-4.1-mini"), request)
+    assert result["profile"]["profile_id"] == "default"
+    assert save.call_args.args[0]["model_name"] == "gpt-4.1-mini"
+
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.model_management_service.discover_models", return_value={"ok": True, "models": [{"id": "m"}]}):
+        result = admin_discover_models(ModelDiscoverRequest(api_key="sk-test"), request)
+    assert result["models"][0]["id"] == "m"
+
+
 def test_admin_entry_menu_uses_admin_context() -> None:
     from src.web.dashboard import admin_entry_menu
 
@@ -219,6 +264,10 @@ def test_admin_console_page_contains_material_business_sections() -> None:
     assert "--md-primary:#0b57d0" in html
     assert "平台 Bot 开通" in html
     assert "员工 AI 助手" in html
+    assert "用户管理" in html
+    assert "模型管理" in html
+    assert "batchSetSelectedUsers" in html
+    assert "discoverModels" in html
     assert "开通并通知员工" in html
     assert "知识范围和操作权限由平台根据员工在企业 IM 中的组织架构" in html
     assert "employeeScope" not in html

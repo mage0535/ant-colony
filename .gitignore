@@ -33,6 +33,7 @@ build/
 /external/
 external/
 scratchpad/
+.omx/
 check_parser*.py
 debug_*.py
 *.log

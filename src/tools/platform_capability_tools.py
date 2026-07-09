@@ -303,7 +303,30 @@ def list_capabilities_tool(args: dict[str, str]) -> str:
 def approval_list_tool(args: dict[str, str]) -> str:
     from src.platform import invoke_capability
 
-    return invoke_capability("approval.list", str(args.get("status", "pending")), context=_context_from_args(args), empty_message="无待审批事项（需配置飞书/钉钉凭证）")
+    return invoke_capability("approval.list", str(args.get("status", "pending")), context=_context_from_args(args), empty_message="无待审批事项或当前平台审批权限未开放")
+
+
+def enterprise_app_query_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability
+
+    query = str(args.get("query", ""))
+    if not query:
+        return "请提供要查询的企业应用、流程、会议室、审批或第三方系统问题"
+    return invoke_capability("apps.query", query, context=_context_from_args(args), empty_message="未查询到企业应用数据，或当前 AI 助手尚未获得对应应用权限")
+
+
+def enterprise_app_action_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    action = str(args.get("action", ""))
+    if not action:
+        return "请提供要执行的企业应用动作，例如 meeting.create 或 calendar.create"
+    payload = {
+        key: value
+        for key, value in args.items()
+        if key not in {"action", "user_id", "_source_provider", "_source_transport", "platform", "transport"}
+    }
+    return invoke_capability_first("apps.action", action, payload, context=_context_from_args(args), empty_message="当前企业应用动作无法执行，可能是权限不足或动作暂未接入")
 
 
 def calendar_create_tool(args: dict[str, str]) -> str:

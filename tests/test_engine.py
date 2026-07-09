@@ -398,6 +398,22 @@ class TestPersonalAgent(unittest.TestCase):
 
         self.assertEqual(response.text, "审批跟踪结果")
 
+    def test_personal_agent_shortcuts_to_enterprise_app_query(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        engine = AgentEngine(config)
+        agent = PersonalAgent("u1", engine)
+        context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1", metadata={"provider": "wecom"})
+
+        with patch("src.agents.personal_agent.OfficeWorkflowService.enterprise_app_query", return_value=type("Result", (), {"content": "三号会议室查询结果"})()):
+            response = agent.process_message("u1", "三号会议室有人申请吗？", context)
+
+        self.assertEqual(response.text, "三号会议室查询结果")
+
     def test_personal_agent_shortcuts_to_workorder_workflow(self) -> None:
         config = AgentEngineConfig(
             model_name="gpt-4o-mini",
