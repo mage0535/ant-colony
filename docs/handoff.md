@@ -998,3 +998,9 @@
 1. 调查会议室预定 API 600018 根因（时区/专用 Secret）
 2. 修复文档搜索和日历 API 路径
 3. 飞书/钉钉真实凭据准备
+
+**8. 用户上下文透传修复**
+- 根因：引擎 _execute_tool_calls() 只在 generate_document 工具时注入 rom 字段，其他工具（考勤、知识库、任务等）无用户上下文
+- 修复：改为**所有工具调用都注入** rom + user_id 
+- 修复 org_admin_tools.py 全部 6 个函数使用 _resolve_user_id() 统一解析
+- 修复 knowledge_tools.py 等 10 个 handler 虽未改代码但引擎注入后自动可用
