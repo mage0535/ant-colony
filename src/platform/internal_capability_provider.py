@@ -224,6 +224,19 @@ class InternalCapabilityProvider:
             return None
         return f"本地能力已收到动作请求：{action}。真实执行会按平台权限进入对应 IM 应用 API。"
 
+    def list_accessible_applications(self, query: str = "", capability_context=None) -> str | None:
+        del capability_context
+        if not _sample_enterprise_apps_enabled():
+            return None
+        samples = _load_sample_enterprise_apps().get("third_party_apps", [])
+        lines = []
+        for item in samples:
+            text = f"{item.get('name', '')}：{item.get('summary', '')}"
+            if query and query not in text and "第三方" not in query and "应用" not in query:
+                continue
+            lines.append(text)
+        return "\n".join(lines) if lines else None
+
     def lookup_workorder(self, workorder_id: str) -> str | None:
         data = _load_sample_workorders()
         if not workorder_id:

@@ -80,11 +80,26 @@ class TestPlatformCapabilityTools(unittest.TestCase):
     def test_enterprise_app_query_tool_delegates_to_platform(self) -> None:
         from src.tools.platform_capability_tools import enterprise_app_query_tool
 
-        with patch("src.platform.invoke_capability", return_value="room-result") as mock_invoke:
+        with patch("src.platform.enterprise_query_service.execute_enterprise_query", return_value="room-result") as mock_invoke:
             result = enterprise_app_query_tool({"query": "三号会议室有人申请吗", "user_id": "u1", "platform": "wecom"})
 
-        self.assertEqual(mock_invoke.call_args.args[:2], ("apps.query", "三号会议室有人申请吗"))
+        self.assertEqual(mock_invoke.call_args.args[0], "三号会议室有人申请吗")
         self.assertEqual(result, "room-result")
+
+    def test_enterprise_app_query_tool_uses_original_context_when_query_missing(self) -> None:
+        from src.tools.platform_capability_tools import enterprise_app_query_tool
+
+        with patch("src.platform.enterprise_query_service.execute_enterprise_query", return_value="审批结果") as mock_invoke:
+            result = enterprise_app_query_tool(
+                {
+                    "_context_text": "查询我所有审批的状态",
+                    "user_id": "u1",
+                    "_source_provider": "wecom",
+                }
+            )
+
+        self.assertEqual(result, "审批结果")
+        self.assertEqual(mock_invoke.call_args.args[0], "查询我所有审批的状态")
 
     def test_enterprise_app_action_tool_delegates_to_platform(self) -> None:
         from src.tools.platform_capability_tools import enterprise_app_action_tool

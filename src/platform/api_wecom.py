@@ -10,13 +10,16 @@ from datetime import datetime
 from datetime import timedelta
 from typing import Any
 
+from src.platform.capability_audit import CapabilityInvocationContext
+from src.platform.enterprise_query import EnterpriseQueryPlan, plan_enterprise_query
+
 logger = logging.getLogger(__name__)
 
 WECOM_API = "https://qyapi.weixin.qq.com/cgi-bin"
 _corp_id: str = ""
 _agent_id: int = 0
 _app_secret: str = ""
-_token_cache: tuple[str, float] = ("", 0)
+_token_cache: dict[str, tuple[str, float]] = {}
 
 
 def _init_creds():
@@ -26,24 +29,40 @@ def _init_creds():
     _app_secret = os.environ.get("WECOM_SECRET", "")
 
 
-def _get_token() -> str:
-    global _token_cache
+def _resolve_domain_secret(domain: str) -> str:
+    domain_variables = {
+        "approval": ("WECOM_APPROVAL_SECRET",),
+        "meeting": ("WECOM_MEETING_SECRET", "WECOM_CALENDAR_SECRET"),
+        "calendar": ("WECOM_CALENDAR_SECRET", "WECOM_MEETING_SECRET"),
+        "docs": ("WECOM_DOCS_SECRET",),
+        "contacts": ("WECOM_CONTACT_SECRET",),
+        "apps": ("WECOM_APPLICATION_SECRET",),
+    }
+    for variable in domain_variables.get(str(domain or "").lower(), ()):
+        value = os.environ.get(variable, "").strip()
+        if value:
+            return value
+    return os.environ.get("WECOM_SECRET", "").strip() or _app_secret
+
+
+def _get_token(secret: str | None = None) -> str:
     if not _corp_id:
         _init_creds()
-    token, expires = _token_cache
+    resolved_secret = secret or _app_secret
+    token, expires = _token_cache.get(resolved_secret, ("", 0))
     if token and time.time() < expires - 60:
         return token
-    url = f"{WECOM_API}/gettoken?corpid={_corp_id}&corpsecret={_app_secret}"
+    url = f"{WECOM_API}/gettoken?corpid={_corp_id}&corpsecret={resolved_secret}"
     with urllib.request.urlopen(urllib.request.Request(url), timeout=10) as resp:
         data = json.loads(resp.read())
     if data.get("errcode", 0) != 0:
         raise RuntimeError(f"WeCom token error: {data.get('errmsg')}")
-    _token_cache = (data["access_token"], time.time() + data.get("expires_in", 7200))
-    return _token_cache[0]
+    _token_cache[resolved_secret] = (data["access_token"], time.time() + data.get("expires_in", 7200))
+    return _token_cache[resolved_secret][0]
 
 
-def _post(path: str, body: dict[str, Any]) -> dict[str, Any]:
-    token = _get_token()
+def _post(path: str, body: dict[str, Any], *, secret: str | None = None) -> dict[str, Any]:
+    token = _get_token(secret)
     url = f"{WECOM_API}/{path}?access_token={token}"
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"},
@@ -55,9 +74,9 @@ def _post(path: str, body: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _post_optional(path: str, body: dict[str, Any]) -> dict[str, Any] | None:
+def _post_optional(path: str, body: dict[str, Any], *, secret: str | None = None) -> dict[str, Any] | None:
     try:
-        return _post(path, body)
+        return _post(path, body, secret=secret)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             logger.info("WeCom endpoint unavailable: %s", path)
@@ -68,9 +87,14 @@ def _post_optional(path: str, body: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
 
-def _post_optional_diagnostic(path: str, body: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+def _post_optional_diagnostic(
+    path: str,
+    body: dict[str, Any],
+    *,
+    secret: str | None = None,
+) -> tuple[dict[str, Any] | None, str]:
     try:
-        return _post(path, body), ""
+        return _post(path, body, secret=secret), ""
     except urllib.error.HTTPError as exc:
         logger.info("WeCom endpoint unavailable: %s: HTTP %s", path, exc.code)
         return None, f"HTTP {exc.code}"
@@ -79,8 +103,8 @@ def _post_optional_diagnostic(path: str, body: dict[str, Any]) -> tuple[dict[str
         return None, str(exc)
 
 
-def _get(path: str, params: str = "") -> dict[str, Any]:
-    token = _get_token()
+def _get(path: str, params: str = "", *, secret: str | None = None) -> dict[str, Any]:
+    token = _get_token(secret)
     url = f"{WECOM_API}/{path}?access_token={token}&{params}"
     with urllib.request.urlopen(urllib.request.Request(url), timeout=15) as resp:
         result = json.loads(resp.read())
@@ -94,11 +118,12 @@ class WeComClient:
     def search_user(self, query: str) -> str | None:
         try:
             # Get all departments first
-            dept_resp = _get("department/list")
+            secret = _resolve_domain_secret("contacts")
+            dept_resp = _get("department/list", secret=secret)
             dept_ids = [d["id"] for d in dept_resp.get("department", [])]
             results = []
             for dept_id in dept_ids[:5]:  # search top 5 depts
-                resp = _get("user/list", f"department_id={dept_id}&fetch_child=1")
+                resp = _get("user/list", f"department_id={dept_id}&fetch_child=1", secret=secret)
                 for user in resp.get("userlist", []):
                     name = user.get("name", "")
                     alias = user.get("alias", "")
@@ -120,7 +145,7 @@ class WeComClient:
                 "cal_id": "",
                 "start_time": now,
                 "end_time": end,
-            })
+            }, secret=_resolve_domain_secret("calendar"))
             events = []
             cal_list = resp.get("calendar_list", [])
             for cal in cal_list:
@@ -136,25 +161,42 @@ class WeComClient:
             logger.warning("WeCom get_agenda failed: %s", e)
             raise
 
-    def query_meeting_room(self, query: str, days: int = 1) -> str | None:
-        room_name = _extract_room_name(query)
+    def query_meeting_room(
+        self,
+        query: str,
+        days: int = 1,
+        capability_context: CapabilityInvocationContext | None = None,
+    ) -> str | None:
+        del capability_context
+        plan = plan_enterprise_query(query)
+        room_name = plan.entities[0] if plan.entities else "会议室"
         start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
         end = int((datetime.now() + timedelta(days=max(1, days))).timestamp())
         sections: list[str] = []
         errors: list[str] = []
+        payloads: list[dict[str, Any]] = []
         for path, body in (
             ("oa/meetingroom/get_booking_info", {"start_time": start, "end_time": end, "city": "", "building": "", "floor": ""}),
             ("oa/meetingroom/bookinfo/get", {"start_time": start, "end_time": end, "room_name": room_name}),
             ("meeting/get_user_meetinglist", {"begin_time": start, "end_time": end, "limit": 50}),
         ):
-            resp, error = _post_optional_diagnostic(path, body)
+            resp, error = _post_optional_diagnostic(
+                path,
+                body,
+                secret=_resolve_domain_secret("meeting"),
+            )
             if not resp:
                 if error:
                     errors.append(error)
                 continue
+            payloads.append(resp)
             text = _format_room_payload(resp, room_name)
             if text:
                 sections.append(text)
+        if plan.operation == "availability" and payloads:
+            availability = _format_room_availability(payloads)
+            if availability:
+                return availability
         if sections:
             return "\n".join(dict.fromkeys(sections))
         try:
@@ -200,7 +242,7 @@ class WeComClient:
                     "start_time": {"time": int(start_dt.timestamp())},
                     "end_time": {"time": int(end_dt.timestamp())},
                 },
-            })
+            }, secret=_resolve_domain_secret("calendar"))
             cal_id = resp.get("cal_id", "")
             return f"日程已创建 (ID: {cal_id})" if cal_id else "日程创建成功"
         except Exception as e:
@@ -209,7 +251,11 @@ class WeComClient:
 
     def search_docs(self, query: str) -> str | None:
         try:
-            resp = _post("doc/search", {"query": query, "offset": 0, "limit": 10})
+            resp = _post(
+                "doc/search",
+                {"query": query, "offset": 0, "limit": 10},
+                secret=_resolve_domain_secret("docs"),
+            )
             results = []
             for doc in resp.get("item_list", []):
                 title = doc.get("title", "(无标题)")
@@ -235,7 +281,7 @@ class WeComClient:
             resp = _post("doc/create", {
                 "title": title,
                 "content": content,
-            })
+            }, secret=_resolve_domain_secret("docs"))
             doc_id = resp.get("docid", "")
             url = resp.get("url", "")
             return f"文档已创建: {title} (docid: {doc_id})\n{url}"
@@ -253,7 +299,7 @@ class WeComClient:
                 "begin_time": now - 30 * 86400,
                 "end_time": now + 30 * 86400,
                 "limit": 10,
-            })
+            }, secret=_resolve_domain_secret("meeting"))
             meetings = []
             for m in resp.get("meeting_list", []):
                 title = m.get("title", "(无标题)")
@@ -273,30 +319,99 @@ class WeComClient:
     def get_event_detail(self, query: str) -> str | None:
         return self.get_agenda(days=30)
 
-    def get_approval_detail(self, query: str) -> str | None:
-        return self.list_approvals(query or "pending")
+    def get_approval_detail(
+        self,
+        query: str,
+        capability_context: CapabilityInvocationContext | None = None,
+    ) -> str | None:
+        return self.list_approvals(
+            "pending",
+            query=query,
+            capability_context=capability_context,
+        )
 
-    def list_approvals(self, status: str = "pending") -> str | None:
+    def list_approvals(
+        self,
+        status: str = "pending",
+        *,
+        query: str = "",
+        capability_context: CapabilityInvocationContext | None = None,
+    ) -> str | None:
+        if str(status).lower() not in {"pending", "all", "approved", "rejected", "审批中", "所有"}:
+            query = query or str(status)
+            status = "all"
+        loaded = self._load_user_approval_details(capability_context)
+        if isinstance(loaded, tuple):
+            details, error = loaded
+        else:
+            details, error = loaded, ""
+        if error:
+            normalized_error = error.lower()
+            if (
+                "48002" in error
+                or "301055" in error
+                or "forbidden" in normalized_error
+                or "no approval auth" in normalized_error
+            ):
+                return (
+                    "暂时无法读取当前用户的真实审批数据："
+                    "企业微信 AI 助手应用缺少审批数据读取权限"
+                    + ("（错误码 48002）。" if "48002" in error else "。")
+                )
+            return f"暂时无法读取当前用户的真实审批数据：{error}"
+        if not details:
+            return "当前用户权限范围内没有查到审批记录。"
+        plan = plan_enterprise_query(query or "查询我的审批")
+        terms = plan.query_terms
+        filtered = [
+            item
+            for item in details
+            if _approval_matches(item, terms, status)
+        ]
+        return "\n".join(
+            f"{item['name']}（{item['sp_no']}）：{item['status']}，申请人 {item['applicant']}"
+            for item in filtered[:20]
+        ) or "当前用户权限范围内没有与该条件匹配的审批记录。"
+
+    def _load_user_approval_details(
+        self,
+        capability_context: CapabilityInvocationContext | None = None,
+    ) -> tuple[list[dict[str, str]], str]:
         now = int(time.time())
         start = now - 30 * 86400
         end = now + 7 * 86400
-        sections: list[str] = []
-        template_resp = _post_optional("oa/gettemplatedetail", {})
-        if template_resp:
-            text = _format_approval_payload(template_resp)
-            if text:
-                sections.append(text)
-        for path, body in (
-            ("oa/getapprovalinfo", {"starttime": start, "endtime": end, "cursor": 0, "size": 20}),
-            ("oa/applyevent/get_approval_info", {"starttime": start, "endtime": end, "cursor": 0, "size": 20}),
-        ):
-            resp = _post_optional(path, body)
-            if not resp:
+        approval_secret = _resolve_domain_secret("approval")
+        response, error = _post_optional_diagnostic(
+            "oa/getapprovalinfo",
+            {"starttime": start, "endtime": end, "cursor": 0, "size": 100},
+            secret=approval_secret,
+        )
+        if not response:
+            return [], error
+        user_id = capability_context.user_id if capability_context else ""
+        can_view_all = _is_approval_admin(user_id)
+        details: list[dict[str, str]] = []
+        for sp_no in response.get("sp_no_list", [])[:100]:
+            detail = _post_optional(
+                "oa/getapprovaldetail",
+                {"sp_no": sp_no},
+                secret=approval_secret,
+            )
+            info = detail.get("info", {}) if isinstance(detail, dict) else {}
+            if not info:
                 continue
-            text = _format_approval_payload(resp)
-            if text:
-                sections.append(text)
-        return "\n".join(dict.fromkeys(sections)) if sections else None
+            participants = _approval_participants(info)
+            if user_id and not can_view_all and user_id not in participants:
+                continue
+            details.append(
+                {
+                    "sp_no": str(info.get("sp_no") or sp_no),
+                    "name": str(info.get("sp_name") or info.get("template_name") or "未命名审批"),
+                    "status": _approval_status_label(info.get("sp_status")),
+                    "applicant": str((info.get("applyer") or {}).get("userid") or ""),
+                }
+            )
+        return details, ""
 
     def create_meeting(self, title: str, start_at: str, end_at: str, attendees: list[str] | None = None) -> str | None:
         try:
@@ -308,32 +423,87 @@ class WeComClient:
                 "end_time": int(end_dt.timestamp()),
                 "attendees": [{"userid": uid} for uid in (attendees or [])],
             }
-            resp = _post("meeting/create", body)
+            resp = _post("meeting/create", body, secret=_resolve_domain_secret("meeting"))
             meeting_id = resp.get("meetingid", "")
             return f"会议已创建: {title} (meetingid: {meeting_id})" if meeting_id else "会议创建成功"
         except Exception as e:
             logger.warning("WeCom create_meeting failed: %s", e)
             raise
 
-    def query_enterprise_apps(self, query: str, action: str = "query") -> str | None:
+    def query_enterprise_apps(
+        self,
+        query: str,
+        action: str = "query",
+        capability_context: CapabilityInvocationContext | None = None,
+    ) -> str | None:
+        del action
+        plan = plan_enterprise_query(query)
         sections: list[str] = []
-        if any(word in query for word in ("会议室", "会议", "房间", "占用", "申请")):
-            room = _optional_client_call(self.query_meeting_room, query)
-            if room:
-                sections.append("【会议室/会议】\n" + room)
-        if "审批" in query or "申请" in query or "流程" in query:
-            approvals = _optional_client_call(self.list_approvals, "pending")
-            if approvals:
-                sections.append("【审批/流程】\n" + approvals)
-        if "日程" in query or "安排" in query or "会议" in query:
-            agenda = _optional_client_call(self.get_agenda, days=7)
-            if agenda:
-                sections.append("【日程】\n" + agenda)
-        if not sections:
-            docs = _optional_client_call(self.search_docs, query)
-            if docs:
-                sections.append("【在线文档】\n" + docs)
+        for domain in plan.domains:
+            if domain == "meeting_room":
+                value = _optional_client_call(
+                    self.query_meeting_room,
+                    query,
+                    capability_context=capability_context,
+                )
+                label = "会议室"
+            elif domain == "approval":
+                value = _optional_client_call(
+                    self.list_approvals,
+                    "all",
+                    query=query,
+                    capability_context=capability_context,
+                )
+                label = "审批"
+            elif domain == "meeting":
+                value = _optional_client_call(self.list_meetings)
+                label = "会议"
+            elif domain == "calendar":
+                value = _optional_client_call(self.get_agenda, days=7)
+                label = "日程"
+            elif domain == "docs":
+                value = _optional_client_call(self.search_docs, query)
+                label = "在线文档"
+            else:
+                value = None
+                label = domain
+            if value:
+                sections.append(f"【{label}】\n{value}")
         return "\n\n".join(sections) if sections else None
+
+    def list_accessible_applications(
+        self,
+        query: str = "",
+        capability_context: CapabilityInvocationContext | None = None,
+    ) -> str | None:
+        user_id = capability_context.user_id if capability_context else ""
+        user_departments: set[str] = set()
+        if user_id:
+            user = _get(
+                "user/get",
+                f"userid={user_id}",
+                secret=_resolve_domain_secret("contacts"),
+            )
+            user_departments = {str(item) for item in user.get("department", [])}
+        response = _get("agent/list", secret=_resolve_domain_secret("apps"))
+        lines: list[str] = []
+        normalized_query = _normalize_match_text(query)
+        for agent in response.get("agentlist", []):
+            if not _agent_visible_to_user(agent, user_id, user_departments):
+                continue
+            name = str(agent.get("name") or "未命名应用")
+            description = str(agent.get("description") or "")
+            if normalized_query and not any(
+                marker in normalized_query for marker in ("第三方应用", "业务系统", "所有应用")
+            ):
+                searchable = _normalize_match_text(name + description)
+                if normalized_query not in searchable and searchable not in normalized_query:
+                    continue
+            lines.append(
+                f"{name}（应用 ID: {agent.get('agentid', '')}）"
+                + (f"：{description}" if description else "")
+            )
+        return "\n".join(lines) if lines else None
 
     def run_enterprise_app_action(self, action: str, payload: dict[str, Any] | None = None) -> str | None:
         payload = payload or {}
@@ -492,6 +662,149 @@ def _filter_lines_by_keyword(text: str, keyword: str) -> str:
         return text
     lines = [line for line in text.splitlines() if keyword in line or "会议室" in line]
     return "\n".join(lines[:20])
+
+
+def _format_room_availability(payloads: list[dict[str, Any]]) -> str:
+    rooms: dict[str, str] = {}
+    bookings: dict[str, list[str]] = {}
+    for payload in payloads:
+        for item in _nested_list_items(payload, ("room_list", "meeting_room_list")):
+            room_id = str(item.get("room_id") or item.get("meeting_room_id") or item.get("id") or "")
+            room_name = str(item.get("room_name") or item.get("meeting_room_name") or item.get("name") or "")
+            if room_name:
+                rooms[room_id or room_name] = room_name
+        for item in _nested_list_items(payload, ("booking_list", "bookings", "schedule_items", "meeting_list")):
+            room_id = str(item.get("room_id") or item.get("meeting_room_id") or "")
+            room_name = str(item.get("room_name") or item.get("meeting_room_name") or item.get("location") or "")
+            key = room_id or room_name
+            if not key:
+                continue
+            if room_name:
+                rooms.setdefault(key, room_name)
+            start = _format_timestamp(item.get("start_time") or item.get("begin_time"), "%H:%M")
+            end = _format_timestamp(item.get("end_time"), "%H:%M")
+            bookings.setdefault(key, []).append(f"{start}-{end}".strip("-"))
+    if not rooms:
+        return ""
+    lines = []
+    for key, name in rooms.items():
+        occupied = [slot for slot in bookings.get(key, []) if slot]
+        if occupied:
+            lines.append(f"{name}：已占用时段 {', '.join(occupied)}；其他时段可申请")
+        else:
+            lines.append(f"{name}：当前查询时段内无预订，可申请")
+    return "\n".join(lines)
+
+
+def _nested_list_items(payload: dict[str, Any], keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            items.extend(item for item in value if isinstance(item, dict))
+    for value in payload.values():
+        if isinstance(value, dict):
+            items.extend(_nested_list_items(value, keys))
+    return items
+
+
+def _format_timestamp(value: Any, pattern: str) -> str:
+    if isinstance(value, dict):
+        value = value.get("time")
+    try:
+        timestamp = int(value or 0)
+    except (TypeError, ValueError):
+        return ""
+    return datetime.fromtimestamp(timestamp).strftime(pattern) if timestamp else ""
+
+
+def _approval_participants(info: dict[str, Any]) -> set[str]:
+    participants = {
+        str((info.get("applyer") or {}).get("userid") or ""),
+    }
+    for record in info.get("sp_record", []) or []:
+        if not isinstance(record, dict):
+            continue
+        for detail in record.get("details", []) or []:
+            if not isinstance(detail, dict):
+                continue
+            approver = detail.get("approver") or {}
+            participants.add(str(approver.get("userid") or ""))
+    return {user_id for user_id in participants if user_id}
+
+
+def _approval_status_label(value: Any) -> str:
+    try:
+        status = int(value)
+    except (TypeError, ValueError):
+        return str(value or "未知")
+    return {
+        1: "审批中",
+        2: "已通过",
+        3: "已驳回",
+        4: "已撤销",
+        6: "通过后撤销",
+        7: "已删除",
+        10: "已支付",
+    }.get(status, f"状态 {status}")
+
+
+def _approval_matches(item: dict[str, str], terms: tuple[str, ...], status: str) -> bool:
+    normalized_status = str(status or "").lower()
+    if normalized_status in {"pending", "审批中"} and item.get("status") != "审批中":
+        return False
+    if not terms:
+        return True
+    name = _normalize_match_text(item.get("name", ""))
+    return any(_normalize_match_text(term) in name or name in _normalize_match_text(term) for term in terms)
+
+
+def _normalize_match_text(value: str) -> str:
+    replacements = {
+        "申批": "审批",
+        "申请": "审批",
+        "流程": "",
+        "员工": "",
+        "的": "",
+    }
+    normalized = str(value or "").lower().replace(" ", "")
+    for source, target in replacements.items():
+        normalized = normalized.replace(source, target)
+    return normalized
+
+
+def _is_approval_admin(user_id: str) -> bool:
+    if not user_id:
+        return False
+    try:
+        from src.platform.admin_registry import get_admin_ids
+
+        return user_id in get_admin_ids("wecom")
+    except Exception:
+        return False
+
+
+def _agent_visible_to_user(
+    agent: dict[str, Any],
+    user_id: str,
+    user_departments: set[str],
+) -> bool:
+    allowed_users = {
+        str(item.get("userid") or "")
+        for item in (agent.get("allow_userinfos") or {}).get("user", [])
+        if isinstance(item, dict)
+    }
+    allowed_departments = {
+        str(item.get("partyid") or item.get("department_id") or "")
+        for item in (agent.get("allow_partys") or {}).get("party", [])
+        if isinstance(item, dict)
+    }
+    allowed_tags = (agent.get("allow_tags") or {}).get("tag", [])
+    if not allowed_users and not allowed_departments and not allowed_tags:
+        return True
+    if user_id and user_id in allowed_users:
+        return True
+    return bool(user_departments & allowed_departments)
 
 
 def _optional_client_call(method, *args: Any, **kwargs: Any) -> Any | None:

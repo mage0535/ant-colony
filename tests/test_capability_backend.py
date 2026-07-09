@@ -506,3 +506,52 @@ class TestCapabilityBackend(unittest.TestCase):
                 "requires_user_context": True,
             },
         )
+
+
+def test_backend_injects_context_when_provider_declares_it() -> None:
+    from src.platform.capability_backend import CapabilityBackend, CapabilityProvider, CapabilitySpec
+
+    class ContextAwareClient:
+        def query(self, text, capability_context=None):
+            return f"{text}:{capability_context.user_id}:{capability_context.platform}"
+
+    backend = CapabilityBackend(
+        [CapabilityProvider("wecom", "企业微信", lambda: ContextAwareClient())],
+        {"apps.query": CapabilitySpec("apps.query", "query", requires_user_context=True)},
+    )
+
+    result = backend.invoke_first(
+        "apps.query",
+        "审批",
+        context={"user_id": "u1", "platform": "wecom"},
+    )
+
+    assert result is not None
+    assert result.content == "审批:u1:wecom"
+
+
+def test_app_query_uses_current_im_provider_and_internal_connectors_only() -> None:
+    from src.platform.capability_backend import CapabilityBackend, CapabilityProvider
+
+    class Client:
+        def __init__(self, name):
+            self.name = name
+
+        def query_enterprise_apps(self, query, capability_context=None):
+            return f"{self.name}:{query}"
+
+    backend = CapabilityBackend(
+        [
+            CapabilityProvider("internal", "系统能力", lambda: Client("internal")),
+            CapabilityProvider("wecom", "企业微信", lambda: Client("wecom")),
+            CapabilityProvider("feishu", "飞书", lambda: Client("feishu")),
+        ]
+    )
+
+    results = backend.invoke(
+        "apps.query",
+        "审批",
+        context={"user_id": "u1", "platform": "wecom_bot"},
+    )
+
+    assert [item.provider for item in results] == ["internal", "wecom"]

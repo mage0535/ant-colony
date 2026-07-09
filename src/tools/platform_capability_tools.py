@@ -307,12 +307,17 @@ def approval_list_tool(args: dict[str, str]) -> str:
 
 
 def enterprise_app_query_tool(args: dict[str, str]) -> str:
-    from src.platform import invoke_capability
+    from src.platform.enterprise_query_service import execute_enterprise_query
 
-    query = str(args.get("query", ""))
+    query = str(
+        args.get("query", "")
+        or args.get("_context_text", "")
+        or args.get("content", "")
+        or args.get("text", "")
+    )
     if not query:
         return "请提供要查询的企业应用、流程、会议室、审批或第三方系统问题"
-    return invoke_capability("apps.query", query, context=_context_from_args(args), empty_message="未查询到企业应用数据，或当前 AI 助手尚未获得对应应用权限")
+    return execute_enterprise_query(query, _context_from_args(args)) or "未查询到企业应用数据，或当前 AI 助手尚未获得对应应用权限"
 
 
 def enterprise_app_action_tool(args: dict[str, str]) -> str:

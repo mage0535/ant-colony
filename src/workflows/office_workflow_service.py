@@ -93,31 +93,46 @@ class WorkflowResult:
     content: str
 
 
+def _enterprise_next_steps(query: str) -> str:
+    from src.platform.enterprise_query import plan_enterprise_query
+
+    plan = plan_enterprise_query(query)
+    if plan.domains == ("meeting_room",):
+        return (
+            "【下一步建议】\n"
+            "1. 可继续指定日期和时间段查询会议室占用情况。\n"
+            "2. 如果提示权限不足，需要给 AI 助手应用补充会议室、会议和日程读取权限。\n"
+            "3. 确认空闲时段后，可以继续发起预订操作。"
+        )
+    if plan.domains == ("approval",):
+        return (
+            "【下一步建议】\n"
+            "1. 可继续提供审批名称或审批编号查询当前节点。\n"
+            "2. 如果提示权限不足，需要给 AI 助手应用补充审批数据读取权限。\n"
+            "3. 催办、撤回或同意等写操作会在执行前再次确认。"
+        )
+    return (
+        "【下一步建议】\n"
+        "1. 可继续指定应用、对象和时间范围缩小查询。\n"
+        "2. 跨应用汇总只会包含当前用户有权访问且已接入接口的数据。\n"
+        "3. 写操作会在执行前校验权限并再次确认。"
+    )
+
+
 class OfficeWorkflowService:
     def enterprise_app_query(self, user_id: str, query: str, context: MessageContext) -> WorkflowResult:
         cap_ctx = _context_dict(user_id, context)
+        from src.platform.enterprise_query_service import execute_enterprise_query
+
         app_data = _clean_capability_text(
-            invoke_capability("apps.query", query, context=cap_ctx, empty_message=""),
+            execute_enterprise_query(query, cap_ctx),
             "暂未查询到企业应用数据。可能原因是对应应用未授权给当前 AI 助手，或该应用没有当前条件下的数据。",
         )
-        room_data = ""
-        if "会议室" in query and "暂未查询到企业应用数据" in app_data:
-            room_data = _clean_capability_text(
-                invoke_capability("meeting.room.query", query, context=cap_ctx, empty_message=""),
-                "",
-            )
         body = (
             _role_prefix(query or "企业应用查询")
             + f"【企业应用查询结果】\n{app_data}\n\n"
         )
-        if room_data and room_data not in app_data:
-            body += f"【会议室专项核对】\n{room_data}\n\n"
-        body += (
-            "【下一步建议】\n"
-            "1. 如果结果来自真实企业微信应用，可直接按返回的申请人、时间和节点继续处理。\n"
-            "2. 如果提示权限不足，请让管理员在企业微信后台给 AI 助手应用补充会议室、日程、审批或对应第三方应用的数据读取权限。\n"
-            "3. 需要我继续发起会议、催办审批或汇总多个流程时，可以直接说明动作和对象。"
-        )
+        body += _enterprise_next_steps(query)
         _record_artifacts(user_id, context, "企业应用查询结果", body, "enterprise_app_query")
         return WorkflowResult("企业应用查询结果", body)
 

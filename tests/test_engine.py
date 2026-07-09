@@ -382,7 +382,7 @@ class TestPersonalAgent(unittest.TestCase):
         self.assertTrue(response.text.startswith("[BOT_FILE]"))
         self.assertIn("企业微信 AI 助手激活说明书", response.text)
 
-    def test_personal_agent_shortcuts_to_approval_workflow(self) -> None:
+    def test_personal_agent_routes_approval_tracking_to_bounded_enterprise_query(self) -> None:
         config = AgentEngineConfig(
             model_name="gpt-4o-mini",
             agent_role="personal",
@@ -393,7 +393,7 @@ class TestPersonalAgent(unittest.TestCase):
         agent = PersonalAgent("u1", engine)
         context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
 
-        with patch("src.agents.personal_agent.OfficeWorkflowService.approval_followup", return_value=type("Result", (), {"content": "审批跟踪结果"})()):
+        with patch("src.agents.personal_agent.OfficeWorkflowService.enterprise_app_query", return_value=type("Result", (), {"content": "审批跟踪结果"})()):
             response = agent.process_message("u1", "帮我跟踪一下付款审批进度", context)
 
         self.assertEqual(response.text, "审批跟踪结果")
@@ -413,6 +413,38 @@ class TestPersonalAgent(unittest.TestCase):
             response = agent.process_message("u1", "三号会议室有人申请吗？", context)
 
         self.assertEqual(response.text, "三号会议室查询结果")
+
+    def test_personal_agent_routes_personal_approval_query_to_enterprise_apps(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        agent = PersonalAgent("u1", AgentEngine(config))
+        context = MessageContext(
+            space_type=SpaceType.DEPARTMENT,
+            space_id="dept-1",
+            metadata={"provider": "wecom"},
+        )
+        with patch(
+            "src.agents.personal_agent.OfficeWorkflowService.enterprise_app_query",
+            return_value=type("Result", (), {"content": "我的审批状态"})(),
+        ):
+            response = agent.process_message("u1", "查询我所有审批的状态", context)
+
+        self.assertEqual(response.text, "我的审批状态")
+
+    def test_plain_workshop_question_is_not_forced_into_enterprise_apps(self) -> None:
+        from src.agents.personal_agent import _run_workflow_shortcut
+
+        context = MessageContext(
+            space_type=SpaceType.DEPARTMENT,
+            space_id="dept-1",
+            metadata={"provider": "wecom"},
+        )
+
+        self.assertIsNone(_run_workflow_shortcut("u1", "目前车间通行是什么情况", context))
 
     def test_personal_agent_shortcuts_to_workorder_workflow(self) -> None:
         config = AgentEngineConfig(

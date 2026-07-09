@@ -50,9 +50,11 @@ def test_workorder_analysis_workflow_uses_business_capabilities() -> None:
 def test_enterprise_app_query_workflow_uses_app_capabilities() -> None:
     from src.workflows.office_workflow_service import OfficeWorkflowService
 
-    with patch("src.workflows.office_workflow_service.invoke_capability", side_effect=["【企业微信】三号会议室 09:30-10:30 生产例会", "三号会议室 09:30-10:30 生产例会"]), \
+    with patch("src.platform.enterprise_query_service.execute_enterprise_query", return_value="【企业微信】三号会议室 09:30-10:30 生产例会") as execute, \
          patch("src.workflows.office_workflow_service._record_artifacts"):
         result = OfficeWorkflowService().enterprise_app_query("u1", "三号会议室有人申请吗", _context())
 
     assert "企业应用查询结果" in result.content
     assert "三号会议室" in result.content
+    execute.assert_called_once()
+    assert "催办审批" not in result.content

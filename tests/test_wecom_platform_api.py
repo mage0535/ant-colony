@@ -44,12 +44,12 @@ def test_wecom_query_meeting_room_uses_available_room_payload() -> None:
     assert "生产例会" in result
 
 
-def test_wecom_query_enterprise_apps_aggregates_room_and_approval_data() -> None:
+def test_wecom_query_enterprise_apps_keeps_room_query_in_room_domain() -> None:
     client = WeComClient()
     with patch.object(client, "query_meeting_room", return_value="三号会议室：09:30-10:30 生产例会"), \
          patch.object(client, "list_approvals", return_value="会议室申请 已通过"), \
          patch.object(client, "get_agenda", return_value="09:30 生产例会"):
         result = client.query_enterprise_apps("三号会议室有人申请吗")
 
-    assert "会议室/会议" in result
-    assert "审批/流程" in result
+    assert "【会议室】" in result
+    assert "会议室申请 已通过" not in result
