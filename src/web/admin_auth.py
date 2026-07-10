@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import time
+import uuid
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -13,6 +14,28 @@ from fastapi import HTTPException, Request
 
 DEFAULT_ADMIN_SESSION_TTL_SECONDS = 3600
 DEFAULT_USER_SESSION_TTL_SECONDS = 86400
+
+_revoked_jtis: dict[str, float] = {}
+
+# Cleanup expired JTIs periodically
+def _cleanup_revoked_jtis(now: float | None = None):
+    current = now if now is not None else time.time()
+    expired = [jti for jti, exp in _revoked_jtis.items() if exp <= current]
+    for jti in expired:
+        del _revoked_jtis[jti]
+
+
+def revoke_token(*, token: str):
+    """Mark a token as revoked so it cannot be reused."""
+    try:
+        body, _, _sig = token.partition(".")
+        payload = json.loads(_unb64(body).decode("utf-8"))
+        jti = payload.get("jti", "")
+        exp = int(payload.get("exp", 0))
+        if jti:
+            _revoked_jtis[jti] = exp
+    except Exception:
+        pass
 
 
 def create_admin_console_token(
@@ -30,6 +53,7 @@ def create_admin_console_token(
         "platform": _normalize_platform(platform),
         "user_id": user_id.strip(),
         "exp": issued_at + int(ttl_seconds),
+        "jti": uuid.uuid4().hex,
     }
     body = _b64(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
     sig = _sign(body, secret)
@@ -52,6 +76,7 @@ def create_im_user_token(
         "platform": _normalize_platform(platform),
         "user_id": user_id.strip(),
         "exp": issued_at + int(ttl_seconds),
+        "jti": uuid.uuid4().hex,
     }
     body = _b64(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
     sig = _sign(body, secret)
@@ -177,6 +202,10 @@ def _verify_admin_console_token(
         exp = int(payload.get("exp", 0))
     except (TypeError, ValueError):
         return False
+    jti = payload.get("jti", "")
+    _cleanup_revoked_jtis(now)
+    if jti and jti in _revoked_jtis:
+        return False
     return current <= exp
 
 
@@ -201,6 +230,10 @@ def _verify_im_user_token(*, platform: str, user_id: str, token: str, now: float
     try:
         exp = int(payload.get("exp", 0))
     except (TypeError, ValueError):
+        return False
+    jti = payload.get("jti", "")
+    _cleanup_revoked_jtis(now)
+    if jti and jti in _revoked_jtis:
         return False
     return current <= exp
 

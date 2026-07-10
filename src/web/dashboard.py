@@ -424,6 +424,23 @@ def admin_activate_platform_bot(platform: str, req: PlatformBotActivationRequest
     return activate_platform_bot_api(platform, req)
 
 
+@app.post("/api/v1/admin/projects/register")
+def admin_register_project(request: Request, name: str = Form(...), space_id: str = Form(""), members: str = Form("")):
+    context = require_admin_context_from_request(request)
+    registry = get_space_registry()
+    sid = space_id.strip() or f"project-{context['user_id']}-{int(time.time())}"
+    member_list = [m.strip() for m in (members or "").split(",") if m.strip()]
+    if not member_list:
+        member_list = [context["user_id"]]
+    registry.register(sid, name=name.strip() or "未命名项目", space_type="project", members=member_list)
+    from src.platform.org_graph import OrgGraphService
+    try:
+        OrgGraphService().sync_if_stale(context["platform"])
+    except Exception:
+        pass
+    return {"space_id": sid, "name": name.strip(), "members": member_list, "registered": True}
+
+
 @app.get("/api/v1/admin/employee-bots")
 def admin_list_employee_bots(request: Request, platform: str = "", limit: int = 200):
     require_admin_context_from_request(request)

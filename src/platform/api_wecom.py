@@ -141,25 +141,27 @@ class WeComClient:
         try:
             now = int(time.time())
             end = int(time.time() + days * 86400)
-            resp = _post("oa/calendar/getbycalendar", {
-                "cal_id": "",
-                "start_time": now,
-                "end_time": end,
+            cal_id = _get_app_calendar_id()
+            if not cal_id:
+                return None
+            resp = _post("oa/schedule/get_by_calendar", {
+                "cal_id": cal_id,
+                "offset": 0, "limit": 50,
             }, secret=_resolve_domain_secret("calendar"))
             events = []
-            cal_list = resp.get("calendar_list", [])
-            for cal in cal_list:
-                for ev in cal.get("schedule_items", []):
-                    summary = ev.get("summary", "(无标题)")
-                    start_ts = ev.get("start_time", {}).get("time", 0)
-                    end_ts = ev.get("end_time", {}).get("time", 0)
+            schedule_list = resp.get("schedule_list", [])
+            for ev in schedule_list:
+                summary = ev.get("summary", "(无标题)")
+                start_ts = ev.get("start_time", {}).get("time", 0)
+                end_ts = ev.get("end_time", {}).get("time", 0)
+                if start_ts and end_ts and (start_ts < end < end_ts or start_ts < now < end_ts or (start_ts >= now and start_ts <= end)):
                     start_str = datetime.fromtimestamp(start_ts).strftime("%m-%d %H:%M") if start_ts else ""
                     end_str = datetime.fromtimestamp(end_ts).strftime("%H:%M") if end_ts else ""
                     events.append(f"{start_str}-{end_str} {summary}")
             return "\n".join(events[:20]) if events else None
         except Exception as e:
             logger.warning("WeCom get_agenda failed: %s", e)
-            raise
+            return None
 
     def query_meeting_room(
         self,
@@ -170,53 +172,61 @@ class WeComClient:
         del capability_context
         plan = plan_enterprise_query(query)
         room_name = plan.entities[0] if plan.entities else "会议室"
-        start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-        end = int((datetime.now() + timedelta(days=max(1, days))).timestamp())
+        # Same-day time range (API does not support cross-day queries)
+        now = datetime.now()
+        start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+        end = int(now.replace(hour=23, minute=59, second=59, microsecond=0).timestamp())
         sections: list[str] = []
         errors: list[str] = []
         payloads: list[dict[str, Any]] = []
 
         secret = _resolve_domain_secret("meeting")
 
-        # Step 1: list all meeting rooms (bonus, may fail)
+        # Step 1: list all meeting rooms
         room_list_resp = _post_optional("oa/meetingroom/list", {
             "city": "", "building": "", "floor": "",
         }, secret=secret)
         room_list: list[dict[str, Any]] = []
-        room_names: list[str] = []
+        room_map: dict[str, dict[str, Any]] = {}
         if room_list_resp:
             room_list = room_list_resp.get("meetingroom_list", [])
-            room_names = [r.get("name", "") for r in room_list if r.get("name")]
+            for r in room_list:
+                name = r.get("name", "")
+                if name:
+                    room_map[name] = r
+        if room_list_resp:
             payloads.append(room_list_resp)
 
-        # Step 2: match user's spoken room name to real room name
+        # Step 2: match user's spoken name to real room
         matched_rooms: list[str] = []
         if room_name and room_name != "会议室":
-            if room_name in room_names:
+            if room_name in room_map:
                 matched_rooms.append(room_name)
             else:
                 numbers = _extract_numbers(room_name)
-                for rn in room_names:
+                for rn in room_map:
                     if any(n in rn for n in numbers):
                         matched_rooms.append(rn)
                 if not matched_rooms:
-                    matched_rooms = room_names[:3]
+                    matched_rooms = list(room_map.keys())[:3]
 
-        # Step 3: try booking info for found rooms (always runs at least once)
-        for query_room in (matched_rooms or room_names or [room_name]):
-            if not query_room or query_room == "会议室":
-                continue
-            info, err = _post_optional_diagnostic("oa/meetingroom/bookinfo/get", {
-                "start_time": start, "end_time": end,
-                "room_name": query_room,
-            }, secret=secret)
-            if info:
-                payloads.append(info)
-                text = _format_room_payload(info, query_room)
-                if text:
-                    sections.append(text)
-            elif err:
-                errors.append(err)
+        # Step 3: get same-day booking info using meetingroom_id
+        for query_room in (matched_rooms or list(room_map.keys()) or [room_name]):
+            room_info = room_map.get(query_room, {})
+            room_id = room_info.get("meetingroom_id")
+            if room_id is not None:
+                info, err = _post_optional_diagnostic("oa/meetingroom/get_booking_info", {
+                    "meetingroom_id": room_id,
+                    "start_time": start,
+                    "end_time": end,
+                }, secret=secret)
+                if info:
+                    payloads.append(info)
+                    text = _format_room_payload(info, query_room)
+                    if text:
+                        sections.append(text)
+                elif err:
+                    errors.append(err)
 
         # Step 4: fallback meeting API
         meeting_resp, meeting_err = _post_optional_diagnostic("meeting/list", {
@@ -235,7 +245,7 @@ class WeComClient:
         if sections:
             return "\n".join(dict.fromkeys(sections))
 
-        # Step 5: if no booking data, return room list as fallback
+        # Step 5: room list fallback
         if room_list:
             lines = [f"{r.get('name', '')} (容纳{r.get('capacity', '?')}人)" for r in room_list]
             first_room = lines[0].split("(")[0].strip() if lines else "会议室"
@@ -306,9 +316,9 @@ class WeComClient:
 
     def create_doc(self, title: str, content: str = "") -> str | None:
         try:
-            resp = _post("doc/create", {
-                "title": title,
-                "content": content,
+            resp = _post("wedoc/create_doc", {
+                "doc_name": title,
+                "doc_type": 3,
             }, secret=_resolve_domain_secret("docs"))
             doc_id = resp.get("docid", "")
             url = resp.get("url", "")
@@ -960,3 +970,31 @@ def _batch_resolve_user_names(user_ids: set[str]) -> dict[str, str]:
         except Exception:
             logger.info("Could not resolve user name for %s", uid)
     return name_map
+
+
+_calendar_id_cache: str | None = None
+
+
+def _get_app_calendar_id() -> str:
+    """Get or create the default calendar for this WeCom app. Caches the cal_id."""
+    global _calendar_id_cache
+    if _calendar_id_cache:
+        return _calendar_id_cache
+    secret = _resolve_domain_secret("calendar")
+    try:
+        resp = _post("oa/calendar/add", {
+            "calendar": {
+                "summary": "AI 助手日程",
+                "color": "#0078D4",
+                "description": "由企业 AI 助手自动创建的日历",
+                "set_as_default": 1,
+            }
+        }, secret=secret)
+        cal_id = resp.get("cal_id", "")
+        if cal_id:
+            _calendar_id_cache = cal_id
+            logger.info("Created default calendar: %s", cal_id)
+            return cal_id
+    except Exception as e:
+        logger.info("Could not create / access app calendar: %s (will retry next call)", e)
+    return ""
