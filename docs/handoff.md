@@ -626,7 +626,7 @@
 - 验证：
   - 本地入口指令测试：`8 passed`
   - 本地全量测试：`476 passed`
-  - 服务器已配置 `ANT_COLONY_PUBLIC_BASE_URL=http://10.12.254.122:18092`
+  - 服务器已配置 `ANT_COLONY_PUBLIC_BASE_URL=<dashboard-public-base-url>`
   - 服务器入口指令 HTTP 验证：
     - 企微模拟“打开知识库”返回 `/knowledge/user?platform=wecom...`
     - 企微管理员模拟“打开管理员控制台”返回 `/admin/console?platform=wecom...`
@@ -1140,7 +1140,7 @@
     - 结果：`1 passed`
   - 远端工具模拟：
     - `_source_provider=wecom_bot` 生成链接：
-      - `http://10.12.254.122:18092/admin/console?platform=wecom&user_id=MaGe...`
+      - `<dashboard-public-base-url>/admin/console?platform=wecom&user_id=<admin-user-id>...`
   - 已重启：
     - `ant-colony-dashboard.service`
     - `ant-colony-wecom-bot.service`
@@ -1173,7 +1173,7 @@
     - `ant-colony-dashboard.service`
   - 服务器内真实链路：
     - POST `http://127.0.0.1:18090/`，payload 为 `content=管理员控制台`、`provider=wecom_bot`。
-    - 返回链接为 `http://10.12.254.122:18092/admin/console?platform=wecom&user_id=MaGe&admin_token=...`。
+    - 返回链接为 `<dashboard-public-base-url>/admin/console?platform=wecom&user_id=<admin-user-id>&admin_token=...`。
     - 打开该链接对应页面时，HTML 首屏已包含 `wecom / MaGe / admin`。
     - 页面不再包含 `<div id="identity" class="chip">未验证</div>`。
     - `/api/v1/admin/profile` 返回 HTTP 200，`platform=wecom`、`user_id=MaGe`、`role=admin`。
@@ -1193,7 +1193,7 @@
   - 浏览器打开 `/admin/console?...` 后页面显示“未验证”，按钮不可操作。
 - 根因：
   - `ant-colony-gateway.service` 和 `ant-colony-wecom-bot.service` 加载了：
-    - `/home/codexcheck/ant-colony-probe/infra/.env.wecom`
+    - `<server-workdir>/infra/.env.wecom`
   - `ant-colony-dashboard.service` 未加载该 EnvironmentFile。
   - `infra/.env.wecom` 中存在 `ANT_COLONY_ADMIN_SESSION_SECRET`。
   - 因此 Bot/网关生成 admin token 时使用一个 secret，Dashboard 验证 token 时进程环境里没有同一个 secret，导致 `/api/v1/admin/profile` 返回 401，页面显示“未验证”。
@@ -1208,7 +1208,7 @@
     - 新增 `test_admin_console_token_uses_wecom_env_file_when_process_env_missing`，覆盖 Dashboard 进程缺环境变量、仅有 `infra/.env.wecom` 的验证场景。
   - 服务器 systemd：
     - `/etc/systemd/system/ant-colony-dashboard.service` 增加：
-      - `EnvironmentFile=/home/codexcheck/ant-colony-probe/infra/.env.wecom`
+      - `EnvironmentFile=<server-workdir>/infra/.env.wecom`
     - 已执行 `systemctl daemon-reload` 并重启 dashboard/gateway/wecom-bot。
 - 本地验证：
   - `python -m pytest tests/test_admin_console.py tests/test_entry_link_commands.py tests/test_inbound_entry_links.py tests/test_web_auth.py -q`
@@ -1336,7 +1336,7 @@
     - `tests/test_admin_console.py`
 - 服务器配置：
   - 真实 MCP URL 已仅写入测试服务器：
-    - `/home/codexcheck/ant-colony-probe/infra/.env.wecom`
+    - `<server-workdir>/infra/.env.wecom`
   - 使用的环境变量名：
     - `WECOM_ROBOT_DOC_MCP_URL`
     - `WECOM_ROBOT_TODO_MCP_URL`
@@ -1443,3 +1443,74 @@
     - `userStats = 总计 129 人 / 已开通 3`
     - `window.showTab` 已恢复为 `function`
     - 点击左侧“用户管理”后，active section 正确切换为 `users`。
+
+## 2026-07-13 全面扫描复查与管理员控制台二次加固
+
+- 本轮目标：
+  - 对本地代码做一次广度和深度复查，确认是否还有可直接修复的 bug 和明确优化项。
+  - 重点检查管理员控制台、企业微信 MCP、三端入口、能力后端、知识库和公开文档。
+- 已执行检查：
+  - `git status --short`
+    - 结果：开始扫描前工作区干净。
+  - `python -m compileall -q src tests`
+    - 结果：通过。
+  - `python -m pytest -q`
+    - 结果：`556 passed`。
+  - 敏感信息扫描：
+    - 检查 `github_pat_`、`lsv2_`、真实 `apikey`、测试服务器 IP、服务器绝对路径等。
+    - 结果：代码和说明文档中未发现真实 GitHub / LangSmith / MCP key；仅测试文件保留 fake apikey。
+- 已修复问题 1：管理员控制台动态按钮参数转义不完整
+  - 风险：
+    - 用户 ID、员工姓名、模型 ID 中如果包含单引号、双引号等特殊字符，原来通过字符串拼接写入 `onclick`，可能造成按钮点击失败或前端脚本注入风险。
+  - 修复：
+    - `src/web/dashboard.py`
+      - 新增 `jsString(value)`，用 `JSON.stringify` 生成 JS 字符串字面量。
+      - 新增 `jsAttr(value)`，在写入 HTML 属性前再做 HTML attribute escape。
+      - 修复员工 AI 助手编辑、用户管理单人开通/暂停/关闭、模型选择、按姓名选择员工等动态按钮。
+      - 修复错误提示颜色变量，从不存在的 `--md-error/--md-muted` 改为现有 `--error/--text-secondary`。
+    - `tests/test_admin_console.py`
+      - 增加 `test_admin_console_dynamic_actions_use_js_string_arguments`，防止重新退回不安全拼接。
+  - 浏览器专项验证：
+    - 使用 Playwright + Chrome 构造 `user_id = u'bad"id`、`name = 张'三"`。
+    - 生成的按钮属性为合法 `setOneUserBot("u'bad\\\"id",'active')`。
+    - 点击后能进入后端请求阶段，未再触发脚本语法错误。
+- 已修复问题 2：公开交接文档仍包含测试服务器部署信息
+  - 风险：
+    - `docs/handoff.md` 中仍存在测试服务器 IP、服务器绝对路径和具体用户路径，不适合发布到 GitHub。
+  - 修复：
+    - 将具体测试服务器公开访问地址替换为 `<dashboard-public-base-url>`。
+    - 将具体服务器工作目录替换为 `<server-workdir>`。
+    - 保留运维语义，不暴露具体私有部署信息。
+- 本地验证：
+  - `python -m pytest tests/test_admin_console.py -q`
+    - 结果：`24 passed`
+  - `python -m compileall -q src tests`
+    - 结果：通过
+  - `python -m pytest -q`
+    - 结果：`556 passed`
+  - 敏感信息复扫：
+    - 仅测试文件仍包含 fake apikey。
+- 服务器验证：
+  - 已同步：
+    - `src/web/dashboard.py`
+    - `tests/test_admin_console.py`
+    - `docs/handoff.md`
+  - 远端测试：
+    - `python3 -m pytest tests/test_admin_console.py -q`
+    - 结果：`24 passed`
+    - `python3 -m compileall -q src/web/dashboard.py tests/test_admin_console.py`
+    - 结果：通过
+  - 已重启：
+    - `ant-colony-dashboard.service`
+  - 真实浏览器验证：
+    - `identity = wecom / MaGe / admin`
+    - `platformSummary = 已启用平台：1 / 总平台：3`
+    - `runtimeSummary = 可达端口：4 / healthy`
+    - 点击“用户管理”后 active section 正确切换为 `users`
+    - `window.showTab = function`
+    - 浏览器仅剩 favicon `503`，不影响业务功能。
+- 仍建议后续优化：
+  - 将 `src/web/dashboard.py` 中的大段内联 HTML/JS 拆出为静态模板和静态 JS，降低继续出现字符串转义问题的概率。
+  - 增加 CI 级 secret scan，禁止测试服务器 IP、绝对路径、真实 token、真实 MCP URL 进入 GitHub。
+  - 为管理员控制台增加 Playwright 回归脚本，覆盖首屏加载、菜单切换、特殊字符用户、模型选择、MCP 状态页。
+  - MCP 调用链路后续可增加更细的超时、重试和用户可见降级提示，避免真实企微 MCP 偶发慢响应时影响 Bot 体验。

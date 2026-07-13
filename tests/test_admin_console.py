@@ -367,6 +367,20 @@ def test_admin_and_knowledge_page_scripts_are_valid_javascript(tmp_path) -> None
             subprocess.run([node, "--check", str(script)], check=True)
 
 
+def test_admin_console_dynamic_actions_use_js_string_arguments() -> None:
+    from src.web.dashboard import admin_console_page
+
+    html = admin_console_page().body.decode("utf-8")
+
+    assert "function jsString(value)" in html
+    assert "function jsAttr(value)" in html
+    assert "editEmployeeNameFix(${jsAttr(assignment.platform)},${jsAttr(assignment.user_id)},${jsAttr(fixedName)})" in html
+    assert "setOneUserBot(${jsAttr(user.user_id)},'active')" in html
+    assert "chooseModel(${jsAttr(model.id)})" in html
+    assert "selectEmployee(${jsAttr(u.user_id)},${jsAttr(u.name||u.user_id)})" in html
+    assert "editEmployeeNameFix(\\'" not in html
+
+
 def test_create_admin_console_link_includes_signed_token() -> None:
     from scripts.create_admin_console_link import build_admin_console_link
 

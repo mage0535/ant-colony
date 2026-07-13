@@ -2248,12 +2248,14 @@ def admin_console_page(request: Request = None):
       return data;
     }
     function chip(text, cls='') { return `<span class="chip ${safe(cls)}">${safe(text)}</span>`; }
+    function jsString(value) { return JSON.stringify(String(value == null ? '' : value)); }
+    function jsAttr(value) { return safe(jsString(value)); }
     function sortHeader(key, label) { return `${label} <span style="cursor:pointer;font-size:11px" onclick="sortUsers('${key}')">${userSortKey===key ? (userSortAsc ? '▲' : '▼') : '⇅'}</span>`; }
     function setHtml(id, html) { el(id).innerHTML = html; }
     function setText(id, text, bad=false) {
       const node = el(id);
       node.textContent = text;
-      node.style.color = bad ? 'var(--md-error)' : 'var(--md-muted)';
+      node.style.color = bad ? 'var(--error)' : 'var(--text-secondary)';
     }
     function table(headers, rows) {
       const head = headers.map((item) => `<th>${safe(item)}</th>`).join('');
@@ -2322,7 +2324,7 @@ def admin_console_page(request: Request = None):
             <td>${safe(empName)}<br><span style="font-size:11px;color:#8a8a8a">${safe(assignment.user_id)}</span></td>
             <td><span id="empname_${safe(empName).replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g,'_')}">${safe(fixedName)}</span>
               ${isGarbled ? '<span class="chip bad" title="名称已损坏，点击编辑修复">需修复</span>' : ''}
-              <button class="secondary" onclick="editEmployeeNameFix(\'${safe(assignment.platform)}\',\'${safe(assignment.user_id)}\',\'${safe(fixedName)}\')" style="font-size:11px;padding:2px 8px;margin-left:4px">编辑</button></td>
+              <button class="secondary" onclick="editEmployeeNameFix(${jsAttr(assignment.platform)},${jsAttr(assignment.user_id)},${jsAttr(fixedName)})" style="font-size:11px;padding:2px 8px;margin-left:4px">编辑</button></td>
             <td>${safe(assignment.scope)}</td>
             <td>${assignment.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td>
             <td title="开通时是否向员工发送通知消息">${safe(notif)}<span style="font-size:10px;color:#8a8a8a">${notifHint}</span></td>
@@ -2366,7 +2368,7 @@ def admin_console_page(request: Request = None):
         const checked = `<input type="checkbox" class="user-check" value="${safe(user.user_id)}">`;
         const bot = user.bot_status === 'active' ? chip('已开通','ok') : (user.bot_status === 'paused' ? chip('已暂停','warn') : (user.bot_status === 'disabled' ? chip('已关闭','bad') : chip('未开通','warn')));
         const online = user.online_status === 'recently_active' ? chip('近期活跃','ok') : chip(user.online_status || '未知');
-        return `<tr><td>${checked}</td><td>${safe(user.department_path || '-')}</td><td>${safe(user.name || user.user_id)}<br><span class="chip">${safe(user.user_id)}</span></td><td>${user.is_admin ? chip('管理员','ok') : ''}${user.is_leader ? chip('负责人','warn') : chip('员工')}</td><td>${online}</td><td>${bot}</td><td>日 ${safe((usage.day || {}).estimated_tokens || 0)} / 周 ${safe((usage.week || {}).estimated_tokens || 0)} / 月 ${safe((usage.month || {}).estimated_tokens || 0)} / 年 ${safe((usage.year || {}).estimated_tokens || 0)}</td><td><button class="secondary" onclick="setOneUserBot('${safe(user.user_id)}','active')">开通</button> <button class="tonal" onclick="setOneUserBot('${safe(user.user_id)}','paused')">暂停</button> <button class="danger" onclick="setOneUserBot('${safe(user.user_id)}','disabled')">关闭</button></td></tr>`;
+        return `<tr><td>${checked}</td><td>${safe(user.department_path || '-')}</td><td>${safe(user.name || user.user_id)}<br><span class="chip">${safe(user.user_id)}</span></td><td>${user.is_admin ? chip('管理员','ok') : ''}${user.is_leader ? chip('负责人','warn') : chip('员工')}</td><td>${online}</td><td>${bot}</td><td>日 ${safe((usage.day || {}).estimated_tokens || 0)} / 周 ${safe((usage.week || {}).estimated_tokens || 0)} / 月 ${safe((usage.month || {}).estimated_tokens || 0)} / 年 ${safe((usage.year || {}).estimated_tokens || 0)}</td><td><button class="secondary" onclick="setOneUserBot(${jsAttr(user.user_id)},'active')">开通</button> <button class="tonal" onclick="setOneUserBot(${jsAttr(user.user_id)},'paused')">暂停</button> <button class="danger" onclick="setOneUserBot(${jsAttr(user.user_id)},'disabled')">关闭</button></td></tr>`;
       });
       const headers = ['选择', `${sortHeader('department_path','部门')}`, `${sortHeader('name','用户')}`, `${sortHeader('is_admin','权限')}`, `${sortHeader('online_status','状态')}`, `${sortHeader('bot_status','AI 助手')}`, 'Token 估算', '操作'];
       const headerRow = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
@@ -2416,7 +2418,7 @@ def admin_console_page(request: Request = None):
       try {
         const payload = {provider: val('modelProvider'), sdk_format: val('modelSdkFormat'), api_base: val('modelApiBase'), api_key: val('modelApiKey')};
         const data = await api('/api/v1/admin/models/discover', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-        const rows = (data.models || []).map((model) => `<tr><td>${safe(model.id)}</td><td>${safe(model.name)}</td><td><button class="secondary" onclick="chooseModel('${safe(model.id)}')">选择</button></td></tr>`);
+        const rows = (data.models || []).map((model) => `<tr><td>${safe(model.id)}</td><td>${safe(model.name)}</td><td><button class="secondary" onclick="chooseModel(${jsAttr(model.id)})">选择</button></td></tr>`);
         setHtml('modelDiscovery', `<p>${safe(data.message || '')}</p>` + table(['模型 ID','名称','操作'], rows));
       } catch (err) {
         setText('modelActionStatus', String(err.message || err), true);
@@ -2455,10 +2457,15 @@ def admin_console_page(request: Request = None):
           el('employeeBotName').value = matches[0].name || matches[0].user_id;
           setHtml('employeeResult', chip(`已选择：${safe(matches[0].name)} (${safe(matches[0].user_id)})`, 'ok'));
         } else {
-          const rows = matches.map(u => `<tr><td><button class="secondary" onclick="el('employeeUserId').value='${safe(u.user_id)}';el('employeeBotName').value='${safe(u.name||u.user_id)}';setHtml('employeeResult',chip('已选择：${safe(u.name||u.user_id)}','ok'))">选择</button></td><td>${safe(u.name||'-')}</td><td>${safe(u.user_id)}</td><td>${safe(u.department_path||'-')}</td></tr>`);
+          const rows = matches.map(u => `<tr><td><button class="secondary" onclick="selectEmployee(${jsAttr(u.user_id)},${jsAttr(u.name||u.user_id)})">选择</button></td><td>${safe(u.name||'-')}</td><td>${safe(u.user_id)}</td><td>${safe(u.department_path||'-')}</td></tr>`);
           setHtml('employeeResult', '<p>找到多个匹配：</p>'+table(['操作','姓名','用户ID','部门'], rows));
         }
       } catch (err) { setText('employeeResult', String(err.message || err), true); }
+    }
+    function selectEmployee(userId, name) {
+      el('employeeUserId').value = userId;
+      el('employeeBotName').value = name;
+      setHtml('employeeResult', chip(`已选择：${name}`, 'ok'));
     }
     async function activateEmployeeBot() {
       try {
