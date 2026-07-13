@@ -2260,6 +2260,9 @@ def admin_console_page(request: Request = None):
       const body = rows.length ? rows.join('') : `<tr><td colspan="${headers.length}">暂无数据</td></tr>`;
       return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
     }
+    function hasNonAscii(value) {
+      return Array.from(String(value || '')).some((ch) => ch.charCodeAt(0) > 127);
+    }
     async function loadProfile() {
       const profile = await api('/api/v1/admin/profile');
       el('identity').textContent = `${profile.platform} / ${profile.user_id} / ${profile.role}`;
@@ -2308,7 +2311,7 @@ def admin_console_page(request: Request = None):
         const rows = (data.assignments || []).map((assignment) => {
           const displayName = assignment.display_name || '';
           // Auto-fix garbled names
-          const isGarbled = displayName.includes('??') || (!/[^\x00-\x7F]/.test(displayName) && displayName.length < 3);
+          const isGarbled = displayName.includes('??') || (!hasNonAscii(displayName) && displayName.length < 3);
           const fixedName = (isGarbled || !displayName.trim()) ? '企业 AI 助手' : displayName;
           const empName = nameMap[assignment.user_id] || assignment.user_id;
           const notifLabels = {not_requested:'未请求', sent:'已发送', failed:'发送失败', pending:'待发送'};

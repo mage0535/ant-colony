@@ -1401,3 +1401,45 @@
     - 页面源码确认包含新增说明。
     - `python3 -m pytest tests/test_admin_console.py -q`
     - 结果：`23 passed`
+
+## 2026-07-13 管理员控制台身份通过但菜单无响应修复
+
+- 用户反馈：
+  - 管理员控制台身份和权限认证已经通过。
+  - 首页其他模块一直显示“等待加载”。
+  - 左侧菜单点击没有反应。
+- 诊断结果：
+  - 服务器日志显示 `/admin/console` 和 `/api/v1/admin/profile` 均返回 `200`。
+  - profile 之后没有继续请求 `/api/v1/admin/platform/bots`、`/api/v1/admin/employee-bots`、`/api/v1/admin/users` 等初始化接口。
+  - Playwright 打开真实服务器页面后捕获到浏览器错误：
+    - `Invalid regular expression: /[^�-]/: Range out of order in character class`
+    - 后续点击左侧菜单又触发 `showTab is not defined`
+  - 根因是 `src/web/dashboard.py` 内联脚本中用于判断乱码显示名的 `/[^\x00-\x7F]/` 正则被 Python 三引号字符串转义成了实际控制字符，Chrome / 企业微信内置浏览器解析正则失败，导致主脚本整体中断。
+- 修复内容：
+  - `src/web/dashboard.py`
+    - 新增 `hasNonAscii(value)`，通过 `charCodeAt(0) > 127` 判断非 ASCII 字符。
+    - 将乱码判断从正则改为 `!hasNonAscii(displayName)`，避免 HTML 内联脚本中出现控制字符。
+  - `tests/test_admin_console.py`
+    - 在内联脚本语法检查测试中增加 `"\x00" not in body` 断言，防止再次把控制字符写入页面脚本。
+- 验证结果：
+  - 本地：
+    - `python -m pytest tests/test_admin_console.py -q`
+    - 结果：`23 passed`
+    - `python -m compileall -q src/web/dashboard.py`
+    - 结果：通过
+  - 服务器：
+    - 已同步 `src/web/dashboard.py`
+    - 已同步 `tests/test_admin_console.py`
+    - `python3 -m pytest tests/test_admin_console.py -q`
+    - 结果：`23 passed`
+    - `python3 -m compileall -q src/web/dashboard.py`
+    - 结果：通过
+    - 已重启 `ant-colony-dashboard.service`
+  - 真实浏览器验证：
+    - 使用 Playwright + 本机 Chrome 打开测试服务器管理员控制台。
+    - `identity = wecom / MaGe / admin`
+    - `platformSummary = 已启用平台：1 / 总平台：3`
+    - `runtimeSummary = 可达端口：4 / healthy`
+    - `userStats = 总计 129 人 / 已开通 3`
+    - `window.showTab` 已恢复为 `function`
+    - 点击左侧“用户管理”后，active section 正确切换为 `users`。

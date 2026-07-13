@@ -361,6 +361,7 @@ def test_admin_and_knowledge_page_scripts_are_valid_javascript(tmp_path) -> None
         scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.DOTALL)
         assert scripts
         for index, body in enumerate(scripts):
+            assert "\x00" not in body
             script = tmp_path / f"{name}-{index}.js"
             script.write_text(body, encoding="utf-8")
             subprocess.run([node, "--check", str(script)], check=True)
