@@ -104,6 +104,7 @@ def build_platform_entry_payloads(platform: str, user_id: str, *, is_admin: bool
 
 
 def _knowledge_reply(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
     return (
         "知识库管理入口：\n"
         f"{_knowledge_url(platform, user_id)}\n\n"
@@ -112,6 +113,7 @@ def _knowledge_reply(platform: str, user_id: str) -> str:
 
 
 def _admin_reply(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
     return (
         "管理员控制台入口：\n"
         f"{_admin_url(platform, user_id)}\n\n"
@@ -120,18 +122,21 @@ def _admin_reply(platform: str, user_id: str) -> str:
 
 
 def _menu_reply(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
     is_admin = admin_auth.is_platform_admin(platform, user_id)
     payloads = build_platform_entry_payloads(platform, user_id, is_admin=is_admin)
     return payloads["text"]
 
 
 def _knowledge_url(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
     token = admin_auth.create_im_user_token(platform=platform, user_id=user_id, ttl_seconds=_ttl_seconds())
     query = urlencode({"platform": platform, "user_id": user_id, "user_token": token})
     return f"{_base_url()}/knowledge/user?{query}"
 
 
 def _admin_url(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
     token = admin_auth.create_admin_console_token(platform=platform, user_id=user_id, ttl_seconds=_ttl_seconds())
     query = urlencode({"platform": platform, "user_id": user_id, "admin_token": token})
     return f"{_base_url()}/admin/console?{query}"

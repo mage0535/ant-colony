@@ -23,6 +23,7 @@ from src.tools.platform_capability_tools import (
     create_meeting_tool as _create_meeting_tool,
     enterprise_app_action_tool as _enterprise_app_action_tool,
     enterprise_app_query_tool as _enterprise_app_query_tool,
+    edit_doc_content_tool as _edit_doc_content_tool,
     doc_search_tool as _doc_search_tool,
     read_docs_tool as _read_docs_tool,
     docx_template_outline_tool as _docx_template_outline_tool,
@@ -43,7 +44,13 @@ from src.tools.platform_capability_tools import (
     read_pdf_tool as _read_pdf_tool,
     read_pptx_tool as _read_pptx_tool,
     read_xlsx_tool as _read_xlsx_tool,
+    sheet_append_tool as _sheet_append_tool,
+    smartpage_create_tool as _smartpage_create_tool,
     split_pdf_tool as _split_pdf_tool,
+    todo_create_tool as _todo_create_tool,
+    todo_list_tool as _todo_list_tool,
+    todo_update_tool as _todo_update_tool,
+    todo_user_search_tool as _todo_user_search_tool,
     watermark_pdf_tool as _watermark_pdf_tool,
     who_is_admin_tool as _who_is_admin_tool,
     who_is_leader_tool as _who_is_leader_tool,
@@ -171,6 +178,9 @@ def _get_entry_link_tool(args: dict[str, Any]) -> str:
     from src.gateway.entry_links import _admin_reply, _knowledge_reply, _menu_reply
 
     if target == "admin":
+        from src.web.admin_auth import is_platform_admin
+        if not is_platform_admin(platform, user_id):
+            return "你当前没有管理员权限，不能打开管理员控制台。你可以发送「打开知识库」进入自己的知识库管理页面。"
         return _admin_reply(platform, user_id)
     if target == "knowledge":
         return _knowledge_reply(platform, user_id)
@@ -1949,6 +1959,190 @@ BUILTIN_TOOLS: list[ToolSpec] = [
         },
 
         handler=_create_doc_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:smartpage_create",
+
+        name="创建企业微信智能文档",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="在企业微信中创建智能文档，支持 Markdown 内容和多页面内容整理。当用户要求生成在线智能文档、汇总成企微智能文档时使用。",
+
+        parameters={
+
+            "title": {"type": "string", "description": "智能文档标题（必填）"},
+
+            "content": {"type": "string", "description": "文档正文，支持 Markdown（可选）"},
+
+        },
+
+        handler=_smartpage_create_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:edit_doc_content",
+
+        name="编辑企业微信文档内容",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="向已有企业微信文档写入或追加内容。只有用户明确要求编辑已有在线文档时使用。",
+
+        parameters={
+
+            "doc_id": {"type": "string", "description": "文档 ID 或文档标识（必填）"},
+
+            "content": {"type": "string", "description": "要写入的内容，支持 Markdown（必填）"},
+
+        },
+
+        handler=_edit_doc_content_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:sheet_append",
+
+        name="追加企业微信表格数据",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="向企业微信表格追加一行或多行数据。当用户要求把结果写入企微表格、追加表格记录时使用。",
+
+        parameters={
+
+            "doc_id": {"type": "string", "description": "表格文档 ID（必填）"},
+
+            "values": {"type": "string", "description": "要追加的数据，可为 JSON 数组或逗号分隔文本（必填）"},
+
+        },
+
+        handler=_sheet_append_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:todo_create",
+
+        name="创建企业微信待办",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="创建企业微信待办，可指定主题、截止时间和参与人。当用户说创建待办、提醒某人处理、安排任务时使用。",
+
+        parameters={
+
+            "title": {"type": "string", "description": "待办主题或内容（必填）"},
+
+            "due_time": {"type": "string", "description": "截止时间，例如 明天下午3点 或 2026-07-14 15:00（可选）"},
+
+            "participants": {"type": "string", "description": "参与人 userid，多个用逗号分隔（可选）"},
+
+        },
+
+        handler=_todo_create_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:todo_list",
+
+        name="查询企业微信待办",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="查询当前授权用户的企业微信待办列表。当用户问我的待办、本周待办、待办状态时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "待办筛选关键词或时间范围（可选）"},
+
+        },
+
+        handler=_todo_list_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:todo_update",
+
+        name="更新企业微信待办",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="更新机器人创建的企业微信待办标题、截止时间或状态。只有用户明确要求修改待办时使用。",
+
+        parameters={
+
+            "todo_id": {"type": "string", "description": "待办 ID（必填）"},
+
+            "title": {"type": "string", "description": "新的待办标题或内容（可选）"},
+
+            "status": {"type": "string", "description": "状态，例如 accepted、done、rejected 或已完成（可选）"},
+
+            "due_time": {"type": "string", "description": "新的截止时间（可选）"},
+
+        },
+
+        handler=_todo_update_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:todo_user_search",
+
+        name="搜索企业微信待办参与人",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="根据姓名或别名搜索可加入待办的成员 userid。当创建待办前需要查找张三、李四等成员时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "成员姓名或别名（必填）"},
+
+        },
+
+        handler=_todo_user_search_tool,
 
     ),
 

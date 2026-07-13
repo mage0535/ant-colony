@@ -7,6 +7,7 @@ import json
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -209,6 +210,33 @@ def _verify_admin_console_token(
     return current <= exp
 
 
+def decode_and_refresh_admin_token(
+    *,
+    token: str,
+    ttl_seconds: int = DEFAULT_ADMIN_SESSION_TTL_SECONDS,
+) -> str:
+    """Given a possibly-expired token (HMAC still valid), return a fresh token."""
+    secret = _admin_secret()
+    if not secret or not token or "." not in token:
+        raise HTTPException(401, "管理员访问令牌无效")
+    body, _, sig = token.partition(".")
+    if not hmac.compare_digest(_sign(body, secret), sig):
+        raise HTTPException(401, "管理员访问令牌签名无效")
+    try:
+        payload = json.loads(_unb64(body).decode("utf-8"))
+    except Exception:
+        raise HTTPException(401, "管理员访问令牌格式错误")
+    platform = str(payload.get("platform", ""))
+    user_id = str(payload.get("user_id", ""))
+    if not platform or not user_id:
+        raise HTTPException(401, "管理员访问令牌内容无效")
+    jti = payload.get("jti", "")
+    _cleanup_revoked_jtis()
+    if jti and jti in _revoked_jtis:
+        raise HTTPException(401, "管理员访问令牌已失效")
+    return create_admin_console_token(platform=platform, user_id=user_id, ttl_seconds=ttl_seconds)
+
+
 def _verify_im_user_token(*, platform: str, user_id: str, token: str, now: float | None = None) -> bool:
     secret = _admin_secret()
     if not secret or not token or "." not in token:
@@ -239,11 +267,52 @@ def _verify_im_user_token(*, platform: str, user_id: str, token: str, now: float
 
 
 def _admin_secret() -> str:
-    return os.environ.get("ANT_COLONY_ADMIN_SESSION_SECRET", "") or os.environ.get("ANT_COLONY_AUTH_TOKEN", "")
+    return (
+        os.environ.get("ANT_COLONY_ADMIN_SESSION_SECRET", "")
+        or os.environ.get("ANT_COLONY_AUTH_TOKEN", "")
+        or _admin_secret_from_env_file()
+    )
+
+
+def _admin_secret_from_env_file() -> str:
+    candidates = [
+        Path(os.getcwd()) / "infra" / ".env.wecom",
+    ]
+    if os.environ.get("ANT_COLONY_HOME"):
+        candidates.append(Path(os.environ["ANT_COLONY_HOME"]) / "infra" / ".env.wecom")
+    candidates.append(Path.home() / "ant-colony" / "infra" / ".env.wecom")
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                if key.strip() in {"ANT_COLONY_ADMIN_SESSION_SECRET", "ANT_COLONY_AUTH_TOKEN"}:
+                    return value.strip().strip('"').strip("'")
+        except OSError:
+            continue
+    return ""
 
 
 def _normalize_platform(platform: str) -> str:
-    normalized = platform.strip().lower() or "wecom"
+    normalized = str(platform or "wecom").strip().lower() or "wecom"
+    aliases = {
+        "wecom_bot": "wecom",
+        "wecom_bot_ws": "wecom",
+        "wecom_callback": "wecom",
+        "企业微信": "wecom",
+        "企微": "wecom",
+        "feishu_bot": "feishu",
+        "lark": "feishu",
+        "lark_bot": "feishu",
+        "飞书": "feishu",
+        "dingtalk_bot": "dingtalk",
+        "钉钉": "dingtalk",
+    }
+    normalized = aliases.get(normalized, normalized)
     if normalized not in {"wecom", "feishu", "dingtalk"}:
         raise HTTPException(400, f"不支持的平台：{platform}")
     return normalized

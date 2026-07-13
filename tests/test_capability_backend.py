@@ -555,3 +555,31 @@ def test_app_query_uses_current_im_provider_and_internal_connectors_only() -> No
     )
 
     assert [item.provider for item in results] == ["internal", "wecom"]
+
+
+def test_wecom_robot_mcp_capabilities_are_registered() -> None:
+    from src.platform.capability_backend import CapabilityBackend, CapabilityProvider
+
+    backend = CapabilityBackend(
+        [
+            CapabilityProvider("wecom", "企业微信", lambda: object()),
+            CapabilityProvider("wecom_robot_mcp", "企业微信机器人 MCP", lambda: object()),
+        ]
+    )
+
+    assert backend.describe_capability("todo.create") == {
+        "capability_id": "todo.create",
+        "method_name": "create_todo",
+        "providers": ["企业微信机器人 MCP"],
+        "risk_level": "medium",
+        "domain": "todo",
+        "requires_user_context": True,
+        "audit_scope": "sensitive",
+    }
+    assert backend.describe_capability("docs.smartpage.create") == {
+        "capability_id": "docs.smartpage.create",
+        "method_name": "smartpage_create",
+        "providers": ["企业微信机器人 MCP"],
+        "domain": "docs",
+        "requires_user_context": True,
+    }

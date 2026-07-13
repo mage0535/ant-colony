@@ -154,6 +154,15 @@ class AgentEngine:
 
         if has_tc:
             reply = self._execute_tool_calls(reply)
+            if self._has_tool_calls(reply):
+                # LLM produced malformed tool calls — retry with format correction
+                print("[ENGINE] malformed tool calls detected, retrying with correction", file=_sys2.stderr, flush=True)
+                correction = "\n\n你的上一段回复中有工具调用格式错误。正确的格式是：<tool_call>builtin:get_entry_link({\"target\": \"admin\"})</tool_call>。工具id必须写完整，括号和参数不能省略。请严格按此格式重新调用工具。"
+                if provider == "anthropic":
+                    reply = self._call_anthropic(system, text + correction)
+                else:
+                    reply = self._call_openai(system, text + correction)
+                reply = self._execute_tool_calls(reply)
 
         return AgentResponse(
             text=reply,
@@ -198,8 +207,9 @@ class AgentEngine:
             lines.append(f"- {t.name}（{t.id}）：{t.description}")
             if t.parameters:
                 lines.append(f"  参数：{json.dumps(t.parameters, ensure_ascii=False)}")
-        lines.append("\n如需使用工具，请在回复中包含 <tool_call>工具名({json参数})</tool_call>")
-        lines.append("例如：<tool_call>builtin:now()</tool_call>")
+        lines.append("\n如需使用工具，请在回复中包含 <tool_call>工具id({json参数})</tool_call>，工具id必须用括号内列出的英文id，不要省略工具名。")
+        lines.append("例如无参：<tool_call>builtin:now()</tool_call>")
+        lines.append("带参数：<tool_call>builtin:get_entry_link({\"target\": \"admin\"})</tool_call>")
         return system + "\n".join(lines)
 
     def _has_tool_calls(self, text: str) -> bool:
@@ -242,6 +252,11 @@ class AgentEngine:
                 args["from"] = uid
                 if not args.get("user_id"):
                     args["user_id"] = uid
+                meta = getattr(self, "_latest_context_metadata", {}) or {}
+                if not args.get("_source_provider") and meta.get("provider"):
+                    args["_source_provider"] = meta.get("provider")
+                if not args.get("_source_transport") and meta.get("transport"):
+                    args["_source_transport"] = meta.get("transport")
             replacement = self._dispatch_tool(name, args, tools)
             result = result.replace(
                 f"<tool_call>{name}({raw_args})</tool_call>",

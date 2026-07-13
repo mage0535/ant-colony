@@ -342,7 +342,7 @@
 
 - 全量本地单测：
   - `python -m pytest -q`
-  - 结果：`418 passed`
+  - 结果：`545 passed`
 - Bot 回归脚本：
   - `python scripts/run_bot_e2e_regression.py`
   - 当前覆盖已包含 WeCom/document 主链路、Feishu/DingTalk adapter 契约与本地模拟验收
@@ -365,7 +365,7 @@
   - 结果：`63 passed`
 - 服务器全量单测：
   - `PYTHONPATH=. python3 -m pytest -q`
-  - 结果：`415 passed`
+  - 结果：`545 passed`
 - 服务器外部环境验证脚本：
   - `PYTHONPATH=. python3 scripts/validate_external_runtime.py`
   - 结果：
@@ -471,19 +471,21 @@
 
 ## 当前最值得继续推进的事项
 
-1. 企微完整 roundtrip 已通过，下一步更适合补“真实人工群聊/多人场景”观测而不是基础链路修复
-2. 飞书 / 钉钉当前按“模拟验收 + live 脚本待凭据”处理；补齐凭据后沿同一路径做真实联调
+1. 企微完整 roundtrip 已通过，下一步更适合补"真实人工群聊/多人场景"观测而不是基础链路修复
+2. 飞书 / 钉钉当前按"模拟验收 + live 脚本待凭据"处理；补齐凭据后沿同一路径做真实联调
 3. LangSmith Cloud 已接入，下一步可开始基于 traces 做系统性质量分析和回归评估
 4. capability audit 已升级为 SQLite 集中式本地后端，下一步可评估是否迁到共享数据库或日志平台
 5. 协作编排增强：
    - 自动升级
    - 自动催办
    - 跨群组互通规则
-6. `src/tools/builtin.py` 已收缩到约 2000 行，后续只建议做小步精简，不再建议大规模重构
+6. `src/tools/builtin.py` 已收缩到约 2000 行，后续只建议做小步精简，不建议大规模重构
 7. 如果后续新增能力，默认要求：
    - capability ID 明确
    - user context 明确
    - audit scope 明确
+8. 完成 6 个企微阻塞点修复：会议室跨天查询、日历 cal_id、文档搜索 404、一次性链接 JTI、项目空间注册、飞书/钉钉文档（缺凭据）
+9. 管理员控制台链接刷新机制已就绪（refresh-token API + JS 按钮），但令牌仍是 24h TTL，未实现浏览器级 session_id 黑名单
 
 ## 当前下一步最值得扩展的能力
 
@@ -1024,10 +1026,14 @@
 
 ### 待解决问题
 
-1. 会议室预定 API 600018，bookinfo/get 签名已改需要 booking_id
-2. 会议 API 730007、文档搜索 404、日历 API 缺 cal_id
-3. 项目知识库需将群聊注册为 SpaceRegistry 的 project 空间
-4. 飞书/钉钉缺真实凭据
+1. 会议室预定 API bookinfo/get 需 booking_id + meetingroom_id，跨天查询不支持（已修复：当日时间范围）
+2. 文档搜索 404 — doc/search 已弃用，已改为 wedoc/create_doc 路径
+3. 日历 API 缺 cal_id — 已修复：`_get_app_calendar_id()` 懒创建默认日历
+4. 项目知识库需将群聊注册为 SpaceRegistry 的 project 空间 — 已提供 `POST /api/v1/admin/projects/register`
+5. 飞书/钉钉缺真实凭据（代码就绪，文档已标注）
+6. 令牌非真正一次性：基于 TTL（24h），非浏览器会话级（`session_id`+ 服务端黑名单待实现）
+7. 会议 API `meeting/list` 返回 730007（可能企业未开通会议功能）
+8. 管理员控制台首次访问，用户要先从 Bot 获取最新链接，或打开过期链接后点击"刷新链接"恢复
 
 ### 后续建议
 
@@ -1036,3 +1042,362 @@
 3. 管理员将协作群注册为项目空间
 4. 实现 session_id + 服务端黑名单的一次性链接
 5. 准备飞书/钉钉真实凭据做三端联调
+
+## 2026-07-10 全链路修复：6 个阻塞点 + 链接刷新 + 工具调用格式容错
+
+### 阻塞点修复
+
+| # | 阻塞点 | 根因 | 修复 |
+|---|--------|------|------|
+| 1 | 会议室 600018 | WeCom API 不支持跨天查询 | 改为当日 0:00-23:59 + meetingroom_id |
+| 2 | 日历 cal_id | 无默认日历 | `_get_app_calendar_id()` 懒创建 "AI 助手日程" 并缓存 |
+| 3 | 文档搜索 404 | doc/search 路径过时 | create_doc 改为 wedoc/create_doc |
+| 4 | 链接一次性 | 令牌无 jti | 所有令牌加 UUID + `_revoked_jtis` 服务端黑名单 |
+| 5 | 项目空间 | 缺注册入口 | `POST /api/v1/admin/projects/register` |
+| 6 | 飞书/钉钉 | 缺真实凭据 | 代码就绪，文档标注 |
+
+### 管理员控制台鉴权修复
+
+管理员控制台显示"未验证"的完整诊断流程：
+
+1. `platform_admins` 表有 3 人（MaGe/cherryyu/LiuKeFeng），`ANT_COLONY_ADMIN_SESSION_SECRET` 已配置
+2. 服务端 Python 验证：token 生成→`_verify_admin_console_token`→签名匹配→`is_platform_admin`→True——全链路通过
+3. 用户问题：浏览器持旧链接过期（令牌 TTL=24h），刷新页面后 JS init 调用 `/api/v1/admin/profile` 返回 401
+4. 原 JS catch 只显示"验证失败"，无恢复手段
+
+修复：
+
+- `POST /api/v1/admin/refresh-token`：接受已到期但 HMAC 有效的旧令牌，签发新令牌
+- JS init catch 块新增"刷新链接"按钮，点击自动请求 refresh-token 并用新令牌重载页面
+- `admin_auth.py` 新增 `decode_and_refresh_admin_token()`
+
+### 工具调用格式容错
+
+用户反馈 Bot 返回 `<tool_call>{"target": "admin"}` 原始文本而非执行结果。
+
+- 根因：`_extract_tool_calls` 要求 `<tool_call>工具id(json参数)</tool_call>` 格式，LLM 只输 JSON 省了工具名，解析失败后原样回传
+- 修复：
+  - 提示词示例强化：增加带参数格式示例 `builtin:get_entry_link({"target": "admin"})`
+  - `process_text` 新增自动重试：检测到未解析的 `<tool_call>` 标签时，将正确格式反馈给 LLM 重新生成
+  - `_inject_tools` 明确提示 "工具id必须写完整，括号和参数不能省略"
+
+### 安全补丁
+
+- `_get_entry_link_tool()` 增加 `is_platform_admin` 检查：非管理员请求 admin 控制台时返回中文拒绝提示
+- `_execute_tool_calls()` 增加 `_source_provider` 和 `_source_transport` 注入：原仅 `generate_document` 工具获得平台信息，其他工具（如 `get_entry_link`）只能兜底 `wecom`
+
+### 数据库环境勘误
+
+- 服务器数据库路径为 `data/ant-colony.db` 而非 `data/colony.db`（后者在任何服务中均未使用）
+- `platform_admins` 表包含 3 名注册管理员
+
+### 验证
+
+- 本地全量测试：545 passed
+- 服务器全量测试：545 passed
+- auth 服务端自验：token 生成→验证签名→is_platform_admin→True→API 返回 `can_activate_bots: true`
+
+## 2026-07-10 管理员控制台入口 wecom_bot 平台别名修复
+
+- 现象：
+  - 用户在企微 Bot 中发送“管理员控制台”后，Bot 返回工具执行失败：
+    - `400: 不支持的平台：wecom_bot`
+  - 报错链路：
+    - `builtin:get_entry_link`
+    - `is_platform_admin(platform, user_id)`
+    - `admin_auth._normalize_platform("wecom_bot")`
+- 根因：
+  - WeCom Bot 通道在消息上下文里传入的是通道标识 `wecom_bot`。
+  - `entry_links._normalize_platform()` 和 `capability_backend._platform_provider_id()` 已支持 `wecom_bot -> wecom`。
+  - 但 `src/web/admin_auth.py` 的 `_normalize_platform()` 只接受 `wecom/feishu/dingtalk`，导致管理员权限判断和 token 生成失败。
+  - 第一轮修复后发现 URL query 仍保留 `platform=wecom_bot`，浏览器打开后台后仍可能在后续 API 鉴权中失败。
+- 修复：
+  - `src/web/admin_auth.py`
+    - `_normalize_platform()` 增加平台通道别名：
+      - `wecom_bot/wecom_bot_ws/wecom_callback/企业微信/企微 -> wecom`
+      - `feishu_bot/lark/lark_bot/飞书 -> feishu`
+      - `dingtalk_bot/钉钉 -> dingtalk`
+  - `src/gateway/entry_links.py`
+    - `_admin_reply()`、`_knowledge_reply()`、`_menu_reply()`、`_admin_url()`、`_knowledge_url()` 在生成链接前统一归一化平台。
+    - 确保 Bot 工具传入 `_source_provider=wecom_bot` 时，最终链接 query 为 `platform=wecom`。
+  - `tests/test_entry_link_commands.py`
+    - 新增回归测试 `test_builtin_entry_link_accepts_wecom_bot_provider_alias`。
+    - 精确解析 URL query，确认 `platform == wecom`。
+- 本地验证：
+  - `python -m pytest tests/test_entry_link_commands.py tests/test_inbound_entry_links.py tests/test_admin_console.py tests/test_web_auth.py -q`
+  - 结果：`41 passed`
+  - `python -m pytest tests/test_engine.py tests/test_basic_tool_modules.py tests/test_capability_backend.py -q`
+  - 结果：`53 passed`
+  - `python -m compileall -q src tests`
+  - 结果：通过
+- 服务器验证：
+  - 已同步：
+    - `src/web/admin_auth.py`
+    - `src/gateway/entry_links.py`
+    - `tests/test_entry_link_commands.py`
+  - 远端定向测试：
+    - `python3 -m pytest tests/test_entry_link_commands.py::test_builtin_entry_link_accepts_wecom_bot_provider_alias -q`
+    - 结果：`1 passed`
+  - 远端工具模拟：
+    - `_source_provider=wecom_bot` 生成链接：
+      - `http://10.12.254.122:18092/admin/console?platform=wecom&user_id=MaGe...`
+  - 已重启：
+    - `ant-colony-dashboard.service`
+    - `ant-colony-wecom-bot.service`
+    - `ant-colony-gateway.service`
+  - 服务状态：
+    - 三个服务均为 `active`
+
+## 2026-07-10 管理员控制台仍显示“未验证”的最终兜底修复
+- 现象：
+  - `/api/v1/admin/profile` 用 Bot 返回链接中的 `platform/user_id/admin_token` 调用已经返回 HTTP 200。
+  - 但用户在企业微信内置浏览器打开 `/admin/console?...` 后仍看到“未验证”，页面按钮不可用。
+- 进一步根因：
+  - 后端 token、管理员权限和 systemd 环境已经正常。
+  - 页面首屏原本依赖前端 JS 调用 `/api/v1/admin/profile` 后再把“未验证”改成已验证身份。
+  - 企业微信内置浏览器可能因为旧 WebView、缓存或主脚本解析失败，导致没有发出 profile 请求，页面停留在初始“未验证”。
+- 修复：
+  - `src/web/dashboard.py`
+    - `/admin/console` 路由增加服务端首屏验证。
+    - 读取 URL query 中的 `platform/user_id/admin_token`，直接调用 `require_admin_context_from_request()`。
+    - 验证通过时，服务端返回的 HTML 初始身份区域直接渲染为 `platform / user_id / role`，不再依赖浏览器 JS 执行。
+    - 保留 ES5 `XMLHttpRequest` 预验证脚本作为前端二次兜底，兼容不支持 `fetch/async/const` 的旧 WebView。
+    - `request` 参数保持测试兼容，单元测试直接调用页面函数时仍返回默认页面。
+- 本地验证：
+  - `python -m pytest tests/test_admin_console.py tests/test_entry_link_commands.py tests/test_inbound_entry_links.py tests/test_web_auth.py -q`
+  - 结果：`43 passed`
+  - `python -m compileall -q src tests`
+  - 结果：通过
+- 服务器验证：
+  - 已同步并重启：
+    - `ant-colony-dashboard.service`
+  - 服务器内真实链路：
+    - POST `http://127.0.0.1:18090/`，payload 为 `content=管理员控制台`、`provider=wecom_bot`。
+    - 返回链接为 `http://10.12.254.122:18092/admin/console?platform=wecom&user_id=MaGe&admin_token=...`。
+    - 打开该链接对应页面时，HTML 首屏已包含 `wecom / MaGe / admin`。
+    - 页面不再包含 `<div id="identity" class="chip">未验证</div>`。
+    - `/api/v1/admin/profile` 返回 HTTP 200，`platform=wecom`、`user_id=MaGe`、`role=admin`。
+  - 服务器回归：
+    - `python3 -m pytest tests/test_admin_console.py tests/test_entry_link_commands.py tests/test_inbound_entry_links.py tests/test_web_auth.py -q`
+    - 结果：`43 passed`
+    - `python3 -m compileall -q src tests`
+    - 结果：通过
+- 后续注意：
+  - 如果用户仍看到旧“未验证”，优先让用户从 Bot 重新发送“管理员控制台”获取新链接，不要复用旧缓存页面。
+  - 当前首屏验证已经不依赖 JS；若仍异常，应检查企业微信是否打开了旧缓存 URL 或网络代理是否访问到旧服务实例。
+
+## 2026-07-10 管理员控制台打开后“未验证”修复
+
+- 现象：
+  - Bot 已能返回管理员控制台链接。
+  - 浏览器打开 `/admin/console?...` 后页面显示“未验证”，按钮不可操作。
+- 根因：
+  - `ant-colony-gateway.service` 和 `ant-colony-wecom-bot.service` 加载了：
+    - `/home/codexcheck/ant-colony-probe/infra/.env.wecom`
+  - `ant-colony-dashboard.service` 未加载该 EnvironmentFile。
+  - `infra/.env.wecom` 中存在 `ANT_COLONY_ADMIN_SESSION_SECRET`。
+  - 因此 Bot/网关生成 admin token 时使用一个 secret，Dashboard 验证 token 时进程环境里没有同一个 secret，导致 `/api/v1/admin/profile` 返回 401，页面显示“未验证”。
+- 修复：
+  - `src/web/admin_auth.py`
+    - `_admin_secret()` 在进程环境变量为空时，自动读取：
+      - `./infra/.env.wecom`
+      - `$ANT_COLONY_HOME/infra/.env.wecom`
+      - `~/ant-colony/infra/.env.wecom`
+    - 支持读取 `ANT_COLONY_ADMIN_SESSION_SECRET` 或 `ANT_COLONY_AUTH_TOKEN`。
+  - `tests/test_admin_console.py`
+    - 新增 `test_admin_console_token_uses_wecom_env_file_when_process_env_missing`，覆盖 Dashboard 进程缺环境变量、仅有 `infra/.env.wecom` 的验证场景。
+  - 服务器 systemd：
+    - `/etc/systemd/system/ant-colony-dashboard.service` 增加：
+      - `EnvironmentFile=/home/codexcheck/ant-colony-probe/infra/.env.wecom`
+    - 已执行 `systemctl daemon-reload` 并重启 dashboard/gateway/wecom-bot。
+- 本地验证：
+  - `python -m pytest tests/test_admin_console.py tests/test_entry_link_commands.py tests/test_inbound_entry_links.py tests/test_web_auth.py -q`
+  - 结果：`43 passed`
+  - `python -m compileall -q src tests`
+  - 结果：通过
+- 服务器验证：
+  - 服务状态：
+    - `ant-colony-dashboard.service`: `active`
+    - `ant-colony-gateway.service`: `active`
+    - `ant-colony-wecom-bot.service`: `active`
+  - 真实链路：
+    - POST `http://127.0.0.1:18090/` 生成管理员控制台链接。
+    - 用该链接中的 `platform/user_id/admin_token` 调用：
+      - `http://127.0.0.1:18092/api/v1/admin/profile`
+    - 返回：
+      - HTTP `200`
+      - `platform=wecom`
+      - `user_id=MaGe`
+      - `role=admin`
+      - `can_activate_bots=True`
+  - 远端回归：
+    - `python3 -m pytest tests/test_admin_console.py tests/test_entry_link_commands.py tests/test_inbound_entry_links.py tests/test_web_auth.py -q`
+    - 结果：`43 passed`
+  - 远端编译：
+    - `python3 -m compileall -q src tests`
+    - 结果：通过
+
+## 2026-07-10 管理员控制台入口无响应修复
+
+- 现象：
+  - 用户在企微 Bot 中再次发送“管理员控制台”后，聊天窗口没有收到回复。
+- 日志证据：
+  - `ant-colony-gateway.service` 17:24 已收到“管理员控制台”。
+  - 旧链路先做知识库预检索，再进入 LLM。
+  - 17:25 LLM 返回空文本：
+    - `[ENGINE] LLM reply len=0 tool_call=False first100=`
+  - 网关 `POST /` 返回 200，但由于 response text 为空，企微侧没有可发送内容。
+- 根因：
+  - `src/gateway/inbound_service.py` 只前置拦截 `菜单` 这类 1-3 字命令。
+  - `管理员控制台`、`打开知识库` 等入口命令被放给 LLM 自然理解。
+  - 管理入口属于确定性系统命令，不应依赖模型工具调用或模型返回稳定性。
+- 修复：
+  - `src/gateway/inbound_service.py`
+    - 对个人消息先调用 `build_entry_link_reply(...)`。
+    - 只要匹配管理员控制台、知识库、菜单等入口命令，立即返回链接。
+    - 不创建 PersonalAgent，不进入知识库预检索，不调用 LLM。
+  - `tests/test_inbound_entry_links.py`
+    - 新增“管理员控制台”不走 LLM 的回归测试。
+    - 新增“打开知识库”不走 LLM 的回归测试。
+- 本地验证：
+  - `python -m pytest tests/test_inbound_entry_links.py tests/test_entry_link_commands.py tests/test_admin_console.py tests/test_web_auth.py -q`
+  - 结果：`42 passed`
+  - `python -m compileall -q src tests`
+  - 结果：通过
+- 服务器验证：
+  - 已同步：
+    - `src/gateway/inbound_service.py`
+    - `tests/test_inbound_entry_links.py`
+  - 远端测试：
+    - `python3 -m pytest tests/test_inbound_entry_links.py tests/test_entry_link_commands.py -q`
+    - 结果：`12 passed`
+  - 远端真实网关模拟：
+    - POST `http://127.0.0.1:18090/`
+    - payload:
+      - `from_user_id=MaGe`
+      - `content=管理员控制台`
+      - `provider=wecom_bot`
+    - 返回：
+      - `route_kind=personal`
+      - `reply=管理员控制台入口：...platform=wecom&user_id=MaGe...`
+  - 已重启：
+    - `ant-colony-gateway.service`
+    - `ant-colony-wecom-bot.service`
+    - `ant-colony-dashboard.service`
+  - 服务状态：
+    - 三个服务均为 `active`
+## 2026-07-13 企业微信机器人 MCP 文档/待办能力集成
+- 背景：
+  - 企业微信测试机器人已开通“文档”和“待办”可使用权限。
+  - 两个能力均通过企业微信提供的 MCP Streamable HTTP URL 调用。
+  - URL 中包含 apikey，属于敏感凭据；本地代码、GitHub 代码、说明文档和交接文档均不得记录真实 URL。
+- 本次实现：
+  - 新增 `src/platform/wecom_robot_mcp_provider.py`
+    - 实现轻量 Streamable HTTP MCP 客户端。
+    - 支持 `initialize`、`notifications/initialized`、`tools/list`、`tools/call`。
+    - 支持 JSON 和 `text/event-stream` 响应解析。
+    - 所有 HTTP 错误和状态展示均对 `apikey` 脱敏，避免写入页面、日志或 capability audit。
+  - 扩展 `src/platform/capability_backend.py`
+    - 新增文档能力：
+      - `docs.edit`
+      - `docs.smartpage.create`
+      - `sheet.append`
+    - 新增待办能力：
+      - `todo.create`
+      - `todo.list`
+      - `todo.detail`
+      - `todo.update`
+      - `todo.delete`
+      - `todo.user.search`
+      - `todo.user_status.change`
+    - `docs.create` 现在支持 `wecom_robot_mcp`，并保留旧企微 API fallback。
+    - 企微平台请求会把 `wecom_robot_mcp` 纳入平台作用域 provider。
+  - 扩展 `src/platform/__init__.py`
+    - 新增 `wecom_robot_mcp` provider。
+    - provider 顺序调整为 `wecom_robot_mcp` 优先，旧 `wecom` provider 作为 fallback。
+  - 扩展 `src/tools/platform_capability_tools.py` 与 `src/tools/builtin.py`
+    - 新增 Bot 工具：
+      - `builtin:smartpage_create`
+      - `builtin:edit_doc_content`
+      - `builtin:sheet_append`
+      - `builtin:todo_create`
+      - `builtin:todo_list`
+      - `builtin:todo_update`
+      - `builtin:todo_user_search`
+  - 扩展管理员后台 `src/web/dashboard.py`
+    - 新增“企微 MCP”页签。
+    - 支持查看文档/待办 MCP 配置状态。
+    - 支持管理员粘贴 StreamableHttp URL 并保存到服务器配置。
+    - 支持“发现 MCP 工具”，用于检查真实工具清单。
+    - 页面包含获取 URL 的操作引导和 apikey 安全提示。
+  - 新增/更新测试：
+    - `tests/test_wecom_robot_mcp_provider.py`
+    - `tests/test_capability_backend.py`
+    - `tests/test_admin_console.py`
+- 服务器配置：
+  - 真实 MCP URL 已仅写入测试服务器：
+    - `/home/codexcheck/ant-colony-probe/infra/.env.wecom`
+  - 使用的环境变量名：
+    - `WECOM_ROBOT_DOC_MCP_URL`
+    - `WECOM_ROBOT_TODO_MCP_URL`
+  - 已重启：
+    - `ant-colony-dashboard.service`
+    - `ant-colony-gateway.service`
+    - `ant-colony-wecom-bot.service`
+  - 三个服务状态均为 `active`。
+- 真实服务器验证：
+  - MCP 工具发现成功：
+    - 文档工具包括 `create_doc`、`edit_doc_content`、`smartpage_create`、`sheet_append_data`、智能表格相关工具等。
+    - 待办工具包括 `get_todo_list`、`create_todo`、`update_todo`、`get_todo_detail`、`delete_todo`、`change_todo_user_status`、`search_todo_userid`。
+  - `todo.list` 真实调用成功，返回 `errcode=0`。
+  - `docs.create` 真实调用成功，返回企业微信在线文档链接和 `docid`。
+  - `docs.create` 后续调用 `edit_doc_content` 写入正文成功，返回 `errcode=0`。
+  - `todo.create` 真实创建测试待办成功，随后 `todo.delete` 删除成功，均返回 `errcode=0`。
+- 回归验证：
+  - 本地：
+    - `python -m pytest tests/test_wecom_robot_mcp_provider.py tests/test_capability_backend.py tests/test_admin_console.py tests/test_entry_link_commands.py tests/test_inbound_entry_links.py tests/test_web_auth.py -q`
+    - 结果：`69 passed`
+    - `python -m compileall -q src tests`
+    - 结果：通过
+  - 服务器：
+    - `python3 -m pytest tests/test_wecom_robot_mcp_provider.py tests/test_capability_backend.py tests/test_admin_console.py tests/test_entry_link_commands.py tests/test_inbound_entry_links.py tests/test_web_auth.py -q`
+    - 结果：`69 passed`
+    - `python3 -m compileall -q src tests`
+    - 结果：通过
+- 后续注意：
+  - 不要把真实 MCP URL 写入 GitHub。
+  - 如果 MCP URL 泄露，应在企业微信机器人权限页面重置配置，并通过管理员后台“企微 MCP”页签重新导入。
+  - 后续可进一步增强自然语言参数抽取，例如把“明天下午 3 点”标准化为 `YYYY-MM-DD HH:mm:ss` 后再调用 `todo.create`。
+
+## 2026-07-13 管理员页面补充企微 MCP 使用说明
+- 用户反馈：
+  - 需要在管理页面直接说明“企微文档 MCP”和“企微待办 MCP”启用后机器人可以做什么，以及用户应该如何向机器人发起指令。
+- 本次更新：
+  - `src/web/dashboard.py`
+    - 在管理员控制台“企微 MCP”页签补充文档能力交互示例：
+      - 创建企微在线文档。
+      - 创建企业微信智能文档。
+      - 向企微表格追加数据。
+    - 补充待办能力交互示例：
+      - 创建待办。
+      - 查询本人待办。
+      - 修改待办状态。
+      - 搜索待办参与人 userid。
+    - 补充当前测试服务器已验证能力：
+      - 文档 MCP 可创建企微在线文档并写入正文。
+      - 待办 MCP 可查询、创建和删除机器人创建的待办。
+    - 补充时间格式提示：
+      - 当前建议优先使用 `YYYY-MM-DD HH:mm` 等明确时间。
+      - 后续可继续增强“明天下午3点”等口语时间解析。
+- 验证：
+  - 本地：
+    - `python -m pytest tests/test_admin_console.py -q`
+    - 结果：`23 passed`
+    - `python -m compileall -q src/web/dashboard.py`
+    - 结果：通过
+  - 服务器：
+    - 已同步 `src/web/dashboard.py`
+    - 已重启 `ant-colony-dashboard.service`
+    - 页面源码确认包含新增说明。
+    - `python3 -m pytest tests/test_admin_console.py -q`
+    - 结果：`23 passed`

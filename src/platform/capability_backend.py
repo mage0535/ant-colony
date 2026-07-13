@@ -53,7 +53,17 @@ class CapabilityBackend:
         "calendar.create": CapabilitySpec("calendar.create", "create_event"),
         "docs.search": CapabilitySpec("docs.search", "search_docs", domain="docs", requires_user_context=True),
         "docs.read": CapabilitySpec("docs.read", "read_docs_document", domain="docs", requires_user_context=True),
-        "docs.create": CapabilitySpec("docs.create", "create_doc", frozenset({"wecom"})),
+        "docs.create": CapabilitySpec("docs.create", "create_doc", frozenset({"wecom_robot_mcp", "wecom"}), domain="docs", requires_user_context=True),
+        "docs.edit": CapabilitySpec("docs.edit", "edit_doc_content", frozenset({"wecom_robot_mcp"}), risk_level="medium", domain="docs", requires_user_context=True, audit_scope="sensitive"),
+        "docs.smartpage.create": CapabilitySpec("docs.smartpage.create", "smartpage_create", frozenset({"wecom_robot_mcp"}), domain="docs", requires_user_context=True),
+        "sheet.append": CapabilitySpec("sheet.append", "sheet_append_data", frozenset({"wecom_robot_mcp"}), risk_level="medium", domain="docs", requires_user_context=True, audit_scope="sensitive"),
+        "todo.create": CapabilitySpec("todo.create", "create_todo", frozenset({"wecom_robot_mcp"}), risk_level="medium", domain="todo", requires_user_context=True, audit_scope="sensitive"),
+        "todo.list": CapabilitySpec("todo.list", "list_todos", frozenset({"wecom_robot_mcp"}), domain="todo", requires_user_context=True),
+        "todo.detail": CapabilitySpec("todo.detail", "get_todo_detail", frozenset({"wecom_robot_mcp"}), domain="todo", requires_user_context=True),
+        "todo.update": CapabilitySpec("todo.update", "update_todo", frozenset({"wecom_robot_mcp"}), risk_level="medium", domain="todo", requires_user_context=True, audit_scope="sensitive"),
+        "todo.delete": CapabilitySpec("todo.delete", "delete_todo", frozenset({"wecom_robot_mcp"}), risk_level="high", domain="todo", requires_user_context=True, audit_scope="sensitive"),
+        "todo.user.search": CapabilitySpec("todo.user.search", "search_todo_userid", frozenset({"wecom_robot_mcp"}), domain="todo", requires_user_context=True),
+        "todo.user_status.change": CapabilitySpec("todo.user_status.change", "change_todo_user_status", frozenset({"wecom_robot_mcp"}), risk_level="medium", domain="todo", requires_user_context=True, audit_scope="sensitive"),
         "approval.list": CapabilitySpec("approval.list", "list_approvals", frozenset({"wecom", "feishu", "dingtalk"}), domain="approval", requires_user_context=True),
         "approval.detail": CapabilitySpec("approval.detail", "get_approval_detail", risk_level="medium", domain="approval", requires_user_context=True),
         "meeting.list": CapabilitySpec("meeting.list", "list_meetings", frozenset({"wecom", "dingtalk"}), domain="meeting", requires_user_context=True),
@@ -205,12 +215,14 @@ class CapabilityBackend:
         provider_filter = set(spec.provider_ids) if spec.provider_ids else None
         resolved_context = coerce_capability_context(context)
         platform_provider = _platform_provider_id(resolved_context.platform)
-        platform_scoped_domains = {"apps", "contacts", "calendar", "docs", "approval", "meeting", "drive", "mail"}
+        platform_scoped_domains = {"apps", "contacts", "calendar", "docs", "approval", "meeting", "drive", "mail", "todo"}
         has_platform_provider = any(
             provider.provider_id == platform_provider for provider in self.providers
         )
         if spec.domain in platform_scoped_domains and platform_provider and has_platform_provider:
             scoped_providers = {"internal", platform_provider}
+            if platform_provider == "wecom":
+                scoped_providers.add("wecom_robot_mcp")
             provider_filter = scoped_providers if provider_filter is None else provider_filter & scoped_providers
         return self.call_all(
             spec.method_name,

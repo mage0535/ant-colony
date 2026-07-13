@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 
@@ -52,6 +53,24 @@ def test_admin_command_returns_signed_admin_console_link_for_admin() -> None:
     assert "platform=wecom" in reply
     assert "user_id=u-admin" in reply
     assert "admin_token=" in reply
+
+
+def test_builtin_entry_link_accepts_wecom_bot_provider_alias() -> None:
+    from src.tools.builtin import _get_entry_link_tool
+
+    with patch.dict(
+        "os.environ",
+        {"ANT_COLONY_PUBLIC_BASE_URL": "http://example.test", "ANT_COLONY_ADMIN_SESSION_SECRET": "secret"},
+        clear=False,
+    ), patch("src.web.admin_auth.is_platform_admin", return_value=True):
+        reply = _get_entry_link_tool({"target": "admin", "user_id": "u-admin", "_source_provider": "wecom_bot"})
+
+    assert "管理员控制台入口" in reply
+    url = next(line for line in reply.splitlines() if line.startswith("http://example.test/admin/console?"))
+    query = parse_qs(urlparse(url).query)
+    assert query["platform"] == ["wecom"]
+    assert query["user_id"] == ["u-admin"]
+    assert query["admin_token"]
 
 
 def test_non_entry_text_returns_none() -> None:

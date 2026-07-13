@@ -355,6 +355,111 @@ def create_doc_tool(args: dict[str, str]) -> str:
     return result or "文档创建成功"
 
 
+def smartpage_create_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    title = str(args.get("title", ""))
+    if not title:
+        return "请提供智能文档标题"
+    return invoke_capability_first(
+        "docs.smartpage.create",
+        title,
+        str(args.get("content", "")),
+        context=_context_from_args(args),
+        empty_message="企业微信智能文档 MCP 尚未配置或不可用",
+    )
+
+
+def edit_doc_content_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    doc_id = str(args.get("doc_id", "") or args.get("document_id", ""))
+    content = str(args.get("content", ""))
+    if not doc_id or not content:
+        return "请提供文档 ID 和要写入的内容"
+    return invoke_capability_first(
+        "docs.edit",
+        doc_id,
+        content,
+        context=_context_from_args(args),
+        empty_message="企业微信文档编辑 MCP 尚未配置或不可用",
+    )
+
+
+def sheet_append_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    doc_id = str(args.get("doc_id", "") or args.get("document_id", ""))
+    values = args.get("values", "") or args.get("data", "")
+    if not doc_id or not values:
+        return "请提供表格文档 ID 和要追加的数据"
+    return invoke_capability_first(
+        "sheet.append",
+        doc_id,
+        values,
+        context=_context_from_args(args),
+        empty_message="企业微信表格 MCP 尚未配置或不可用",
+    )
+
+
+def todo_create_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    title = str(args.get("title", "") or args.get("content", ""))
+    if not title:
+        return "请提供待办主题"
+    return invoke_capability_first(
+        "todo.create",
+        title,
+        str(args.get("due_time", "") or args.get("deadline", "")),
+        str(args.get("participants", "") or args.get("userids", "")),
+        context=_context_from_args(args),
+        empty_message="企业微信待办 MCP 尚未配置或不可用",
+    )
+
+
+def todo_list_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    return invoke_capability_first(
+        "todo.list",
+        str(args.get("query", "")),
+        context=_context_from_args(args),
+        empty_message="未查询到待办，或企业微信待办 MCP 尚未配置",
+    )
+
+
+def todo_update_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    todo_id = str(args.get("todo_id", "") or args.get("id", ""))
+    if not todo_id:
+        return "请提供待办 ID"
+    return invoke_capability_first(
+        "todo.update",
+        todo_id,
+        str(args.get("title", "") or args.get("content", "")),
+        str(args.get("status", "")),
+        str(args.get("due_time", "") or args.get("deadline", "")),
+        context=_context_from_args(args),
+        empty_message="企业微信待办更新 MCP 尚未配置或不可用",
+    )
+
+
+def todo_user_search_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    query = str(args.get("query", "") or args.get("name", ""))
+    if not query:
+        return "请提供要搜索的成员姓名或别名"
+    return invoke_capability_first(
+        "todo.user.search",
+        query,
+        context=_context_from_args(args),
+        empty_message="未找到成员，或企业微信待办成员搜索 MCP 尚未配置",
+    )
+
+
 def list_meetings_tool(args: dict[str, str]) -> str:
     from src.platform import invoke_capability
 

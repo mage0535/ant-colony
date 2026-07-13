@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import subprocess
 from unittest.mock import patch
@@ -35,6 +36,24 @@ def test_admin_console_token_requires_im_admin() -> None:
         token = create_admin_console_token(platform="wecom", user_id="u-admin", now=1000)
         with patch("src.web.admin_auth.is_platform_admin", return_value=True):
             context = require_admin_context(platform="wecom", user_id="u-admin", admin_token=token, now=1001)
+
+    assert context["platform"] == "wecom"
+    assert context["user_id"] == "u-admin"
+
+
+def test_admin_console_token_uses_wecom_env_file_when_process_env_missing(tmp_path, monkeypatch) -> None:
+    from src.web.admin_auth import create_admin_console_token, require_admin_context
+
+    env_dir = tmp_path / "infra"
+    env_dir.mkdir()
+    (env_dir / ".env.wecom").write_text("ANT_COLONY_ADMIN_SESSION_SECRET=file-secret\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANT_COLONY_ADMIN_SESSION_SECRET", raising=False)
+    monkeypatch.delenv("ANT_COLONY_AUTH_TOKEN", raising=False)
+
+    token = create_admin_console_token(platform="wecom", user_id="u-admin", now=1000)
+    with patch("src.web.admin_auth.is_platform_admin", return_value=True):
+        context = require_admin_context(platform="wecom", user_id="u-admin", admin_token=token, now=1001)
 
     assert context["platform"] == "wecom"
     assert context["user_id"] == "u-admin"
@@ -105,6 +124,38 @@ def test_admin_activate_bot_sets_activated_by_from_im_user() -> None:
 
     assert result["enabled"] is True
     assert activate.call_args.args[1].activated_by == "u-admin"
+
+
+def test_admin_wecom_mcp_status_uses_admin_context() -> None:
+    from src.web.dashboard import admin_wecom_mcp_status
+
+    request = _request("/api/v1/admin/wecom/mcp/status")
+    fake_status = {"doc": {"configured": True}, "todo": {"configured": False}}
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.wecom_robot_mcp_provider.get_wecom_robot_mcp_status", return_value=fake_status) as status:
+        result = admin_wecom_mcp_status(request, discover=True)
+
+    assert result == fake_status
+    status.assert_called_once_with(discover=True)
+
+
+def test_admin_wecom_mcp_config_saves_urls() -> None:
+    from src.web.dashboard import WeComMcpConfigRequest, admin_wecom_mcp_config
+
+    request = _request("/api/v1/admin/wecom/mcp/config")
+    fake_result = {
+        "saved_keys": ["WECOM_ROBOT_DOC_MCP_URL"],
+        "status": {"doc": {"url_masked": "https://example.test?apikey=abc...xyz"}},
+    }
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.wecom_robot_mcp_provider.save_wecom_robot_mcp_urls", return_value=fake_result) as save:
+        result = admin_wecom_mcp_config(
+            WeComMcpConfigRequest(doc_mcp_url="https://example.test?apikey=secret", todo_mcp_url=""),
+            request,
+        )
+
+    assert result == fake_result
+    save.assert_called_once_with(doc_url="https://example.test?apikey=secret", todo_url="")
 
 
 def test_admin_employee_bot_activation_uses_im_admin_context() -> None:
@@ -273,6 +324,10 @@ def test_admin_console_page_contains_material_business_sections() -> None:
     assert "employeePermissions" not in html
     assert "确认自动接管企业微信" in html
     assert "高级配置：仅在系统提示缺少凭据时填写" in html
+    assert "企微 MCP" in html
+    assert "企业微信文档 MCP" in html
+    assert "企业微信待办 MCP" in html
+    assert "saveWecomMcpConfig" in html
 
 
 def test_knowledge_management_page_contains_business_operations() -> None:
@@ -303,11 +358,12 @@ def test_admin_and_knowledge_page_scripts_are_valid_javascript(tmp_path) -> None
         "knowledge-management": knowledge_management_page(),
     }.items():
         html = response.body.decode("utf-8")
-        start = html.index("<script>") + len("<script>")
-        end = html.index("</script>", start)
-        script = tmp_path / f"{name}.js"
-        script.write_text(html[start:end], encoding="utf-8")
-        subprocess.run([node, "--check", str(script)], check=True)
+        scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.DOTALL)
+        assert scripts
+        for index, body in enumerate(scripts):
+            script = tmp_path / f"{name}-{index}.js"
+            script.write_text(body, encoding="utf-8")
+            subprocess.run([node, "--check", str(script)], check=True)
 
 
 def test_create_admin_console_link_includes_signed_token() -> None:

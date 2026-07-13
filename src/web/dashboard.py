@@ -145,6 +145,12 @@ class PlatformBotActivationRequest(BaseModel):
     visibility_scope: str = "all"
     auto_permissions: list[str] = []
 
+
+class WeComMcpConfigRequest(BaseModel):
+    doc_mcp_url: str = ""
+    todo_mcp_url: str = ""
+
+
 class EmployeeBotActivationRequest(BaseModel):
     platform: str = "wecom"
     user_id: str
@@ -386,6 +392,21 @@ def activate_platform_bot_api(platform: str, req: PlatformBotActivationRequest):
     }
 
 
+@app.post("/api/v1/admin/refresh-token")
+def admin_refresh_token(request: Request):
+    """Accept a possibly-expired but HMAC-valid token, return a fresh one."""
+    old_token = (
+        request.query_params.get("admin_token")
+        or request.headers.get("X-Admin-Token")
+        or ""
+    )
+    if not old_token:
+        raise HTTPException(401, "缺少管理员访问令牌")
+    from src.web.admin_auth import decode_and_refresh_admin_token
+    new_token = decode_and_refresh_admin_token(token=old_token)
+    return {"admin_token": new_token}
+
+
 @app.get("/api/v1/admin/profile")
 def admin_profile(request: Request):
     context = require_admin_context_from_request(request)
@@ -422,6 +443,25 @@ def admin_activate_platform_bot(platform: str, req: PlatformBotActivationRequest
     context = require_admin_context_from_request(request)
     req.activated_by = req.activated_by or context["user_id"]
     return activate_platform_bot_api(platform, req)
+
+
+@app.get("/api/v1/admin/wecom/mcp/status")
+def admin_wecom_mcp_status(request: Request, discover: bool = False):
+    require_admin_context_from_request(request)
+    from src.platform.wecom_robot_mcp_provider import get_wecom_robot_mcp_status
+
+    return get_wecom_robot_mcp_status(discover=discover)
+
+
+@app.post("/api/v1/admin/wecom/mcp/config")
+def admin_wecom_mcp_config(req: WeComMcpConfigRequest, request: Request):
+    require_admin_context_from_request(request)
+    from src.platform.wecom_robot_mcp_provider import save_wecom_robot_mcp_urls
+
+    return save_wecom_robot_mcp_urls(
+        doc_url=req.doc_mcp_url,
+        todo_url=req.todo_mcp_url,
+    )
 
 
 @app.post("/api/v1/admin/projects/register")
@@ -1464,6 +1504,108 @@ def knowledge_management_page():
     </section>
   </main>
   <script>
+    (function () {
+      function query(name) {
+        var match = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
+        return match ? decodeURIComponent(match[1].replace(/\\+/g, ' ')) : '';
+      }
+      var platform = query('platform') || 'wecom';
+      var userId = query('user_id');
+      var token = query('admin_token');
+      if (!userId || !token || !window.XMLHttpRequest) return;
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/v1/admin/profile?platform=' + encodeURIComponent(platform) + '&user_id=' + encodeURIComponent(userId) + '&admin_token=' + encodeURIComponent(token), true);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) return;
+        var identity = document.getElementById('identity');
+        var profileBox = document.getElementById('profileBox');
+        if (!identity || !profileBox) return;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var profile = JSON.parse(xhr.responseText || '{}');
+            identity.innerHTML = (profile.platform || platform) + ' / ' + (profile.user_id || userId) + ' / ' + (profile.role || 'admin');
+            profileBox.innerHTML = '<span class="chip ok">用户：' + (profile.user_id || userId) + '</span><span class="chip ok">角色：' + (profile.role || 'admin') + '</span>';
+          } catch (err) {
+            identity.innerHTML = '已验证';
+            profileBox.innerHTML = '<span class="chip ok">管理员身份已验证</span>';
+          }
+        } else {
+          identity.innerHTML = '验证失败';
+          profileBox.innerHTML = '验证失败，请从 Bot 重新打开管理员控制台';
+        }
+      };
+      xhr.send();
+    })();
+  </script>
+  <script>
+    (function () {
+      function query(name) {
+        var match = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
+        return match ? decodeURIComponent(match[1].replace(/\\+/g, ' ')) : '';
+      }
+      var platform = query('platform') || 'wecom';
+      var userId = query('user_id');
+      var token = query('admin_token');
+      if (!userId || !token || !window.XMLHttpRequest) return;
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/v1/admin/profile?platform=' + encodeURIComponent(platform) + '&user_id=' + encodeURIComponent(userId) + '&admin_token=' + encodeURIComponent(token), true);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) return;
+        var identity = document.getElementById('identity');
+        var profileBox = document.getElementById('profileBox');
+        if (!identity || !profileBox) return;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var profile = JSON.parse(xhr.responseText || '{}');
+            identity.innerHTML = (profile.platform || platform) + ' / ' + (profile.user_id || userId) + ' / ' + (profile.role || 'admin');
+            profileBox.innerHTML = '<span class="chip ok">用户：' + (profile.user_id || userId) + '</span><span class="chip ok">角色：' + (profile.role || 'admin') + '</span>';
+          } catch (err) {
+            identity.innerHTML = '已验证';
+            profileBox.innerHTML = '<span class="chip ok">管理员身份已验证</span>';
+          }
+        } else {
+          identity.innerHTML = '验证失败';
+          profileBox.innerHTML = '验证失败，请从 Bot 重新打开管理员控制台';
+        }
+      };
+      xhr.send();
+    })();
+  </script>
+  <script>
+    (function () {
+      function getParam(name) {
+        var match = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search || '');
+        return match ? decodeURIComponent(match[1].replace(/\\+/g, ' ')) : '';
+      }
+      var platform = getParam('platform') || 'wecom';
+      var userId = getParam('user_id');
+      var token = getParam('admin_token');
+      if (!userId || !token || !window.XMLHttpRequest) return;
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/v1/admin/profile?platform=' + encodeURIComponent(platform) + '&user_id=' + encodeURIComponent(userId) + '&admin_token=' + encodeURIComponent(token), true);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) return;
+        var identity = document.getElementById('identity');
+        var profileBox = document.getElementById('profileBox');
+        if (!identity || !profileBox) return;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var profile = JSON.parse(xhr.responseText || '{}');
+            identity.innerHTML = (profile.platform || platform) + ' / ' + (profile.user_id || userId) + ' / ' + (profile.role || 'admin');
+            profileBox.innerHTML = '<span class="chip ok">用户：' + (profile.user_id || userId) + '</span><span class="chip ok">角色：' + (profile.role || 'admin') + '</span>';
+          } catch (e) {
+            identity.innerHTML = '已验证';
+            profileBox.innerHTML = '管理员身份已通过验证';
+          }
+        } else {
+          identity.innerHTML = '验证失败';
+          profileBox.innerHTML = '验证失败，请从 Bot 重新打开管理员控制台';
+        }
+      };
+      xhr.send(null);
+    })();
+  </script>
+  <script>
     const params = new URLSearchParams(location.search);
     const hasAdminToken = !!params.get('admin_token');
     const hasUserToken = !!params.get('user_token');
@@ -1729,9 +1871,35 @@ def knowledge_user_page():
 
 
 @app.get("/admin/console", response_class=HTMLResponse)
-def admin_console_page():
-    return HTMLResponse(
-        """
+def admin_console_page(request: Request = None):
+    def _html_escape(value: Any) -> str:
+        text = str(value)
+        return (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;")
+        )
+
+    initial_identity = "未验证"
+    initial_profile_box = "等待验证"
+    try:
+        if request is None:
+            raise HTTPException(401, "missing request")
+        admin_context = require_admin_context_from_request(request)
+        platform = _html_escape(admin_context.get("platform", "wecom"))
+        user_id = _html_escape(admin_context.get("user_id", ""))
+        role = _html_escape(admin_context.get("role", "admin"))
+        initial_identity = f"{platform} / {user_id} / {role}"
+        initial_profile_box = (
+            f'<span class="chip ok">用户：{user_id}</span>'
+            f'<span class="chip ok">角色：{role}</span>'
+        )
+    except HTTPException:
+        pass
+
+    html = """
 <!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1813,6 +1981,7 @@ def admin_console_page():
       <button onclick="showTab('models', this)">模型管理</button>
       <button onclick="showTab('knowledge', this)">知识库管理</button>
       <button onclick="showTab('runtime', this)">运行验证</button>
+      <button onclick="showTab('wecomMcp', this)">企微 MCP</button>
       <button onclick="showTab('help', this)">操作说明</button>
     </nav>
     <div>
@@ -1962,24 +2131,61 @@ def admin_console_page():
           </div>
         </div>
       </section>
-      <section id="runtime">
-        <div class="panel">
-          <h2>运行验证</h2>
-          <p>查看服务端口、平台环境变量和健康状态。保存新凭据后如提示需要重启，应重启对应服务后再验证。</p>
-          <button class="secondary" onclick="loadRuntime()">刷新运行状态</button>
-          <div id="runtimeResult" class="status">等待加载</div>
-        </div>
-      </section>
-      <section id="help">
-        <div class="panel">
-          <h2>页面操作说明</h2>
-          <table>
-            <tbody>
+       <section id="runtime">
+         <div class="panel">
+           <h2>运行验证</h2>
+           <p>查看服务端口、平台环境变量和健康状态。保存新凭据后如提示需要重启，应重启对应服务后再验证。</p>
+           <button class="secondary" onclick="loadRuntime()">刷新运行状态</button>
+           <div id="runtimeResult" class="status">等待加载</div>
+         </div>
+       </section>
+       <section id="wecomMcp">
+         <div class="grid two">
+           <div class="panel">
+             <h2>企业微信文档 MCP</h2>
+             <p>用于让机器人直接新建、编辑企业微信文档、智能文档、表格和智能表格。适合报告生成、资料汇总、会议纪要沉淀和在线协作。</p>
+             <p class="muted">可对机器人说：“帮我创建一份企微文档，标题是会议纪要，内容如下……”“把这段内容整理成企业微信智能文档”“把这些客户信息追加到企微表格里”。</p>
+             <label>StreamableHttp URL</label><input id="wecomDocMcpUrl" type="password" placeholder="从企业微信机器人“文档”权限页面复制 StreamableHttp URL">
+             <details>
+               <summary>如何获取文档 MCP URL</summary>
+               <p>进入企业微信管理后台或机器人配置页，打开测试机器人的“文档”可使用权限，复制 StreamableHttp URL。URL 中包含 apikey，只能粘贴到这里或服务器配置文件，不能写入 GitHub、说明书或聊天记录。</p>
+               <p>启用后可支持 create_doc、smartpage_create、edit_doc_content、sheet_append_data 等能力。</p>
+             </details>
+           </div>
+           <div class="panel">
+             <h2>企业微信待办 MCP</h2>
+             <p>用于让机器人创建待办、查询本人待办、更新机器人创建的待办、搜索待办参与人和修改参与人状态。适合会议行动项、任务督办和流程跟进。</p>
+             <p class="muted">可对机器人说：“帮我创建一个待办，主题是提交项目体验报告，截止时间是 2026-07-14 15:00”“查一下我现在有哪些待办”“把这个待办改成已完成”“搜索张三的 userid”。</p>
+             <label>StreamableHttp URL</label><input id="wecomTodoMcpUrl" type="password" placeholder="从企业微信机器人“待办”权限页面复制 StreamableHttp URL">
+             <details>
+               <summary>如何获取待办 MCP URL</summary>
+               <p>进入企业微信管理后台或机器人配置页，打开测试机器人的“待办”可使用权限，复制 StreamableHttp URL。URL 中包含 apikey，请妥善保管；如泄露，应在企业微信中重置配置。</p>
+               <p>启用后可支持 create_todo、get_todo_list、update_todo、search_todo_userid 等能力。</p>
+             </details>
+           </div>
+           <div class="panel span">
+             <h2>配置状态与验证</h2>
+             <p class="muted">当前服务器已验证：文档 MCP 可创建企微在线文档并写入正文；待办 MCP 可查询、创建和删除机器人创建的待办。自然语言时间仍建议优先使用明确格式，例如 2026-07-14 15:00，后续可继续增强“明天下午3点”等口语时间解析。</p>
+             <div class="actions">
+               <button class="primary" onclick="saveWecomMcpConfig()">保存 MCP URL</button>
+               <button class="secondary" onclick="loadWecomMcpStatus(false)">刷新配置状态</button>
+               <button class="tonal" onclick="loadWecomMcpStatus(true)">发现 MCP 工具</button>
+             </div>
+             <div id="wecomMcpStatus" class="status">等待加载</div>
+           </div>
+         </div>
+       </section>
+       <section id="help">
+         <div class="panel">
+           <h2>页面操作说明</h2>
+           <table>
+             <tbody>
               <tr><th>总览</th><td>确认当前企业 IM 用户是否通过管理员校验，快速查看平台与运行状态。</td></tr>
               <tr><th>平台 Bot 开通</th><td>系统会自动检查服务器环境变量、配置文件和历史配置。管理员先审核状态，再点击确认自动接管；只有系统明确提示仍缺少凭据时，才展开高级配置补录。</td></tr>
                <tr><th>员工 AI 助手</th><td>输入同事企业 IM 用户 ID 或姓名，管理员确认后平台自动按企业 IM 组织架构分配知识范围和权限，并在企微下直接发送开通通知。员工列显示用户中文姓名，通知列显示是否向该员工推送了开通消息。</td></tr>
               <tr><th>知识库管理</th><td>说明书作为普通公司级知识文档统一纳入知识库；所有新增、更新、删除、升级操作都按当前企微组织权限自动适配。</td></tr>
               <tr><th>运行验证</th><td>检查端口和平台环境变量是否就绪。飞书、钉钉没有真实账号时只能看模拟或缺凭据状态。</td></tr>
+              <tr><th>企微 MCP</th><td>配置企业微信机器人“文档”和“待办”两个 MCP StreamableHttp URL。页面只引导管理员导入 URL，代码仓库不会保存 apikey；保存后如当前进程未加载新环境变量，应重启 dashboard/gateway/wecom-bot。</td></tr>
               <tr><th>管理员身份</th><td>页面 URL 必须包含 platform、user_id、admin_token。后端会校验令牌签名和该用户是否是对应 IM 平台管理员。</td></tr>
             </tbody>
           </table>
@@ -1988,11 +2194,45 @@ def admin_console_page():
     </div>
   </main>
   <script>
+    (function () {
+      function query(name) {
+        var match = new RegExp('[?&]' + name + '=([^&]*)').exec(window.location.search);
+        return match ? decodeURIComponent(match[1].replace(/\\+/g, ' ')) : '';
+      }
+      var platform = query('platform') || 'wecom';
+      var userId = query('user_id');
+      var token = query('admin_token');
+      if (!userId || !token || !window.XMLHttpRequest) return;
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/v1/admin/profile?platform=' + encodeURIComponent(platform) + '&user_id=' + encodeURIComponent(userId) + '&admin_token=' + encodeURIComponent(token), true);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) return;
+        var identity = document.getElementById('identity');
+        var profileBox = document.getElementById('profileBox');
+        if (!identity || !profileBox) return;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            var profile = JSON.parse(xhr.responseText || '{}');
+            identity.innerHTML = (profile.platform || platform) + ' / ' + (profile.user_id || userId) + ' / ' + (profile.role || 'admin');
+            profileBox.innerHTML = '<span class="chip ok">用户：' + (profile.user_id || userId) + '</span><span class="chip ok">角色：' + (profile.role || 'admin') + '</span>';
+          } catch (err) {
+            identity.innerHTML = '已验证';
+            profileBox.innerHTML = '<span class="chip ok">管理员身份已验证</span>';
+          }
+        } else {
+          identity.innerHTML = '验证失败';
+          profileBox.innerHTML = '验证失败，请从 Bot 重新打开管理员控制台';
+        }
+      };
+      xhr.send();
+    })();
+  </script>
+  <script>
     const params = new URLSearchParams(location.search);
     const authQuery = () => `platform=${encodeURIComponent(params.get('platform') || 'wecom')}&user_id=${encodeURIComponent(params.get('user_id') || '')}&admin_token=${encodeURIComponent(params.get('admin_token') || '')}`;
     const el = (id) => document.getElementById(id);
-    const val = (id) => (el(id)?.value || '').trim();
-    const safe = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const val = (id) => { const node = el(id); return ((node && node.value) || '').trim(); };
+    const safe = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     function showTab(id, btn) {
       document.querySelectorAll('section').forEach((section) => section.classList.remove('active'));
       document.querySelectorAll('nav button').forEach((button) => button.classList.remove('active'));
@@ -2123,7 +2363,7 @@ def admin_console_page():
         const checked = `<input type="checkbox" class="user-check" value="${safe(user.user_id)}">`;
         const bot = user.bot_status === 'active' ? chip('已开通','ok') : (user.bot_status === 'paused' ? chip('已暂停','warn') : (user.bot_status === 'disabled' ? chip('已关闭','bad') : chip('未开通','warn')));
         const online = user.online_status === 'recently_active' ? chip('近期活跃','ok') : chip(user.online_status || '未知');
-        return `<tr><td>${checked}</td><td>${safe(user.department_path || '-')}</td><td>${safe(user.name || user.user_id)}<br><span class="chip">${safe(user.user_id)}</span></td><td>${user.is_admin ? chip('管理员','ok') : ''}${user.is_leader ? chip('负责人','warn') : chip('员工')}</td><td>${online}</td><td>${bot}</td><td>日 ${safe(usage.day?.estimated_tokens || 0)} / 周 ${safe(usage.week?.estimated_tokens || 0)} / 月 ${safe(usage.month?.estimated_tokens || 0)} / 年 ${safe(usage.year?.estimated_tokens || 0)}</td><td><button class="secondary" onclick="setOneUserBot('${safe(user.user_id)}','active')">开通</button> <button class="tonal" onclick="setOneUserBot('${safe(user.user_id)}','paused')">暂停</button> <button class="danger" onclick="setOneUserBot('${safe(user.user_id)}','disabled')">关闭</button></td></tr>`;
+        return `<tr><td>${checked}</td><td>${safe(user.department_path || '-')}</td><td>${safe(user.name || user.user_id)}<br><span class="chip">${safe(user.user_id)}</span></td><td>${user.is_admin ? chip('管理员','ok') : ''}${user.is_leader ? chip('负责人','warn') : chip('员工')}</td><td>${online}</td><td>${bot}</td><td>日 ${safe((usage.day || {}).estimated_tokens || 0)} / 周 ${safe((usage.week || {}).estimated_tokens || 0)} / 月 ${safe((usage.month || {}).estimated_tokens || 0)} / 年 ${safe((usage.year || {}).estimated_tokens || 0)}</td><td><button class="secondary" onclick="setOneUserBot('${safe(user.user_id)}','active')">开通</button> <button class="tonal" onclick="setOneUserBot('${safe(user.user_id)}','paused')">暂停</button> <button class="danger" onclick="setOneUserBot('${safe(user.user_id)}','disabled')">关闭</button></td></tr>`;
       });
       const headers = ['选择', `${sortHeader('department_path','部门')}`, `${sortHeader('name','用户')}`, `${sortHeader('is_admin','权限')}`, `${sortHeader('online_status','状态')}`, `${sortHeader('bot_status','AI 助手')}`, 'Token 估算', '操作'];
       const headerRow = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
@@ -2193,7 +2433,7 @@ def admin_console_page():
           enabled: true
         };
         const data = await api('/api/v1/admin/models', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-        setHtml('modelActionStatus', chip(`已保存 ${data.profile?.profile_id || payload.profile_id}`, 'ok'));
+        setHtml('modelActionStatus', chip(`已保存 ${((data.profile || {}).profile_id) || payload.profile_id}`, 'ok'));
         await loadModels();
       } catch (err) {
         setText('modelActionStatus', String(err.message || err), true);
@@ -2227,7 +2467,7 @@ def admin_console_page():
         };
         if (!payload.user_id) throw new Error('请先填写员工的企业 IM 用户 ID');
         const data = await api('/api/v1/admin/employee-bots/activate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-        setHtml('employeeResult', chip('员工 AI 助手已开通','ok') + chip(`通知：${data.assignment?.notify_status || '-'}`));
+        setHtml('employeeResult', chip('员工 AI 助手已开通','ok') + chip(`通知：${((data.assignment || {}).notify_status) || '-'}`));
         await loadEmployeeBots();
       } catch (err) {
         setText('employeeResult', String(err.message || err), true);
@@ -2238,7 +2478,7 @@ def admin_console_page():
         const payload = {platform: val('employeePlatform') || 'wecom', user_id: val('employeeUserId')};
         if (!payload.user_id) throw new Error('请先填写员工的企业 IM 用户 ID');
         const data = await api('/api/v1/admin/employee-bots/deactivate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-        setHtml('employeeResult', chip(`状态：${data.assignment?.status || '已停用'}`, 'warn'));
+        setHtml('employeeResult', chip(`状态：${((data.assignment || {}).status) || '已停用'}`, 'warn'));
         await loadEmployeeBots();
       } catch (err) {
         setText('employeeResult', String(err.message || err), true);
@@ -2266,6 +2506,38 @@ def admin_console_page():
         setText('runtimeResult', String(err.message || err), true);
       }
     }
+    function renderWecomMcpStatus(data) {
+      const rows = ['doc','todo'].map((kind) => {
+        const item = data[kind] || {};
+        const tools = (item.tools || []).join(', ') || '-';
+        const state = item.configured ? chip(item.reachable === false ? '已配置但不可达' : '已配置', item.reachable === false ? 'bad' : 'ok') : chip('未配置','warn');
+        return `<tr><td>${safe(item.label || kind)}</td><td>${state}</td><td>${safe(item.url_masked || '-')}</td><td>${safe(tools)}</td><td>${safe(item.error || '')}</td></tr>`;
+      });
+      setHtml('wecomMcpStatus', table(['能力','状态','URL（已脱敏）','已发现工具','错误'], rows));
+    }
+    async function loadWecomMcpStatus(discover=false) {
+      try {
+        const data = await api(`/api/v1/admin/wecom/mcp/status?discover=${discover ? 'true' : 'false'}`);
+        renderWecomMcpStatus(data);
+      } catch (err) {
+        setText('wecomMcpStatus', String(err.message || err), true);
+      }
+    }
+    async function saveWecomMcpConfig() {
+      try {
+        const payload = {
+          doc_mcp_url: val('wecomDocMcpUrl'),
+          todo_mcp_url: val('wecomTodoMcpUrl')
+        };
+        if (!payload.doc_mcp_url && !payload.todo_mcp_url) throw new Error('请至少填写一个 MCP StreamableHttp URL');
+        const data = await api('/api/v1/admin/wecom/mcp/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        renderWecomMcpStatus(data.status || {});
+        const restart = data.restart_required ? '。当前进程未加载新变量，请重启 dashboard/gateway/wecom-bot 后生效' : '';
+        setHtml('wecomMcpStatus', (el('wecomMcpStatus').innerHTML || '') + `<p>${chip('已保存','ok')} ${safe((data.saved_keys || []).join(', '))}${safe(restart)}</p>`);
+      } catch (err) {
+        setText('wecomMcpStatus', String(err.message || err), true);
+      }
+    }
     (async function init() {
       try {
         await loadProfile();
@@ -2274,10 +2546,31 @@ def admin_console_page():
         await loadAdminUsers(false);
         await loadModels();
         await loadRuntime();
+        await loadWecomMcpStatus(false);
         await loadOverviewStats();
       } catch (err) {
+        const msg = String(err.message || err);
         el('identity').textContent = '验证失败';
-        setText('profileBox', String(err.message || err), true);
+        const btn = document.createElement('button');
+        btn.className = 'primary';
+        btn.textContent = '刷新链接';
+        btn.onclick = async () => {
+          try {
+            const resp = await fetch('/api/v1/admin/refresh-token?' + authQuery(), { method: 'POST' });
+            if (!resp.ok) throw new Error((await resp.json()).detail || '刷新失败');
+            const data = await resp.json();
+            const p = new URLSearchParams(window.location.search);
+            p.set('admin_token', data.admin_token);
+            window.location.search = p.toString();
+          } catch (e) {
+            setText('profileBox', '刷新失败: ' + (e.message || e), true);
+          }
+        };
+        const box = document.getElementById('profileBox');
+        box.innerHTML = '';
+        box.appendChild(document.createTextNode(msg));
+        box.appendChild(document.createElement('br'));
+        box.appendChild(btn);
       }
     })();
     async function loadOverviewStats() {
@@ -2306,7 +2599,15 @@ def admin_console_page():
 </body>
 </html>
         """
+    html = html.replace(
+        '<div id="identity" class="chip">未验证</div>',
+        f'<div id="identity" class="chip">{initial_identity}</div>',
     )
+    html = html.replace(
+        '<div class="panel"><h3>管理员身份</h3><div id="profileBox" class="status">等待验证</div></div>',
+        f'<div class="panel"><h3>管理员身份</h3><div id="profileBox" class="status">{initial_profile_box}</div></div>',
+    )
+    return HTMLResponse(html)
 
 
 @app.get("/platform/bots/manage", response_class=HTMLResponse)
