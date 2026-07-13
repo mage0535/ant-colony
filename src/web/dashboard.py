@@ -552,6 +552,17 @@ def admin_deactivate_employee_bot(req: EmployeeBotActivationRequest, request: Re
     return {"assignment": assignment}
 
 
+@app.post("/api/v1/admin/employee-bots/welcome")
+def admin_send_employee_bot_welcome(req: EmployeeBotActivationRequest, request: Request):
+    require_admin_context_from_request(request)
+    from src.platform.employee_bot_service import send_employee_bot_welcome
+
+    try:
+        return send_employee_bot_welcome(platform=req.platform, user_id=req.user_id, display_name=req.display_name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 @app.post("/api/v1/admin/employee-bots/rename")
 def admin_rename_employee_bot(request: Request, platform: str = Form(...), user_id: str = Form(...), display_name: str = Form("")):
     require_admin_context_from_request(request)
@@ -2344,7 +2355,8 @@ def admin_console_page(request: Request = None):
               <button class="secondary" onclick="editEmployeeNameFix(${jsAttr(assignment.platform)},${jsAttr(assignment.user_id)},${jsAttr(fixedName)})" style="font-size:11px;padding:2px 8px;margin-left:4px">编辑</button></td>
             <td>${safe(assignment.scope)}</td>
             <td>${assignment.status === 'active' ? chip('已开通','ok') : chip('已停用','bad')}</td>
-            <td title="开通时是否向员工发送通知消息">${safe(notif)}<span style="font-size:10px;color:#8a8a8a">${notifHint}</span></td>
+            <td title="开通时是否向员工发送通知消息">${safe(notif)}<span style="font-size:10px;color:#8a8a8a">${notifHint}</span>
+              <button class="secondary" onclick="sendEmployeeWelcome(${jsAttr(assignment.platform)},${jsAttr(assignment.user_id)},${jsAttr(fixedName)})" style="font-size:11px;padding:2px 8px;margin-left:4px">重发欢迎</button></td>
           </tr>`;
         });
         setHtml('employeeList', table(['平台','员工','AI 助手名称','自动范围','状态','通知'], rows));
@@ -2481,8 +2493,19 @@ def admin_console_page(request: Request = None):
     }
     function selectEmployee(userId, name) {
       el('employeeUserId').value = userId;
-      el('employeeBotName').value = name;
+      el('employeeBotName').value = defaultEmployeeBotName(val('employeePlatform') || 'wecom');
       setHtml('employeeResult', chip(`已选择：${name}`, 'ok'));
+    }
+    async function sendEmployeeWelcome(platform, userId, displayName) {
+      try {
+        const payload = {platform, user_id:userId, display_name:displayName || defaultEmployeeBotName(platform), notify:true};
+        const data = await api('/api/v1/admin/employee-bots/welcome', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        setHtml('employeeResult', chip(`已发送欢迎：${safe((data.assignment || {}).user_id || userId)}`, 'ok') + chip(`通知：${safe(data.notify_status || '-')}`));
+        await loadEmployeeBots();
+        await loadAdminUsers(false);
+      } catch (err) {
+        setText('employeeResult', String(err.message || err), true);
+      }
     }
     async function activateEmployeeBot() {
       try {

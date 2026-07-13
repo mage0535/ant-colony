@@ -187,6 +187,22 @@ def test_admin_employee_bot_list_requires_admin_context() -> None:
     assert result["assignments"][0]["user_id"] == "u2"
 
 
+def test_admin_employee_bot_welcome_requires_admin_context() -> None:
+    from src.web.dashboard import EmployeeBotActivationRequest, admin_send_employee_bot_welcome
+
+    request = _request("/api/v1/admin/employee-bots/welcome")
+    fake_result = {"notify_status": "sent", "assignment": {"user_id": "u2", "status": "active"}}
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.employee_bot_service.send_employee_bot_welcome", return_value=fake_result) as send_welcome:
+        result = admin_send_employee_bot_welcome(
+            EmployeeBotActivationRequest(platform="wecom", user_id="u2", display_name="企业 AI 助手"),
+            request,
+        )
+
+    assert result["notify_status"] == "sent"
+    send_welcome.assert_called_once_with(platform="wecom", user_id="u2", display_name="企业 AI 助手")
+
+
 def test_admin_user_details_api_requires_admin_context() -> None:
     from src.web.dashboard import admin_user_details
 
@@ -408,6 +424,18 @@ def test_admin_console_employee_bot_default_name_is_not_marked_damaged() -> None
     assert "const isGarbled = isDamagedDisplayName(rawDisplayName);" in html
     assert "const fixedName = rawDisplayName && !isGarbled ? rawDisplayName : defaultEmployeeBotName(assignment.platform);" in html
     assert "displayName.length < 3" not in html
+
+
+def test_admin_console_employee_bot_welcome_action_is_available() -> None:
+    from src.web.dashboard import admin_console_page
+
+    html = admin_console_page().body.decode("utf-8")
+
+    assert "async function sendEmployeeWelcome(platform, userId, displayName)" in html
+    assert "/api/v1/admin/employee-bots/welcome" in html
+    assert "重发欢迎" in html
+    assert "el('employeeBotName').value = defaultEmployeeBotName(val('employeePlatform') || 'wecom');" in html
+    assert "el('employeeBotName').value = name;" not in html
 
 
 def test_create_admin_console_link_includes_signed_token() -> None:

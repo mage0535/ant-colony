@@ -51,7 +51,11 @@ def activate_employee_bot(
     now = time.time()
     notify_status = "not_requested"
     if notify:
-        notify_status = _notify_employee(normalized_platform, normalized_user_id, display_name)
+        notify_status = send_employee_bot_welcome(
+            platform=normalized_platform,
+            user_id=normalized_user_id,
+            display_name=display_name,
+        )["notify_status"]
     conn = _conn()
     conn.execute(
         """
@@ -81,6 +85,42 @@ def activate_employee_bot(
     )
     conn.commit()
     return get_employee_bot_assignment(normalized_platform, normalized_user_id) or {}
+
+
+def send_employee_bot_welcome(*, platform: str, user_id: str, display_name: str = "") -> dict[str, Any]:
+    normalized_platform = _normalize_platform(platform)
+    normalized_user_id = user_id.strip()
+    if not normalized_user_id:
+        raise ValueError("缺少员工企业 IM 用户 ID")
+    bot_name = _resolve_bot_display_name(normalized_platform, display_name)
+    notify_status = _notify_employee(normalized_platform, normalized_user_id, bot_name)
+    conn = _conn()
+    now = time.time()
+    row = conn.execute(
+        """
+        SELECT platform, user_id
+        FROM employee_bot_assignments
+        WHERE platform = ? AND user_id = ?
+        """,
+        (normalized_platform, normalized_user_id),
+    ).fetchone()
+    if row:
+        conn.execute(
+            """
+            UPDATE employee_bot_assignments
+            SET display_name = ?, notify_status = ?, updated_at = ?
+            WHERE platform = ? AND user_id = ?
+            """,
+            (bot_name, notify_status, now, normalized_platform, normalized_user_id),
+        )
+    conn.commit()
+    assignment = get_employee_bot_assignment(normalized_platform, normalized_user_id) or {
+        "platform": normalized_platform,
+        "user_id": normalized_user_id,
+        "display_name": bot_name,
+        "status": "not_found",
+    }
+    return {"notify_status": notify_status, "bot_name": bot_name, "assignment": assignment}
 
 
 def deactivate_employee_bot(*, platform: str, user_id: str, updated_by: str = "") -> dict[str, Any]:
@@ -193,10 +233,17 @@ def _notify_employee(platform: str, user_id: str, display_name: str) -> str:
     try:
         from src.gateway.wecom_outbound import send_text
 
-        bot_name = display_name.strip() or _default_bot_name(platform)
+        bot_name = _resolve_bot_display_name(platform, display_name)
         text = (
-            f"你的企业 AI 助手已开通：{bot_name}\n"
-            "你可以直接在企业微信中搜索并打开 AI 助手，发送“你好”开始使用。"
+            f"你的企业 AI 助手已开通：{bot_name}\n\n"
+            "你可以直接在这条消息所在会话里回复“你好”开始使用。\n"
+            f"如果需要从通讯录或顶部搜索框进入，请搜索：{bot_name}\n\n"
+            "我可以帮你做这些事：\n"
+            "1. 查询公司知识库、制度、文档和资料。\n"
+            "2. 总结、优化、生成 Word / Excel / PPT / PDF 文档。\n"
+            "3. 根据你的权限查询企业应用数据，如审批、会议、待办、文档等。\n"
+            "4. 创建和管理待办，生成企业微信在线文档。\n\n"
+            "首次测试可以直接发送：你好"
         )
         return "sent" if send_text(user_id, text) else "send_failed"
     except Exception as exc:
@@ -246,6 +293,23 @@ def _default_bot_name(platform: str) -> str:
         "feishu": "飞书 AI 助手",
         "dingtalk": "钉钉 AI 助手",
     }.get(platform, "企业 AI 助手")
+
+
+def _resolve_bot_display_name(platform: str, display_name: str = "") -> str:
+    text = _normalize_display_name(platform, display_name)
+    if display_name and text != _default_bot_name(platform):
+        return text
+    try:
+        from src.platform.activation_service import list_platform_bot_statuses
+
+        for status in list_platform_bot_statuses():
+            if status.get("platform") == platform:
+                configured = _normalize_display_name(platform, str(status.get("display_name", "")))
+                if configured:
+                    return configured
+    except Exception:
+        pass
+    return text
 
 
 def _normalize_display_name(platform: str, value: str) -> str:
