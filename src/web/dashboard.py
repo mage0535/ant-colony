@@ -1979,27 +1979,27 @@ def admin_console_page(request: Request = None):
   <header>
     <div>
       <h1>管理员控制台</h1>
-      <p>统一开通平台 Bot、给员工分配 AI 助手、管理公司知识库和验证运行状态。</p>
+      <p>统一管理企业 AI 助手。员工侧只看到一个助手，后台自动协同应用通知、Bot 前台、群聊 @、文档/待办 MCP 和知识库能力。</p>
     </div>
     <div id="identity" class="chip">未验证</div>
   </header>
   <main>
     <nav>
       <button class="active" onclick="showTab('overview', this)">总览</button>
-      <button onclick="showTab('bots', this)">平台 Bot 开通</button>
-      <button onclick="showTab('employees', this)">员工 AI 助手</button>
+      <button onclick="showTab('bots', this)">平台通道接入</button>
+      <button onclick="showTab('employees', this)">员工助手开通</button>
       <button onclick="showTab('users', this)">用户管理</button>
       <button onclick="showTab('models', this)">模型管理</button>
       <button onclick="showTab('knowledge', this)">知识库管理</button>
       <button onclick="showTab('runtime', this)">运行验证</button>
-      <button onclick="showTab('wecomMcp', this)">企微 MCP</button>
+      <button onclick="showTab('wecomMcp', this)">文档/待办能力</button>
       <button onclick="showTab('help', this)">操作说明</button>
     </nav>
     <div>
        <section id="overview" class="active">
          <div class="grid">
            <div class="panel"><h3>管理员身份</h3><div id="profileBox" class="status">等待验证</div></div>
-           <div class="panel"><h3>平台 Bot</h3><div id="platformSummary" class="status">等待加载</div></div>
+           <div class="panel"><h3>平台通道</h3><div id="platformSummary" class="status">等待加载</div></div>
            <div class="panel"><h3>服务运行</h3><div id="runtimeSummary" class="status">等待加载</div></div>
            <div class="panel"><h3>员工统计</h3><div id="userStats" class="status">等待加载</div></div>
            <div class="panel"><h3>AI 助手开通</h3><div id="botStats" class="status">等待加载</div></div>
@@ -2017,8 +2017,8 @@ def admin_console_page(request: Request = None):
       <section id="bots">
         <div class="grid">
           <div class="panel span">
-            <h2>平台 Bot 统一开通</h2>
-            <p>平台会自动检查服务器环境变量、配置文件和历史配置。管理员通常只需要审核状态并点击确认接管；只有系统提示仍缺少凭据时，才展开高级配置补录一次。</p>
+            <h2>企业 AI 助手平台通道接入</h2>
+            <p>员工侧统一看到“企业 AI 助手”。这里用于管理员接入和诊断底层平台通道，包括主动通知、Bot 前台、群聊 @ 和文档/待办 MCP 所需凭据。只有系统提示仍缺少凭据时，才展开高级配置补录一次。</p>
             <div id="botStatus"></div>
           </div>
           <div class="panel">
@@ -2065,8 +2065,8 @@ def admin_console_page(request: Request = None):
       <section id="employees">
         <div class="grid two">
           <div class="panel">
-            <h2>给员工开通 AI 助手</h2>
-            <p>这里不是让员工自己创建独立机器人，而是把平台统一 Bot 分配给指定员工，并发送企微开通通知。</p>
+            <h2>给员工开通企业 AI 助手</h2>
+            <p>员工只看到一个“企业 AI 助手”。管理员开通后，平台自动分配权限并发送欢迎消息；员工可直接回复欢迎消息，也可搜索同名助手或在群里 @ 同名助手。</p>
             <p class="muted">知识范围和操作权限由平台根据员工在企业 IM 中的组织架构、部门归属、负责人/管理员身份自动计算，管理员只确认开通，不手工指定范围。</p>
             <label>平台</label><select id="employeePlatform"><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="dingtalk">钉钉</option></select>
              <label>员工用户 ID</label><input id="employeeUserId" placeholder="例如 MaGe 或同事企微 user_id">
@@ -2153,8 +2153,8 @@ def admin_console_page(request: Request = None):
        <section id="wecomMcp">
          <div class="grid two">
            <div class="panel">
-             <h2>企业微信文档 MCP</h2>
-             <p>用于让机器人直接新建、编辑企业微信文档、智能文档、表格和智能表格。适合报告生成、资料汇总、会议纪要沉淀和在线协作。</p>
+             <h2>企业 AI 助手文档能力</h2>
+             <p>用于让企业 AI 助手直接新建、编辑企业微信文档、智能文档、表格和智能表格。底层使用企微机器人 MCP，员工侧仍统一称为企业 AI 助手。</p>
              <p class="muted">可对机器人说：“帮我创建一份企微文档，标题是会议纪要，内容如下……”“把这段内容整理成企业微信智能文档”“把这些客户信息追加到企微表格里”。</p>
              <label>StreamableHttp URL</label><input id="wecomDocMcpUrl" type="password" placeholder="从企业微信机器人“文档”权限页面复制 StreamableHttp URL">
              <details>
@@ -2164,8 +2164,8 @@ def admin_console_page(request: Request = None):
              </details>
            </div>
            <div class="panel">
-             <h2>企业微信待办 MCP</h2>
-             <p>用于让机器人创建待办、查询本人待办、更新机器人创建的待办、搜索待办参与人和修改参与人状态。适合会议行动项、任务督办和流程跟进。</p>
+             <h2>企业 AI 助手待办能力</h2>
+             <p>用于让企业 AI 助手创建待办、查询本人待办、更新助手创建的待办、搜索待办参与人和修改参与人状态。底层使用企微机器人 MCP，员工侧仍统一称为企业 AI 助手。</p>
              <p class="muted">可对机器人说：“帮我创建一个待办，主题是提交项目体验报告，截止时间是 2026-07-14 15:00”“查一下我现在有哪些待办”“把这个待办改成已完成”“搜索张三的 userid”。</p>
              <label>StreamableHttp URL</label><input id="wecomTodoMcpUrl" type="password" placeholder="从企业微信机器人“待办”权限页面复制 StreamableHttp URL">
              <details>
@@ -2192,11 +2192,11 @@ def admin_console_page(request: Request = None):
            <table>
              <tbody>
               <tr><th>总览</th><td>确认当前企业 IM 用户是否通过管理员校验，快速查看平台与运行状态。</td></tr>
-              <tr><th>平台 Bot 开通</th><td>系统会自动检查服务器环境变量、配置文件和历史配置。管理员先审核状态，再点击确认自动接管；只有系统明确提示仍缺少凭据时，才展开高级配置补录。</td></tr>
-               <tr><th>员工 AI 助手</th><td>输入同事企业 IM 用户 ID 或姓名，管理员确认后平台自动按企业 IM 组织架构分配知识范围和权限，并在企微下直接发送开通通知。员工列显示用户中文姓名，通知列显示是否向该员工推送了开通消息。</td></tr>
+              <tr><th>平台通道接入</th><td>员工只看到“企业 AI 助手”。系统后台自动检查应用通知、Bot 前台、群聊 @、文档/待办 MCP 等通道所需凭据；管理员先审核状态，再点击确认自动接管。</td></tr>
+               <tr><th>员工助手开通</th><td>输入同事企业 IM 用户 ID 或姓名，管理员确认后平台自动按企业 IM 组织架构分配知识范围和权限，并直接发送统一欢迎消息。员工可回复该消息、搜索同名助手或在群里 @ 同名助手。</td></tr>
               <tr><th>知识库管理</th><td>说明书作为普通公司级知识文档统一纳入知识库；所有新增、更新、删除、升级操作都按当前企微组织权限自动适配。</td></tr>
               <tr><th>运行验证</th><td>检查端口和平台环境变量是否就绪。飞书、钉钉没有真实账号时只能看模拟或缺凭据状态。</td></tr>
-              <tr><th>企微 MCP</th><td>配置企业微信机器人“文档”和“待办”两个 MCP StreamableHttp URL。页面只引导管理员导入 URL，代码仓库不会保存 apikey；保存后如当前进程未加载新环境变量，应重启 dashboard/gateway/wecom-bot。</td></tr>
+              <tr><th>文档/待办能力</th><td>配置企业 AI 助手背后的企微文档和待办 MCP URL。页面只引导管理员导入 URL，代码仓库不会保存 apikey；保存后如当前进程未加载新环境变量，应重启 dashboard/gateway/wecom-bot。</td></tr>
               <tr><th>管理员身份</th><td>页面 URL 必须包含 platform、user_id、admin_token。后端会校验令牌签名和该用户是否是对应 IM 平台管理员。</td></tr>
             </tbody>
           </table>

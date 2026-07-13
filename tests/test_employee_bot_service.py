@@ -68,7 +68,10 @@ def test_send_employee_bot_welcome_updates_notify_status_and_intro_message(tmp_p
     assert sent_messages
     assert sent_messages[-1][0] == "u-employee"
     assert "你的企业 AI 助手已开通：企业 AI 助手" in sent_messages[-1][1]
+    assert "你看到的入口都统一叫企业 AI 助手" in sent_messages[-1][1]
+    assert "后台自动选择应用通知、Bot 会话、群聊 @、文档/待办等能力通道" in sent_messages[-1][1]
     assert "直接在这条消息所在会话里回复“你好”" in sent_messages[-1][1]
+    assert "搜索或 @：企业 AI 助手" in sent_messages[-1][1]
     assert "查询公司知识库" in sent_messages[-1][1]
 
 

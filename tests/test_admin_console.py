@@ -329,7 +329,8 @@ def test_admin_console_page_contains_material_business_sections() -> None:
     html = admin_console_page().body.decode("utf-8")
 
     assert "--accent:#0078d4" in html
-    assert "员工 AI 助手" in html
+    assert "员工助手开通" in html
+    assert "员工侧只看到一个助手" in html
     assert "用户管理" in html
     assert "模型管理" in html
     assert "batchSetSelectedUsers" in html
@@ -340,9 +341,10 @@ def test_admin_console_page_contains_material_business_sections() -> None:
     assert "employeePermissions" not in html
     assert "确认自动接管企业微信" in html
     assert "高级配置：仅在系统提示缺少凭据时填写" in html
-    assert "企微 MCP" in html
-    assert "企业微信文档 MCP" in html
-    assert "企业微信待办 MCP" in html
+    assert "文档/待办能力" in html
+    assert "企业 AI 助手文档能力" in html
+    assert "企业 AI 助手待办能力" in html
+    assert "后台自动协同应用通知、Bot 前台、群聊 @、文档/待办 MCP" in html
     assert "saveWecomMcpConfig" in html
 
 

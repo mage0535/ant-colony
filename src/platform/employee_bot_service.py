@@ -236,13 +236,15 @@ def _notify_employee(platform: str, user_id: str, display_name: str) -> str:
         bot_name = _resolve_bot_display_name(platform, display_name)
         text = (
             f"你的企业 AI 助手已开通：{bot_name}\n\n"
+            "你看到的入口都统一叫企业 AI 助手。系统会在后台自动选择应用通知、Bot 会话、群聊 @、文档/待办等能力通道。\n"
             "你可以直接在这条消息所在会话里回复“你好”开始使用。\n"
-            f"如果需要从通讯录或顶部搜索框进入，请搜索：{bot_name}\n\n"
+            f"如果需要从通讯录、顶部搜索框或群聊 @ 进入，请搜索或 @：{bot_name}\n\n"
             "我可以帮你做这些事：\n"
             "1. 查询公司知识库、制度、文档和资料。\n"
             "2. 总结、优化、生成 Word / Excel / PPT / PDF 文档。\n"
             "3. 根据你的权限查询企业应用数据，如审批、会议、待办、文档等。\n"
-            "4. 创建和管理待办，生成企业微信在线文档。\n\n"
+            "4. 创建和管理待办，生成企业微信在线文档。\n"
+            "5. 在群聊中被 @ 后协助整理讨论、提炼任务和推进协作。\n\n"
             "首次测试可以直接发送：你好"
         )
         return "sent" if send_text(user_id, text) else "send_failed"
