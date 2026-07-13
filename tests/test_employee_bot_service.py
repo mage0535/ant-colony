@@ -52,3 +52,30 @@ def test_deactivate_employee_bot_marks_assignment_disabled(tmp_path) -> None:
 
     assert result["status"] == "disabled"
     assert result["activated_by"] == "u-admin"
+
+
+def test_list_employee_bot_assignments_repairs_legacy_damaged_display_name(tmp_path) -> None:
+    from src.platform.employee_bot_service import activate_employee_bot, list_employee_bot_assignments
+    from src.store.database import Database
+
+    db_path = str(tmp_path / "employee-bot-repair.db")
+    with patch.dict("os.environ", {"ANT_COLONY_DB_PATH": db_path}, clear=False), \
+         patch("src.platform.employee_bot_service._notify_employee", return_value="sent"):
+        Database.get(db_path).close()
+        Database._instances.pop(db_path, None)  # type: ignore[attr-defined]
+        activate_employee_bot(platform="wecom", user_id="u-employee", display_name="企业 AI 助手")
+        conn = Database.get(db_path).connect()
+        conn.execute(
+            "UPDATE employee_bot_assignments SET display_name = ? WHERE platform = ? AND user_id = ?",
+            ("?? AI ??", "wecom", "u-employee"),
+        )
+        conn.commit()
+
+        assignments = list_employee_bot_assignments("wecom")
+        stored_name = conn.execute(
+            "SELECT display_name FROM employee_bot_assignments WHERE platform = ? AND user_id = ?",
+            ("wecom", "u-employee"),
+        ).fetchone()[0]
+
+    assert assignments[0]["display_name"] == "企业 AI 助手"
+    assert stored_name == "企业 AI 助手"

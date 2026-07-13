@@ -2265,6 +2265,21 @@ def admin_console_page(request: Request = None):
     function hasNonAscii(value) {
       return Array.from(String(value || '')).some((ch) => ch.charCodeAt(0) > 127);
     }
+    function defaultEmployeeBotName(platform) {
+      if (platform === 'feishu') return '飞书 AI 助手';
+      if (platform === 'dingtalk') return '钉钉 AI 助手';
+      return '企业 AI 助手';
+    }
+    function isDamagedDisplayName(value) {
+      const text = String(value || '').trim();
+      if (!text) return false;
+      return text.includes('??') || text.includes('�') || text.includes('锟') || text.includes('Ã') || text.includes('Â');
+    }
+    async function ensureAdminUsersLoaded() {
+      if (!Array.isArray(window.allUsers)) {
+        await loadAdminUsers(false);
+      }
+    }
     async function loadProfile() {
       const profile = await api('/api/v1/admin/profile');
       el('identity').textContent = `${profile.platform} / ${profile.user_id} / ${profile.role}`;
@@ -2305,24 +2320,26 @@ def admin_console_page(request: Request = None):
     async function loadEmployeeBots() {
       try {
         const data = await api('/api/v1/admin/employee-bots');
+        await ensureAdminUsersLoaded();
         // Build user name map from loaded user data
         const nameMap = {};
         if (window.allUsers) {
-          window.allUsers.forEach(u => { nameMap[u.user_id] = u.name || u.user_id; });
+          window.allUsers.forEach(u => { nameMap[u.user_id] = u.name || ''; });
         }
         const rows = (data.assignments || []).map((assignment) => {
-          const displayName = assignment.display_name || '';
-          // Auto-fix garbled names
-          const isGarbled = displayName.includes('??') || (!hasNonAscii(displayName) && displayName.length < 3);
-          const fixedName = (isGarbled || !displayName.trim()) ? '企业 AI 助手' : displayName;
-          const empName = nameMap[assignment.user_id] || assignment.user_id;
+          const rawDisplayName = String(assignment.display_name || '').trim();
+          const isGarbled = isDamagedDisplayName(rawDisplayName);
+          const fixedName = rawDisplayName && !isGarbled ? rawDisplayName : defaultEmployeeBotName(assignment.platform);
+          const empName = nameMap[assignment.user_id] || '';
+          const employeeMain = empName || assignment.user_id;
+          const accountLine = empName && empName !== assignment.user_id ? `<br><span style="font-size:11px;color:#8a8a8a">${safe(assignment.user_id)}</span>` : '';
           const notifLabels = {not_requested:'未请求', sent:'已发送', failed:'发送失败', pending:'待发送'};
           const notif = notifLabels[assignment.notify_status] || assignment.notify_status || '-';
           const notifHint = assignment.notify_status === 'not_requested' ? '（开通时未勾选通知）' : '';
           return `<tr>
             <td>${safe(assignment.platform)}</td>
-            <td>${safe(empName)}<br><span style="font-size:11px;color:#8a8a8a">${safe(assignment.user_id)}</span></td>
-            <td><span id="empname_${safe(empName).replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g,'_')}">${safe(fixedName)}</span>
+            <td>${safe(employeeMain)}${accountLine}</td>
+            <td><span id="empname_${safe(assignment.user_id).replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g,'_')}">${safe(fixedName)}</span>
               ${isGarbled ? '<span class="chip bad" title="名称已损坏，点击编辑修复">需修复</span>' : ''}
               <button class="secondary" onclick="editEmployeeNameFix(${jsAttr(assignment.platform)},${jsAttr(assignment.user_id)},${jsAttr(fixedName)})" style="font-size:11px;padding:2px 8px;margin-left:4px">编辑</button></td>
             <td>${safe(assignment.scope)}</td>
@@ -2552,8 +2569,8 @@ def admin_console_page(request: Request = None):
       try {
         await loadProfile();
         await loadBots();
-        await loadEmployeeBots();
         await loadAdminUsers(false);
+        await loadEmployeeBots();
         await loadModels();
         await loadRuntime();
         await loadWecomMcpStatus(false);

@@ -70,7 +70,7 @@ def activate_employee_bot(
         (
             normalized_platform,
             normalized_user_id,
-            display_name.strip() or _default_bot_name(normalized_platform),
+            _normalize_display_name(normalized_platform, display_name),
             scope.strip() or "personal",
             json.dumps(permissions, ensure_ascii=False),
             activated_by,
@@ -97,7 +97,7 @@ def update_employee_bot_name(*, platform: str, user_id: str, display_name: str) 
         SET display_name = ?, updated_at = ?
         WHERE platform = ? AND user_id = ?
         """,
-        (display_name.strip() or _default_bot_name(normalized_platform), time.time(), normalized_platform, normalized_user_id),
+        (_normalize_display_name(normalized_platform, display_name), time.time(), normalized_platform, normalized_user_id),
     )
     conn.commit()
     return get_employee_bot_assignment(normalized_platform, normalized_user_id) or {}
@@ -153,6 +153,7 @@ def list_employee_bot_assignments(platform: str = "", limit: int = 200) -> list[
             """,
             (int(limit),),
         ).fetchall()
+    _repair_display_names(conn, rows)
     return [_row_to_dict(row) for row in rows]
 
 
@@ -166,6 +167,8 @@ def get_employee_bot_assignment(platform: str, user_id: str) -> dict[str, Any] |
         """,
         (_normalize_platform(platform), user_id.strip()),
     ).fetchone()
+    if row:
+        _repair_display_names(conn, [row])
     return _row_to_dict(row) if row else None
 
 
@@ -173,7 +176,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     return {
         "platform": row[0],
         "user_id": row[1],
-        "display_name": row[2],
+        "display_name": _normalize_display_name(row[0], row[2]),
         "scope": row[3],
         "permissions": json.loads(row[4] or "[]"),
         "status": row[5],
@@ -243,3 +246,39 @@ def _default_bot_name(platform: str) -> str:
         "feishu": "飞书 AI 助手",
         "dingtalk": "钉钉 AI 助手",
     }.get(platform, "企业 AI 助手")
+
+
+def _normalize_display_name(platform: str, value: str) -> str:
+    text = (value or "").strip()
+    if not text or _is_damaged_display_name(text):
+        return _default_bot_name(platform)
+    return text
+
+
+def _is_damaged_display_name(value: str) -> bool:
+    text = (value or "").strip()
+    if not text:
+        return False
+    damage_markers = ("??", "�", "锟", "Ã", "Â")
+    return any(marker in text for marker in damage_markers)
+
+
+def _repair_display_names(conn: Any, rows: list[Any]) -> None:
+    changed = False
+    for row in rows:
+        platform = row[0]
+        user_id = row[1]
+        raw_display_name = row[2] or ""
+        normalized = _normalize_display_name(platform, raw_display_name)
+        if normalized != raw_display_name:
+            conn.execute(
+                """
+                UPDATE employee_bot_assignments
+                SET display_name = ?
+                WHERE platform = ? AND user_id = ?
+                """,
+                (normalized, platform, user_id),
+            )
+            changed = True
+    if changed:
+        conn.commit()

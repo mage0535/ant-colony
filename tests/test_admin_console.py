@@ -381,6 +381,35 @@ def test_admin_console_dynamic_actions_use_js_string_arguments() -> None:
     assert "editEmployeeNameFix(\\'" not in html
 
 
+def test_admin_console_employee_bots_load_users_before_rendering() -> None:
+    from src.web.dashboard import admin_console_page
+
+    html = admin_console_page().body.decode("utf-8")
+    init_match = re.search(r"\(async function init\(\).*?\}\)\(\);", html, flags=re.DOTALL)
+    assert init_match
+    init_script = init_match.group(0)
+
+    assert "async function ensureAdminUsersLoaded()" in html
+    assert "await ensureAdminUsersLoaded();" in html
+    assert init_script.index("await loadAdminUsers(false);") < init_script.index("await loadEmployeeBots();")
+    assert "window.allUsers.forEach(u => { nameMap[u.user_id] = u.name || ''; });" in html
+    assert "const employeeMain = empName || assignment.user_id;" in html
+    assert "const accountLine = empName && empName !== assignment.user_id ?" in html
+
+
+def test_admin_console_employee_bot_default_name_is_not_marked_damaged() -> None:
+    from src.web.dashboard import admin_console_page
+
+    html = admin_console_page().body.decode("utf-8")
+
+    assert "function isDamagedDisplayName(value)" in html
+    assert "if (!text) return false;" in html
+    assert "function defaultEmployeeBotName(platform)" in html
+    assert "const isGarbled = isDamagedDisplayName(rawDisplayName);" in html
+    assert "const fixedName = rawDisplayName && !isGarbled ? rawDisplayName : defaultEmployeeBotName(assignment.platform);" in html
+    assert "displayName.length < 3" not in html
+
+
 def test_create_admin_console_link_includes_signed_token() -> None:
     from scripts.create_admin_console_link import build_admin_console_link
 

@@ -1514,3 +1514,39 @@
   - 增加 CI 级 secret scan，禁止测试服务器 IP、绝对路径、真实 token、真实 MCP URL 进入 GitHub。
   - 为管理员控制台增加 Playwright 回归脚本，覆盖首屏加载、菜单切换、特殊字符用户、模型选择、MCP 状态页。
   - MCP 调用链路后续可增加更细的超时、重试和用户可见降级提示，避免真实企微 MCP 偶发慢响应时影响 Bot 体验。
+
+## 2026-07-13 员工 AI 助手列表展示修复
+
+- 用户反馈：
+  - 管理员控制台「员工AI助手」-「已开通员工」中，「员工」列应显示员工中文名 + 账号。
+  - 「AI助手名称」列把默认名称「企业 AI 助手」标记为「需修复」。
+- 根因：
+  - 页面初始化时先调用 `loadEmployeeBots()`，后调用 `loadAdminUsers(false)`，导致员工机器人列表首次渲染时没有通讯录中文名映射，只能显示账号。
+  - 原前端把空 `display_name` 也归入损坏名称分支，展示默认名称时同时显示「需修复」，造成误报。
+  - 测试服务器存在历史脏数据：个别员工机器人 `display_name` 已被写成 `?? AI ??`，只修前端会继续在兜底默认名称旁显示「需修复」。
+- 修复：
+  - `src/web/dashboard.py`
+    - 新增 `ensureAdminUsersLoaded()`，员工机器人列表渲染前确保已加载通讯录用户清单。
+    - 初始化顺序调整为先 `loadAdminUsers(false)`，再 `loadEmployeeBots()`。
+    - 员工列改为优先显示通讯录中文名，中文名存在且不同于账号时，在下一行显示账号。
+    - 新增 `defaultEmployeeBotName(platform)` 和 `isDamagedDisplayName(value)`。
+    - 空名称使用平台默认 AI 助手名，不再标记「需修复」；只有实际存在乱码特征时才显示「需修复」。
+  - `src/platform/employee_bot_service.py`
+    - 新增 `_normalize_display_name()` 和 `_is_damaged_display_name()`。
+    - 新写入或重命名员工 AI 助手时，空值和损坏值统一归一化为平台默认中文名称。
+    - 读取员工机器人列表或单条记录时自动修复历史损坏名称，并回写数据库。
+  - `tests/test_admin_console.py`
+    - 增加员工机器人列表加载顺序回归测试。
+    - 增加默认 AI 助手名称不误判为损坏名称的回归测试。
+  - `tests/test_employee_bot_service.py`
+    - 增加历史 `?? AI ??` 损坏名称自动修复并回写数据库的回归测试。
+- 本地验证：
+  - `python -m pytest tests/test_employee_bot_service.py tests/test_admin_console.py -q`
+  - 结果：`29 passed`
+  - `python -m compileall -q src tests`
+  - 结果：通过
+  - `python -m pytest -q`
+  - 结果：`559 passed`
+- 后续注意：
+  - 如果后续继续扩展管理员控制台，涉及依赖通讯录名称的页面，应统一先通过通讯录同步数据建立用户映射，再渲染业务列表。
+  - 空值、默认值、乱码值要分开判断，避免用兜底展示值触发「需修复」类告警。
