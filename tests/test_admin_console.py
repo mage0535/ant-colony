@@ -495,8 +495,10 @@ def test_admin_mail_account_apis_require_admin_context() -> None:
 
 def test_admin_leave_negative_probe_apis_require_admin_context() -> None:
     from src.web.dashboard import (
+        LeaveBalanceBatchTargetRequest,
         LeaveBalanceTargetRequest,
         LeaveNegativeProbeRequest,
+        admin_apply_leave_balance_target_batch,
         admin_apply_leave_balance_target,
         admin_leave_negative_probe,
         admin_leave_negative_probe_results,
@@ -534,6 +536,45 @@ def test_admin_leave_negative_probe_apis_require_admin_context() -> None:
         result = admin_apply_leave_balance_target(adjust_req, request)
     assert result["result"]["mode"] == "local_negative_ledger"
     assert apply_target.call_args.kwargs["operator_user_id"] == "u-admin"
+
+    batch_req = LeaveBalanceBatchTargetRequest(
+        platform="wecom",
+        user_ids=["u1", "u2", "u1"],
+        vacation_id=7,
+        target_leftduration=86400,
+        time_attr=1,
+        reason="部门统一补录加班调休",
+        allow_local_negative=True,
+    )
+    with patch("src.web.dashboard.require_console_context_from_request", return_value=admin_context), \
+         patch("src.platform.leave_quota_service.apply_leave_balance_target", return_value={"mode": "updated"}) as apply_batch:
+        result = admin_apply_leave_balance_target_batch(batch_req, request)
+    assert result["updated"] == 2
+    assert result["failed"] == 0
+    assert [call.kwargs["user_id"] for call in apply_batch.call_args_list] == ["u1", "u2"]
+
+
+def test_admin_leave_form_notice_resolves_employee_name(tmp_path, monkeypatch) -> None:
+    from src.store.database import Database
+    from src.web.dashboard import admin_leave_form_notice
+
+    monkeypatch.setenv("ANT_COLONY_DB_PATH", str(tmp_path / "ant.db"))
+    Database.get(str(tmp_path / "ant.db")).close()
+    conn = Database.get().connect()
+    conn.execute("INSERT INTO org_users(platform,user_id,name) VALUES(?,?,?)", ("wecom", "u-zhang", "张三"))
+    conn.commit()
+
+    request = _request("/api/v1/admin/leave/form-notice")
+    admin_context = {"platform": "wecom", "user_id": "u-admin", "role": "hr_specialist"}
+    with patch("src.web.dashboard.require_console_context_from_request", return_value=admin_context), \
+         patch(
+             "src.platform.leave_quota_service.build_employee_leave_form_notice",
+             return_value="张三的动态提示",
+         ) as build_notice:
+        result = admin_leave_form_notice(request, user_query="张三", platform="wecom")
+    assert result["notice"] == "张三的动态提示"
+    assert result["user_id"] == "u-zhang"
+    build_notice.assert_called_once_with(platform="wecom", user_id="u-zhang")
 
 
 def test_admin_leave_workflow_notice_api_requires_admin_context() -> None:
@@ -1107,6 +1148,21 @@ def test_admin_console_navigation_uses_stable_tab_ids_and_safe_fallback() -> Non
     assert "if (navButton) navButton.classList.add('active');" in html
     assert "nav button[data-tab=&quot;leaveAdmin&quot;]" in html
     assert "onclick*=\\\\'leaveAdmin" not in html
+
+
+def test_admin_console_leave_admin_supports_department_batch_selection() -> None:
+    from src.web.dashboard import admin_console_page
+
+    html = admin_console_page().body.decode("utf-8")
+
+    assert "按部门选择员工" in html
+    assert "id=\"leaveUserDirectory\"" in html
+    assert "selectFilteredLeaveUsers(true)" in html
+    assert "async function loadLeaveUserDirectory" in html
+    assert "function renderLeaveUserDirectory" in html
+    assert "async function applyLeaveBalanceTargetBatch" in html
+    assert "/api/v1/admin/leave/balance-target/batch" in html
+    assert "员工姓名或用户 ID" in html
 
 
 def test_create_admin_console_link_includes_signed_token() -> None:

@@ -162,7 +162,8 @@ class WeComMcpConfigRequest(BaseModel):
 
 class EmployeeBotActivationRequest(BaseModel):
     platform: str = "wecom"
-    user_id: str
+    user_id: str = ""
+    user_name: str = ""
     display_name: str = ""
     scope: str = "personal"
     permissions: list[str] = []
@@ -188,7 +189,8 @@ class AssistantProfileAdminRequest(BaseModel):
 
 class HrSpecialistRequest(BaseModel):
     platform: str = "wecom"
-    user_id: str
+    user_id: str = ""
+    user_name: str = ""
     enabled: bool = True
 
 
@@ -227,13 +229,14 @@ class RateminBindRequest(BaseModel):
     rate_login_name: str = ""
     rate_display_name: str = ""
     platform: str = "wecom"
-    im_user_id: str
+    im_user_id: str = ""
     im_display_name: str = ""
 
 
 class LeaveNegativeProbeRequest(BaseModel):
     platform: str = "wecom"
-    user_id: str
+    user_id: str = ""
+    user_name: str = ""
     vacation_id: int
     negative_duration: int = -86400
     confirm_live_write: bool = False
@@ -241,7 +244,19 @@ class LeaveNegativeProbeRequest(BaseModel):
 
 class LeaveBalanceTargetRequest(BaseModel):
     platform: str = "wecom"
-    user_id: str
+    user_id: str = ""
+    user_name: str = ""
+    vacation_id: int
+    vacation_name: str = ""
+    target_leftduration: int
+    time_attr: int = 1
+    reason: str
+    allow_local_negative: bool = False
+
+
+class LeaveBalanceBatchTargetRequest(BaseModel):
+    platform: str = "wecom"
+    user_ids: list[str] = []
     vacation_id: int
     vacation_name: str = ""
     target_leftduration: int
@@ -761,10 +776,11 @@ def admin_set_hr_specialist(req: HrSpecialistRequest, request: Request):
     from src.platform.hr_specialist_service import set_hr_specialist
 
     try:
+        user_id = _resolve_employee_user_id(req.platform, req.user_id, req.user_name)
         return {
             "specialist": set_hr_specialist(
                 platform=req.platform or context["platform"],
-                user_id=req.user_id,
+                user_id=user_id,
                 enabled=req.enabled,
                 granted_by=context["user_id"],
             )
@@ -842,9 +858,10 @@ def admin_activate_employee_bot(req: EmployeeBotActivationRequest, request: Requ
     from src.platform.employee_bot_service import activate_employee_bot
 
     try:
+        user_id = _resolve_employee_user_id(req.platform, req.user_id, req.user_name)
         assignment = activate_employee_bot(
             platform=req.platform,
-            user_id=req.user_id,
+            user_id=user_id,
             display_name=req.display_name,
             scope=req.scope,
             permissions=req.permissions,
@@ -862,7 +879,8 @@ def admin_deactivate_employee_bot(req: EmployeeBotActivationRequest, request: Re
     from src.platform.employee_bot_service import deactivate_employee_bot
 
     try:
-        assignment = deactivate_employee_bot(platform=req.platform, user_id=req.user_id, updated_by=context["user_id"])
+        user_id = _resolve_employee_user_id(req.platform, req.user_id, req.user_name)
+        assignment = deactivate_employee_bot(platform=req.platform, user_id=user_id, updated_by=context["user_id"])
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return {"assignment": assignment}
@@ -874,7 +892,8 @@ def admin_send_employee_bot_welcome(req: EmployeeBotActivationRequest, request: 
     from src.platform.employee_bot_service import send_employee_bot_welcome
 
     try:
-        return send_employee_bot_welcome(platform=req.platform, user_id=req.user_id, display_name=req.display_name)
+        user_id = _resolve_employee_user_id(req.platform, req.user_id, req.user_name)
+        return send_employee_bot_welcome(platform=req.platform, user_id=user_id, display_name=req.display_name)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -893,16 +912,17 @@ def admin_set_employee_bot_status(req: EmployeeBotActivationRequest, request: Re
     from src.platform.employee_bot_service import activate_employee_bot, set_employee_bot_status
 
     target_status = str(req.status or "").strip().lower() or "active"
+    user_id = _resolve_employee_user_id(req.platform, req.user_id, req.user_name)
     if target_status == "active":
         assignment = activate_employee_bot(
             platform=req.platform,
-            user_id=req.user_id,
+            user_id=user_id,
             display_name=req.display_name,
             activated_by=context["user_id"],
             notify=req.notify,
         )
     else:
-        assignment = set_employee_bot_status(platform=req.platform, user_id=req.user_id, status=target_status, updated_by=context["user_id"])
+        assignment = set_employee_bot_status(platform=req.platform, user_id=user_id, status=target_status, updated_by=context["user_id"])
     return {"assignment": assignment}
 
 
@@ -1041,13 +1061,14 @@ def admin_ratemin_bind(req: RateminBindRequest, request: Request):
     context = require_admin_context_from_request(request)
     from src.platform.ratemin_service import bind_ratemin_user
 
+    im_user_id = _resolve_employee_user_id(req.platform or context["platform"], req.im_user_id, req.im_display_name)
     return bind_ratemin_user(
         source_db=req.source_db,
         rate_oper_id=req.rate_oper_id,
         rate_login_name=req.rate_login_name,
         rate_display_name=req.rate_display_name,
         platform=req.platform or context["platform"],
-        im_user_id=req.im_user_id,
+        im_user_id=im_user_id,
         im_display_name=req.im_display_name,
         created_by=context["user_id"],
     )
@@ -1075,10 +1096,11 @@ def admin_leave_negative_probe(req: LeaveNegativeProbeRequest, request: Request)
     from src.platform.leave_quota_service import probe_negative_leave_quota
 
     try:
+        user_id = _resolve_employee_user_id(req.platform, req.user_id, req.user_name)
         return {
             "result": probe_negative_leave_quota(
                 platform=req.platform,
-                user_id=req.user_id,
+                user_id=user_id,
                 vacation_id=req.vacation_id,
                 negative_duration=req.negative_duration,
                 confirm_live_write=req.confirm_live_write,
@@ -1095,10 +1117,11 @@ def admin_apply_leave_balance_target(req: LeaveBalanceTargetRequest, request: Re
     from src.platform.leave_quota_service import apply_leave_balance_target
 
     try:
+        user_id = _resolve_employee_user_id(req.platform, req.user_id, req.user_name)
         return {
             "result": apply_leave_balance_target(
                 platform=req.platform,
-                user_id=req.user_id,
+                user_id=user_id,
                 vacation_id=req.vacation_id,
                 vacation_name=req.vacation_name,
                 target_leftduration=req.target_leftduration,
@@ -1110,6 +1133,36 @@ def admin_apply_leave_balance_target(req: LeaveBalanceTargetRequest, request: Re
         }
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/v1/admin/leave/balance-target/batch")
+def admin_apply_leave_balance_target_batch(req: LeaveBalanceBatchTargetRequest, request: Request):
+    context = _require_leave_manager_context(request)
+    from src.platform.leave_quota_service import apply_leave_balance_target
+
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    unique_user_ids = [user_id for user_id in dict.fromkeys(str(uid).strip() for uid in req.user_ids) if user_id]
+    if not unique_user_ids:
+        raise HTTPException(400, "请至少选择一名员工")
+    for user_id in unique_user_ids:
+        try:
+            results.append(
+                apply_leave_balance_target(
+                    platform=req.platform,
+                    user_id=user_id,
+                    vacation_id=req.vacation_id,
+                    vacation_name=req.vacation_name,
+                    target_leftduration=req.target_leftduration,
+                    time_attr=req.time_attr,
+                    operator_user_id=context["user_id"],
+                    reason=req.reason,
+                    allow_local_negative=req.allow_local_negative,
+                )
+            )
+        except ValueError as exc:
+            errors.append({"user_id": user_id, "error": str(exc)})
+    return {"updated": len(results), "failed": len(errors), "results": results, "errors": errors}
 
 
 @app.post("/api/v1/admin/leave/workflow-notice")
@@ -1149,12 +1202,16 @@ def admin_leave_workflow_notice(req: LeaveWorkflowNoticeRequest, request: Reques
 
 
 @app.get("/api/v1/admin/leave/form-notice")
-def admin_leave_form_notice(request: Request, user_id: str, platform: str = "wecom"):
+def admin_leave_form_notice(request: Request, user_id: str = "", user_name: str = "", user_query: str = "", platform: str = "wecom"):
     _require_leave_manager_context(request)
     from src.platform.leave_quota_service import build_employee_leave_form_notice
 
     try:
-        return {"notice": build_employee_leave_form_notice(platform=platform, user_id=user_id)}
+        resolved_user_id = _resolve_employee_user_id(platform, user_id or user_query, user_name)
+        return {
+            "notice": build_employee_leave_form_notice(platform=platform, user_id=resolved_user_id),
+            "user_id": resolved_user_id,
+        }
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -1299,13 +1356,29 @@ def admin_infer_mail_account(req: MailAccountInferRequest, request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
-def _resolve_mail_user_id(platform: str, user_id: str, user_name: str) -> str:
+def _resolve_employee_user_id(platform: str, user_id: str, user_name: str) -> str:
     normalized_user_id = str(user_id or "").strip()
     if normalized_user_id:
+        conn = Database.get().connect()
+        platform_text = str(platform or "wecom").strip()
+        row = conn.execute(
+            "SELECT user_id FROM org_users WHERE platform=? AND user_id=?",
+            (platform_text, normalized_user_id),
+        ).fetchone()
+        if row:
+            return str(row[0])
+        rows = conn.execute(
+            "SELECT user_id FROM org_users WHERE platform=? AND name=? ORDER BY user_id",
+            (platform_text, normalized_user_id),
+        ).fetchall()
+        if len(rows) == 1:
+            return str(rows[0][0])
+        if len(rows) > 1:
+            raise ValueError(f"通讯录中找到多个“{normalized_user_id}”，请填写企业 IM 用户 ID")
         return normalized_user_id
     name = str(user_name or "").strip()
     if not name:
-        raise ValueError("请填写员工姓名；如遇同名员工，再填写企业 IM 用户 ID")
+        raise ValueError("请填写员工姓名或企业 IM 用户 ID；如遇同名员工，再填写企业 IM 用户 ID")
     conn = Database.get().connect()
     rows = conn.execute(
         "SELECT user_id FROM org_users WHERE platform=? AND name=? ORDER BY user_id",
@@ -1316,6 +1389,10 @@ def _resolve_mail_user_id(platform: str, user_id: str, user_name: str) -> str:
     if len(rows) > 1:
         raise ValueError(f"通讯录中找到多个“{name}”，请填写企业 IM 用户 ID 后再保存")
     raise ValueError(f"未在已同步的企业 IM 通讯录中找到“{name}”。请先同步通讯录，或填写该员工的企业 IM 用户 ID")
+
+
+def _resolve_mail_user_id(platform: str, user_id: str, user_name: str) -> str:
+    return _resolve_employee_user_id(platform, user_id, user_name)
 
 
 @app.post("/api/v1/admin/mail/accounts/status")
@@ -3156,8 +3233,8 @@ def admin_console_page(request: Request = None):
             <p>员工只看到一个“企业 AI 助手”。管理员开通后，平台自动分配权限并发送欢迎消息；员工可直接回复欢迎消息，也可搜索同名助手或在群里 @ 同名助手。</p>
             <p class="muted">知识范围和操作权限由平台根据员工在企业 IM 中的组织架构、部门归属、负责人/管理员身份自动计算，管理员只确认开通，不手工指定范围。</p>
             <label>平台</label><select id="employeePlatform"><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="dingtalk">钉钉</option></select>
-             <label>员工用户 ID</label><input id="employeeUserId" placeholder="例如 AdminUser 或同事企微 user_id">
-             <label>员工姓名（可选，替代 ID 搜索）</label><input id="employeeName" placeholder="例如 张三，按姓名检索">
+             <label>员工姓名或用户 ID</label><input id="employeeUserId" placeholder="例如 张三，或 AdminUser">
+             <label>员工姓名（可选，用于辅助匹配）</label><input id="employeeName" placeholder="例如 张三，和上方二选一即可">
              <label>显示名称</label><input id="employeeBotName" placeholder="企业 AI 助手">
              <div class="actions">
                <button class="secondary" onclick="searchEmployeeByName()">按姓名查找用户</button>
@@ -3238,28 +3315,44 @@ def admin_console_page(request: Request = None):
           </div>
           <div class="panel">
             <h2>员工动态假期提示</h2>
-            <p>输入员工企业 IM 用户 ID，查看员工在 AI 助手里“我要请假”时看到的真实余额提示。</p>
-            <label>员工用户 ID</label><input id="leaveNoticeUserId" placeholder="例如 AdminUser 或 UserA">
+            <p>输入员工姓名或企业 IM 用户 ID，查看员工在 AI 助手里“我要请假”时看到的真实余额提示；如遇同名员工，再改填用户 ID。</p>
+            <label>员工姓名或用户 ID</label><input id="leaveNoticeUserId" placeholder="例如 张三，或 AdminUser">
             <div class="actions"><button class="secondary" onclick="loadLeaveFormNotice()">查看动态余额提示</button></div>
             <pre id="leaveFormNotice">暂无结果</pre>
+          </div>
+          <div class="panel span">
+            <h2>按部门选择员工</h2>
+            <p>人事专员可按通讯录部门筛选员工，选择当前筛选结果后批量调整假期，适合整部门统一补录加班、调休或临时假期额度。</p>
+            <div class="actions">
+              <input id="leaveUserSearch" placeholder="搜索部门、姓名、用户 ID..." style="max-width:280px" oninput="renderLeaveUserDirectory()">
+              <button class="secondary" onclick="loadLeaveUserDirectory(true)">同步通讯录并刷新</button>
+              <button class="secondary" onclick="selectFilteredLeaveUsers(true)">选择当前筛选结果</button>
+              <button class="secondary" onclick="selectFilteredLeaveUsers(false)">取消当前筛选结果</button>
+              <button class="tonal" onclick="fillLeaveBatchFromSelected()">填入批量调整</button>
+            </div>
+            <div id="leaveSelectedUsers" class="status">未选择员工</div>
+            <div id="leaveUserDirectory">等待加载</div>
           </div>
           <div class="panel">
             <h2>调整员工假期额度</h2>
             <p>支持设置为负数。负数会保存到 Ant Colony 本地真实台账；同步到企微时会按不小于 0 的可申请额度处理。</p>
-            <label>员工用户 ID</label><input id="leaveBalanceUserId" placeholder="员工企业 IM 用户 ID">
+            <label>员工姓名或用户 ID</label><input id="leaveBalanceUserId" placeholder="例如 张三，或 AdminUser">
             <label>假期类型 ID</label><input id="leaveVacationId" type="number" placeholder="例如 9">
             <label>假期名称</label><input id="leaveVacationName" placeholder="例如 年假、调休假、病假">
             <label>目标余额（秒；1 天通常为 86400，可为负数）</label><input id="leaveTargetDuration" type="number" placeholder="例如 86400 或 -86400">
             <label>企微 time_attr</label><input id="leaveTimeAttr" type="number" value="1">
             <label>调整原因</label><textarea id="leaveAdjustReason" placeholder="例如 工龄年假补录、历史调休预支、病假额度修正"></textarea>
             <label><input id="leaveAllowNegative" type="checkbox" checked style="width:auto"> 允许本地保存负数余额</label>
-            <div class="actions"><button class="primary" onclick="applyLeaveBalanceTarget()">保存额度调整</button></div>
+            <div class="actions">
+              <button class="primary" onclick="applyLeaveBalanceTarget()">保存单人额度调整</button>
+              <button class="tonal" onclick="applyLeaveBalanceTargetBatch()">批量调整已选员工</button>
+            </div>
             <div id="leaveAdjustResult" class="status">暂无操作</div>
           </div>
           <div class="panel">
             <h2>企微负数能力验证</h2>
             <p>用于验证企微接口是否允许负数余额。默认不写入真实企微；只有确认现场测试时才勾选真实写入。</p>
-            <label>员工用户 ID</label><input id="leaveProbeUserId" placeholder="测试员工用户 ID">
+            <label>测试员工姓名或用户 ID</label><input id="leaveProbeUserId" placeholder="例如 张三，或 AdminUser">
             <label>假期类型 ID</label><input id="leaveProbeVacationId" type="number" placeholder="例如 9">
             <label>测试负数秒数</label><input id="leaveProbeDuration" type="number" value="-86400">
             <label><input id="leaveProbeLive" type="checkbox" style="width:auto"> 确认真实写入企微测试并恢复</label>
@@ -3464,7 +3557,7 @@ def admin_console_page(request: Request = None):
              <label>业务系统 OperID</label><input id="rateminOperId" placeholder="例如 309">
              <label>业务系统登录名</label><input id="rateminLoginName" placeholder="例如 ZHANG_Xiaolin">
              <label>业务系统显示名</label><input id="rateminDisplayName" placeholder="例如 员工甲_ZHANG Xiaolin">
-             <label>企微 user_id</label><input id="rateminImUserId" placeholder="例如 AdminUser 或企微 user_id">
+             <label>企微姓名或 user_id</label><input id="rateminImUserId" placeholder="例如 张三，或 AdminUser">
              <label>企微显示名</label><input id="rateminImDisplayName" placeholder="例如 张三">
              <div class="actions">
                <button class="primary" onclick="saveRateminBinding()">保存绑定</button>
@@ -3626,7 +3719,10 @@ def admin_console_page(request: Request = None):
       if (navButton) navButton.classList.add('active');
       if (id === 'integrations') loadIntegrations();
       if (id === 'mailAccounts') loadMailAccounts();
-      if (id === 'leaveAdmin') loadLeaveRealtimeStatus();
+      if (id === 'leaveAdmin') {
+        loadLeaveRealtimeStatus();
+        loadLeaveUserDirectory(false);
+      }
       if (id === 'ratemin') {
         loadRateminStatus();
         startRateminChannelAutoRefresh();
@@ -4118,13 +4214,92 @@ def admin_console_page(request: Request = None):
     }
     async function loadLeaveFormNotice() {
       try {
-        const userId = val('leaveNoticeUserId') || val('leaveBalanceUserId');
-        if (!userId) throw new Error('请先填写员工用户 ID');
-        const data = await api(`/api/v1/admin/leave/form-notice?platform=${encodeURIComponent(leavePlatform())}&user_id=${encodeURIComponent(userId)}`);
+        const userQuery = val('leaveNoticeUserId') || val('leaveBalanceUserId');
+        if (!userQuery) throw new Error('请先填写员工姓名或用户 ID');
+        const data = await api(`/api/v1/admin/leave/form-notice?platform=${encodeURIComponent(leavePlatform())}&user_query=${encodeURIComponent(userQuery)}`);
         setText('leaveFormNotice', data.notice || '暂无动态提示');
       } catch (err) {
         setText('leaveFormNotice', String(err.message || err), true);
       }
+    }
+    window.leaveUsers = window.leaveUsers || [];
+    window.filteredLeaveUsers = window.filteredLeaveUsers || [];
+    window.selectedLeaveUserIds = window.selectedLeaveUserIds || new Set();
+    async function loadLeaveUserDirectory(sync=false) {
+      try {
+        const data = await api(`/api/v1/admin/users?platform=${encodeURIComponent(leavePlatform())}&sync=${sync ? 'true' : 'false'}`);
+        window.leaveUsers = data.users || [];
+        renderLeaveUserDirectory();
+      } catch (err) {
+        setText('leaveUserDirectory', String(err.message || err), true);
+      }
+    }
+    function renderLeaveUserDirectory() {
+      const term = (val('leaveUserSearch') || '').toLowerCase();
+      let users = window.leaveUsers || [];
+      if (term) {
+        users = users.filter((user) => {
+          const haystack = `${user.department_path || ''} ${user.name || ''} ${user.user_id || ''}`.toLowerCase();
+          return haystack.includes(term);
+        });
+      }
+      window.filteredLeaveUsers = users;
+      const groups = {};
+      users.forEach((user) => {
+        const dept = user.department_path || '未分部门';
+        if (!groups[dept]) groups[dept] = [];
+        groups[dept].push(user);
+      });
+      const sections = Object.keys(groups).sort((a, b) => a.localeCompare(b, 'zh-CN')).map((dept) => {
+        const rows = groups[dept].map((user) => {
+          const checked = window.selectedLeaveUserIds.has(user.user_id) ? 'checked' : '';
+          return `<tr><td><input class="leave-user-check" type="checkbox" value="${safe(user.user_id)}" ${checked} onchange="onLeaveUserCheck(${jsAttr(user.user_id)}, this.checked)"></td><td>${safe(user.name || user.user_id)}<br><span class="chip">${safe(user.user_id)}</span></td><td>${safe(user.bot_status || '-')}</td><td><button class="secondary" onclick="useLeaveUser(${jsAttr(user.user_id)},${jsAttr(user.name || user.user_id)})">填入单人调整</button></td></tr>`;
+        });
+        return `<details open><summary>${safe(dept)}（${groups[dept].length} 人）</summary>${table(['选择','员工','AI 助手状态','操作'], rows)}</details>`;
+      });
+      setHtml('leaveUserDirectory', sections.join('') || '<div class="status">暂无员工；请先同步通讯录。</div>');
+      updateLeaveSelectedUsers();
+    }
+    function onLeaveUserCheck(userId, checked) {
+      if (!userId) return;
+      if (checked) window.selectedLeaveUserIds.add(userId);
+      else window.selectedLeaveUserIds.delete(userId);
+      updateLeaveSelectedUsers();
+    }
+    function selectFilteredLeaveUsers(selected) {
+      (window.filteredLeaveUsers || []).forEach((user) => {
+        if (!user.user_id) return;
+        if (selected) window.selectedLeaveUserIds.add(user.user_id);
+        else window.selectedLeaveUserIds.delete(user.user_id);
+      });
+      renderLeaveUserDirectory();
+    }
+    function updateLeaveSelectedUsers() {
+      const selected = Array.from(window.selectedLeaveUserIds || []);
+      const usersById = {};
+      (window.leaveUsers || []).forEach((user) => { usersById[user.user_id] = user; });
+      const labels = selected.slice(0, 12).map((userId) => {
+        const user = usersById[userId] || {};
+        return user.name ? `${user.name}（${userId}）` : userId;
+      });
+      const suffix = selected.length > 12 ? `，等共 ${selected.length} 人` : `；共 ${selected.length} 人`;
+      setText('leaveSelectedUsers', selected.length ? `已选择：${labels.join('、')}${suffix}` : '未选择员工');
+    }
+    function useLeaveUser(userId, userName) {
+      const label = userName || userId || '';
+      if (el('leaveBalanceUserId')) el('leaveBalanceUserId').value = label;
+      if (el('leaveNoticeUserId')) el('leaveNoticeUserId').value = label;
+      if (el('leaveProbeUserId')) el('leaveProbeUserId').value = label;
+      setText('leaveAdjustResult', `已填入员工：${label}。可继续选择假期类型并保存单人调整。`);
+    }
+    function fillLeaveBatchFromSelected() {
+      const selected = Array.from(window.selectedLeaveUserIds || []);
+      if (!selected.length) {
+        setText('leaveAdjustResult', '请先在“按部门选择员工”中选择员工。', true);
+        return;
+      }
+      updateLeaveSelectedUsers();
+      setText('leaveAdjustResult', `已准备批量调整 ${selected.length} 名员工；请填写假期类型、目标余额和调整原因后点击“批量调整已选员工”。`);
     }
     async function applyLeaveBalanceTarget() {
       try {
@@ -4138,11 +4313,34 @@ def admin_console_page(request: Request = None):
           reason: val('leaveAdjustReason'),
           allow_local_negative: !!el('leaveAllowNegative').checked
         };
-        if (!payload.user_id) throw new Error('请填写员工用户 ID');
+        if (!payload.user_id) throw new Error('请填写员工姓名或用户 ID');
         if (!payload.vacation_id) throw new Error('请填写假期类型 ID');
         if (!payload.reason) throw new Error('请填写调整原因');
         const data = await api('/api/v1/admin/leave/balance-target', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         setHtml('leaveAdjustResult', chip('额度调整已保存', 'ok') + `<pre>${safe(JSON.stringify(data.result || data, null, 2))}</pre>`);
+      } catch (err) {
+        setText('leaveAdjustResult', String(err.message || err), true);
+      }
+    }
+    async function applyLeaveBalanceTargetBatch() {
+      try {
+        const userIds = Array.from(window.selectedLeaveUserIds || []);
+        const payload = {
+          platform: leavePlatform(),
+          user_ids: userIds,
+          vacation_id: Number(val('leaveVacationId') || 0),
+          vacation_name: val('leaveVacationName'),
+          target_leftduration: Number(val('leaveTargetDuration') || 0),
+          time_attr: Number(val('leaveTimeAttr') || 1),
+          reason: val('leaveAdjustReason'),
+          allow_local_negative: !!el('leaveAllowNegative').checked
+        };
+        if (!payload.user_ids.length) throw new Error('请先按部门筛选并选择员工');
+        if (!payload.vacation_id) throw new Error('请填写假期类型 ID');
+        if (!payload.reason) throw new Error('请填写调整原因');
+        const data = await api('/api/v1/admin/leave/balance-target/batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        const status = `批量调整完成：成功 ${data.updated || 0} 人，失败 ${data.failed || 0} 人`;
+        setHtml('leaveAdjustResult', chip(status, data.failed ? 'warn' : 'ok') + `<pre>${safe(JSON.stringify(data, null, 2))}</pre>`);
       } catch (err) {
         setText('leaveAdjustResult', String(err.message || err), true);
       }
@@ -4156,7 +4354,7 @@ def admin_console_page(request: Request = None):
           negative_duration: Number(val('leaveProbeDuration') || -86400),
           confirm_live_write: !!el('leaveProbeLive').checked
         };
-        if (!payload.user_id) throw new Error('请填写测试员工用户 ID');
+        if (!payload.user_id) throw new Error('请填写测试员工姓名或用户 ID');
         if (!payload.vacation_id) throw new Error('请填写假期类型 ID');
         const data = await api('/api/v1/admin/leave/negative-probe', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         setHtml('leaveProbeResult', chip('验证已完成', 'ok') + `<pre>${safe(JSON.stringify(data.result || data, null, 2))}</pre>`);
@@ -4617,10 +4815,11 @@ def admin_console_page(request: Request = None):
         const payload = {
           platform: val('employeePlatform') || 'wecom',
           user_id: val('employeeUserId'),
+          user_name: val('employeeName'),
           display_name: val('employeeBotName') || '企业 AI 助手',
           notify: true
         };
-        if (!payload.user_id) throw new Error('请先填写员工的企业 IM 用户 ID');
+        if (!payload.user_id && !payload.user_name) throw new Error('请先填写员工姓名或用户 ID');
         const data = await api('/api/v1/admin/employee-bots/activate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         setHtml('employeeResult', chip('员工 AI 助手已开通','ok') + chip(`通知：${((data.assignment || {}).notify_status) || '-'}`));
         await loadEmployeeBots();
@@ -4630,8 +4829,8 @@ def admin_console_page(request: Request = None):
     }
     async function deactivateEmployeeBot() {
       try {
-        const payload = {platform: val('employeePlatform') || 'wecom', user_id: val('employeeUserId')};
-        if (!payload.user_id) throw new Error('请先填写员工的企业 IM 用户 ID');
+        const payload = {platform: val('employeePlatform') || 'wecom', user_id: val('employeeUserId'), user_name: val('employeeName')};
+        if (!payload.user_id && !payload.user_name) throw new Error('请先填写员工姓名或用户 ID');
         const data = await api('/api/v1/admin/employee-bots/deactivate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         setHtml('employeeResult', chip(`状态：${((data.assignment || {}).status) || '已停用'}`, 'warn'));
         await loadEmployeeBots();
@@ -4734,7 +4933,7 @@ def admin_console_page(request: Request = None):
           im_user_id: val('rateminImUserId'),
           im_display_name: val('rateminImDisplayName')
         };
-        if (!payload.source_db || !payload.rate_oper_id || !payload.im_user_id) throw new Error('请填写业务系统数据库、OperID 和企微 user_id');
+        if (!payload.source_db || !payload.rate_oper_id || !payload.im_user_id) throw new Error('请填写业务系统数据库、OperID 和企微姓名或 user_id');
         const data = await api('/api/v1/admin/ratemin/bindings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
         setHtml('rateminBindResult', chip(`已绑定：${safe(data.rate_display_name || data.rate_oper_id)} -> ${safe(data.im_display_name || data.im_user_id)}`, 'ok'));
         await loadRateminDirectory();
