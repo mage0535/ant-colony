@@ -332,6 +332,13 @@ def test_ratemin_directory_query_and_sort(tmp_path) -> None:
     assert [item["rate_oper_id"] for item in by_oper_desc] == ["300", "200", "100"]
 
 
+def test_ratemin_source_databases_can_be_configured_by_environment() -> None:
+    from src.platform.ratemin_service import configured_source_dbs
+
+    with patch.dict("os.environ", {"RATEMIN_SOURCE_DBS": "workflow_a, workflow_b"}, clear=False):
+        assert configured_source_dbs() == ("workflow_a", "workflow_b")
+
+
 def test_admin_can_query_specific_user_ratemin_todos(tmp_path) -> None:
     from src.platform.employee_bot_service import activate_employee_bot
     from src.platform.ratemin_service import format_ratemin_todos_for_target, ingest_ratemin_events, sync_ratemin_current_events

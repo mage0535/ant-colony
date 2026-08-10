@@ -17,6 +17,12 @@ DEFAULT_SOURCE_DBS = ("business_a", "business_b")
 _RATEMIN_WRITE_LOCK = threading.RLock()
 
 
+def configured_source_dbs() -> tuple[str, ...]:
+    raw = os.environ.get("RATEMIN_SOURCE_DBS", "")
+    items = tuple(item.strip().lower() for item in raw.split(",") if item.strip())
+    return items or DEFAULT_SOURCE_DBS
+
+
 def ingest_ratemin_events(events: list[dict[str, Any]], *, platform: str = DEFAULT_PLATFORM) -> dict[str, Any]:
     """Ingest pending RatMin workflow events and push first-time notifications."""
     normalized_platform = _normalize_platform(platform)
@@ -200,7 +206,7 @@ def list_ratemin_status(platform: str = DEFAULT_PLATFORM) -> dict[str, Any]:
         "events": [_row_dict(r) for r in rows],
         "bindings": [_row_dict(r) for r in bindings],
         "user_snapshots": [_row_dict(r) for r in users],
-        "source_dbs": list(DEFAULT_SOURCE_DBS),
+        "source_dbs": list(configured_source_dbs()),
     }
 
 
@@ -1127,7 +1133,7 @@ def _normalize_platform(platform: str) -> str:
 
 def _normalize_source_db(source_db: str) -> str:
     text = str(source_db or "").strip().lower()
-    if text not in set(DEFAULT_SOURCE_DBS):
+    if text not in set(configured_source_dbs()):
         raise ValueError(f"不支持的业务系统数据库：{source_db}")
     return text
 
