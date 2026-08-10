@@ -70,3 +70,20 @@
 
 - `python -m py_compile src\web\dashboard.py`
 - `python -m pytest -q tests/test_admin_console.py`：60 passed
+
+## 2026-08-10 人事专员真实权限验证
+
+- 测试服务器已读取到 2 名人事专员，均存在于企业 IM 通讯录，且员工 AI 助手状态为 active。
+- 以两位人事专员各自身份调用真实后台接口验证：
+  - `/api/v1/admin/profile` 返回 `can_manage_leave=true`。
+  - `/api/v1/admin/users` 可返回通讯录员工清单，当前 129 名员工均带 `department_path`，可支撑按部门筛选和批量选择。
+  - `/api/v1/admin/leave/realtime-sync` 可读取假期类型与实时同步状态。
+  - `/api/v1/admin/leave/form-notice` 可读取员工真实假期余额提示。
+  - `/api/v1/admin/leave/balance-target/batch` 以空员工列表调用时返回“请至少选择一名员工”，证明已通过权限校验并进入参数校验。
+- 使用临时测试用户调用批量假期调整接口，去重后成功处理 2 个测试用户；企微真实接口确认负数 `leftduration` 不支持，系统按设计写入本地负数台账。测试完成后已清理 `leave_local_balances` 和 `leave_quota_adjustments` 中的临时测试记录，清理后剩余 0 条。
+- 以两位人事专员各自身份打开 `/admin/console`，页面包含“审批假期管理”“按部门选择员工”“批量调整已选员工”“员工姓名或用户 ID”和 `applyLeaveBalanceTargetBatch`，页面入口已可见。
+
+### 结论
+
+- 当前人事专员权限、通讯录部门筛选、动态假期提示和批量调整接口均已真实可用。
+- 暂未发现需要代码修复的问题；后续真实业务使用时重点关注企微正数额度同步是否因租户权限、假期类型 ID 或 `time_attr` 配置错误被拒绝。
