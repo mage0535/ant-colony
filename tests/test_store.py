@@ -1,7 +1,9 @@
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
+import threading
 import unittest
 
 from src.analysis.role_analyzer import GroupMessageAnalyzer, RoleAnalyzer
@@ -54,6 +56,110 @@ class TestTaskRepository(unittest.TestCase):
 
         all_pending = self.repo.list_drafts()
         self.assertGreaterEqual(len(all_pending), 2)
+
+    def test_database_uses_distinct_connections_per_thread(self):
+        connection_ids: list[int] = []
+        errors: list[str] = []
+        lock = threading.Lock()
+
+        def worker(index: int) -> None:
+            try:
+                conn = self.db.connect()
+                conn.execute(
+                    "INSERT INTO task_drafts (title, project_id, source_message_ids) VALUES (?, ?, ?)",
+                    (f"thread-{index}", "p1", "[]"),
+                )
+                conn.commit()
+                with lock:
+                    connection_ids.append(id(conn))
+            except Exception as exc:  # pragma: no cover - assertion reports detail
+                with lock:
+                    errors.append(f"{type(exc).__name__}: {exc}")
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(set(connection_ids)), 4)
+        count = self.db.connect().execute(
+            "SELECT COUNT(*) AS c FROM task_drafts WHERE title LIKE 'thread-%'"
+        ).fetchone()["c"]
+        self.assertEqual(count, 4)
+
+    def test_connection_remains_compatible_with_cross_thread_repositories(self):
+        conn = self.db.connect()
+        errors: list[str] = []
+
+        def worker() -> None:
+            try:
+                conn.execute("SELECT COUNT(*) AS c FROM task_drafts").fetchone()
+            except Exception as exc:  # pragma: no cover - assertion reports detail
+                errors.append(f"{type(exc).__name__}: {exc}")
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join()
+
+        self.assertEqual(errors, [])
+
+    def test_repository_reads_use_thread_local_connections(self):
+        self.repo.create_task("shared read", "desc", "space")
+        connection_ids: list[int] = []
+        errors: list[str] = []
+        lock = threading.Lock()
+
+        def worker() -> None:
+            try:
+                self.repo.list_tasks("space")
+                with lock:
+                    connection_ids.append(id(self.repo._conn))
+            except Exception as exc:  # pragma: no cover - assertion reports detail
+                with lock:
+                    errors.append(f"{type(exc).__name__}: {exc}")
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(set(connection_ids)), 4)
+
+    def test_save_message_retries_once_when_database_is_locked(self):
+        class FakeCursor:
+            lastrowid = 123
+
+        class FakeConn:
+            def __init__(self) -> None:
+                self.execute_calls = 0
+                self.rollbacks = 0
+                self.commits = 0
+
+            def execute(self, *_args):
+                self.execute_calls += 1
+                if self.execute_calls == 1:
+                    raise sqlite3.OperationalError("database is locked")
+                return FakeCursor()
+
+            def rollback(self):
+                self.rollbacks += 1
+
+            def commit(self):
+                self.commits += 1
+
+        fake = FakeConn()
+        self.repo._conn = fake  # type: ignore[assignment]
+
+        msg_id = self.repo.save_message("space", "user", "管理后台")
+
+        self.assertEqual(msg_id, 123)
+        self.assertEqual(fake.execute_calls, 2)
+        self.assertEqual(fake.rollbacks, 1)
+        self.assertEqual(fake.commits, 1)
 
     def test_confirm_draft_creates_task(self):
         did = self.repo.save_draft(self._make_draft())
@@ -616,6 +722,43 @@ class TestFtsKnowledgeRepo(unittest.TestCase):
         self.assertEqual(len(results_alice), 1)
         results_bob = self.repo.search("secret", user_id="bob")
         self.assertEqual(len(results_bob), 0)
+
+    def test_search_normalizes_long_document_prompt_for_fts(self):
+        self.repo.save(
+            self._make_entry(
+                "k1",
+                KnowledgeOwnerType.ORGANIZATION,
+                "*",
+                "模板.docx 第一章 总则 文件内容 车间通行管理",
+            )
+        )
+        query = (
+            "【系统提示】你已经收到了用户上传文档的实际内容。\n\n"
+            "=== 【模板文件内容】===\n用户发送了文件：模板.docx\n\n"
+            "以下是文件内容：\n---\n第一章 总则\n---\n\n"
+            "=== 【用户要求】===\n请提炼这个模板的重点"
+        )
+
+        results = self.repo.search(query, user_id="alice", limit=5)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].id, "k1")
+
+    def test_long_document_prompt_fts_query_prefers_user_request_and_file_context(self):
+        from src.knowledge.fts_repo import _build_fts_query
+
+        query = (
+            "【系统提示】你已经收到了用户上传文档的实际内容。\n"
+            "=== 【模板文件内容】===\n用户发送了文件：模板.docx\n"
+            "以下是文件内容：第一章 总则\n"
+            "=== 【用户要求】===\n请提炼这个模板的重点"
+        )
+
+        fts_query = _build_fts_query(query)
+
+        self.assertIn("模板.docx", fts_query)
+        self.assertIn("提炼", fts_query)
+        self.assertNotIn("系统提示", fts_query)
 
     def test_delete(self):
         self.repo.save(self._make_entry("k1", KnowledgeOwnerType.PERSONAL, "alice", "test"))

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
+import time
 from datetime import datetime
 from typing import Any
 
@@ -17,7 +19,16 @@ logger = logging.getLogger(__name__)
 class TaskRepository:
     def __init__(self, db: Database | None = None) -> None:
         self.db = db or Database.get()
-        self._conn = self.db.connect()
+        self._conn_override = None
+        self.db.connect()
+
+    @property
+    def _conn(self):
+        return self._conn_override or self.db.connect()
+
+    @_conn.setter
+    def _conn(self, value):
+        self._conn_override = value
 
     # ---- drafts ----
 
@@ -240,11 +251,25 @@ class TaskRepository:
     # ---- messages ----
 
     def save_message(self, space_id: str, from_user_id: str, content: str) -> int:
-        cur = self._conn.execute(
-            "INSERT INTO space_messages (space_id, from_user_id, content) VALUES (?, ?, ?)",
-            (space_id, from_user_id, content),
-        )
-        self._conn.commit()
+        cur = None
+        for attempt in range(6):
+            try:
+                cur = self._conn.execute(
+                    "INSERT INTO space_messages (space_id, from_user_id, content) VALUES (?, ?, ?)",
+                    (space_id, from_user_id, content),
+                )
+                self._conn.commit()
+                break
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt >= 5:
+                    raise
+                try:
+                    self._conn.rollback()
+                except sqlite3.Error:
+                    pass
+                time.sleep(0.15 * (attempt + 1))
+        if cur is None:  # pragma: no cover - defensive, loop either breaks or raises
+            raise RuntimeError("failed to save message")
         msg_id = cur.lastrowid or 0
         emit("message_received", message_id=msg_id, space_id=space_id, from_user=from_user_id)
         return msg_id

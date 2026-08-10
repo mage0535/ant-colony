@@ -8,6 +8,7 @@ data/audit/
 data/runtime_settings.json
 data/cron_jobs.json
 data/heartbeat-state.json
+data/*-cache.db
 data/conversations/
 data/openvort_runtime.env
 src/data/documents/
@@ -28,6 +29,7 @@ build/
 # Temporary and external files
 *.bak
 *.swp
+.tmp_*.py
 /tmp/
 /scratchpad/
 /external/

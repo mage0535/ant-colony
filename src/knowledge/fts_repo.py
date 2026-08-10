@@ -81,18 +81,18 @@ class FtsKnowledgeRepository:
         ).fetchone()
         if row is None:
             return None
-        return _row_to_entry(row)
+        return _safe_row_to_entry(row)
 
     def list_for_owner(self, owner_type: KnowledgeOwnerType, owner_id: str) -> list[KnowledgeEntry]:
         rows = self._conn.execute(
             "SELECT * FROM knowledge_items WHERE owner_type = ? AND owner_id = ? ORDER BY created_at DESC",
             (owner_type.value, owner_id),
         ).fetchall()
-        return [_row_to_entry(r) for r in rows]
+        return [entry for r in rows if (entry := _safe_row_to_entry(r))]
 
     def search(self, query: str, user_id: str = "", space_id: str = "", limit: int = 20) -> list[KnowledgeEntry]:
         rows = self._query_rows(query, limit)
-        return [_row_to_entry(r) for r in rows if _acl_check(r, user_id, space_id)]
+        return [entry for r in rows if _acl_check(r, user_id, space_id) and (entry := _safe_row_to_entry(r))]
 
     def search_accessible(self, query: str, user_id: str, space_id: str = "", limit: int = 20) -> list[KnowledgeEntry]:
         """Search knowledge with ACL filtering — only returns entries the user may read.
@@ -109,7 +109,9 @@ class FtsKnowledgeRepository:
 
         results: list[KnowledgeEntry] = []
         for r in rows:
-            entry = _row_to_entry(r)
+            entry = _safe_row_to_entry(r)
+            if entry is None:
+                continue
             if may_read(role, entry.owner_type.value, entry.owner_id, user_id):
                 results.append(entry)
                 if len(results) >= limit:
@@ -117,16 +119,17 @@ class FtsKnowledgeRepository:
         return results
 
     def _query_rows(self, query: str, limit: int) -> list[Any]:
+        fts_query = _build_fts_query(query)
         try:
             return self._conn.execute(
                 """SELECT ki.* FROM knowledge_items ki
                    JOIN knowledge_fts kf ON ki.id = kf.id
                    WHERE knowledge_fts MATCH ?
                    LIMIT ?""",
-                (query, limit),
+                (fts_query, limit),
             ).fetchall()
         except sqlite3.OperationalError:
-            logger.warning("FTS query failed for %r, falling back to LIKE search", query)
+            logger.warning("FTS query failed for normalized query %r, falling back to LIKE search", fts_query)
             terms = [part.strip() for part in re.split(r"[^\w\u4e00-\u9fff]+", query) if part.strip()]
             search_terms = terms or [query]
             clauses = []
@@ -156,7 +159,9 @@ class FtsKnowledgeRepository:
 
         results: list[KnowledgeEntry] = []
         for r in rows:
-            entry = _row_to_entry(r)
+            entry = _safe_row_to_entry(r)
+            if entry is None:
+                continue
             if may_read(role, entry.owner_type.value, entry.owner_id, user_id):
                 results.append(entry)
                 if len(results) >= limit:
@@ -205,6 +210,55 @@ def _acl_check(row: Any, user_id: str, space_id: str) -> bool:
     return False
 
 
+def _build_fts_query(query: str, max_terms: int = 12) -> str:
+    """Build a safe FTS5 query from natural language or pasted document text."""
+    searchable_text = _extract_searchable_text(query)
+    terms = _tokenize_fts_terms(searchable_text)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if len(term) > 48:
+            term = term[:48]
+        key = term.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(term.replace('"', '""'))
+        if len(normalized) >= max_terms:
+            break
+    if not normalized:
+        fallback = query.strip().replace('"', '""')[:48]
+        return f'"{fallback}"' if fallback else '""'
+    return " OR ".join(f'"{term}"' for term in normalized)
+
+
+def _extract_searchable_text(query: str) -> str:
+    if "=== 【用户要求】===" in query:
+        before, _, user_request = query.partition("=== 【用户要求】===")
+        file_names = re.findall(r"用户发送了文件[:：]\s*([^\s\r\n]+)", before)
+        return " ".join([*file_names, user_request, before[-800:]])
+    return query
+
+
+def _tokenize_fts_terms(text: str) -> list[str]:
+    stopwords = {
+        "系统提示",
+        "用户发送了文件",
+        "以下是文件内容",
+        "模板文件内容",
+        "用户要求",
+        "你已经收到了用户上传文档的实际内容",
+        "不要再说没有收到文件",
+        "不要优先去知识库搜索同名文档",
+        "请直接基于这些内容完成用户请求",
+        "the",
+        "and",
+        "or",
+    }
+    terms = [part.strip() for part in re.split(r"[^\w\u4e00-\u9fff.]+", text) if part.strip()]
+    return [term for term in terms if term.casefold() not in stopwords]
+
+
 def _row_to_entry(row: Any) -> KnowledgeEntry:
     return KnowledgeEntry(
         id=row["id"],
@@ -216,3 +270,11 @@ def _row_to_entry(row: Any) -> KnowledgeEntry:
         read_roles=json.loads(row["read_roles"] if "read_roles" in row.keys() else '["self"]'),
         write_roles=json.loads(row["write_roles"] if "write_roles" in row.keys() else '["admin","self"]'),
     )
+
+
+def _safe_row_to_entry(row: Any) -> KnowledgeEntry | None:
+    try:
+        return _row_to_entry(row)
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        logger.warning("Skipping invalid knowledge row %r: %s", row["id"] if "id" in row.keys() else "-", exc)
+        return None

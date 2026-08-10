@@ -14,6 +14,7 @@ from fastapi import HTTPException, Request
 
 
 DEFAULT_ADMIN_SESSION_TTL_SECONDS = 3600
+DEFAULT_ADMIN_REFRESH_GRACE_SECONDS = 86400
 DEFAULT_USER_SESSION_TTL_SECONDS = 86400
 
 _revoked_jtis: dict[str, float] = {}
@@ -34,7 +35,7 @@ def revoke_token(*, token: str):
         jti = payload.get("jti", "")
         exp = int(payload.get("exp", 0))
         if jti:
-            _revoked_jtis[jti] = exp
+            _revoked_jtis[jti] = exp + _admin_refresh_grace_seconds()
     except Exception:
         pass
 
@@ -53,6 +54,7 @@ def create_admin_console_token(
     payload = {
         "platform": _normalize_platform(platform),
         "user_id": user_id.strip(),
+        "iat": issued_at,
         "exp": issued_at + int(ttl_seconds),
         "jti": uuid.uuid4().hex,
     }
@@ -76,6 +78,7 @@ def create_im_user_token(
         "kind": "im_user",
         "platform": _normalize_platform(platform),
         "user_id": user_id.strip(),
+        "iat": issued_at,
         "exp": issued_at + int(ttl_seconds),
         "jti": uuid.uuid4().hex,
     }
@@ -107,6 +110,31 @@ def require_admin_context(
     return {"platform": normalized_platform, "user_id": normalized_user_id, "role": "admin"}
 
 
+def require_console_context(
+    *,
+    platform: str,
+    user_id: str,
+    admin_token: str,
+    now: float | None = None,
+) -> dict[str, Any]:
+    normalized_platform = _normalize_platform(platform)
+    normalized_user_id = user_id.strip()
+    if not normalized_user_id:
+        raise HTTPException(401, "缺少企业 IM 用户身份")
+    if not _verify_admin_console_token(
+        platform=normalized_platform,
+        user_id=normalized_user_id,
+        token=admin_token,
+        now=now,
+    ):
+        raise HTTPException(401, "后台访问令牌无效或已过期")
+    if is_platform_admin(normalized_platform, normalized_user_id):
+        return {"platform": normalized_platform, "user_id": normalized_user_id, "role": "admin"}
+    if is_hr_specialist(normalized_platform, normalized_user_id):
+        return {"platform": normalized_platform, "user_id": normalized_user_id, "role": "hr_specialist"}
+    raise HTTPException(403, "当前企业 IM 用户不是平台管理员或人事专员")
+
+
 def require_admin_context_from_request(request: Request) -> dict[str, Any]:
     platform = (
         request.query_params.get("platform")
@@ -125,6 +153,26 @@ def require_admin_context_from_request(request: Request) -> dict[str, Any]:
         or ""
     )
     return require_admin_context(platform=platform, user_id=user_id, admin_token=admin_token)
+
+
+def require_console_context_from_request(request: Request) -> dict[str, Any]:
+    platform = (
+        request.query_params.get("platform")
+        or request.headers.get("X-Platform")
+        or "wecom"
+    )
+    user_id = (
+        request.query_params.get("user_id")
+        or request.headers.get("X-User-ID")
+        or request.headers.get("X-IM-User-ID")
+        or ""
+    )
+    admin_token = (
+        request.query_params.get("admin_token")
+        or request.headers.get("X-Admin-Token")
+        or ""
+    )
+    return require_console_context(platform=platform, user_id=user_id, admin_token=admin_token)
 
 
 def require_user_context_from_request(request: Request) -> dict[str, Any]:
@@ -177,6 +225,19 @@ def is_platform_admin(platform: str, user_id: str) -> bool:
         return False
 
 
+def is_hr_specialist(platform: str, user_id: str) -> bool:
+    normalized_platform = _normalize_platform(platform)
+    normalized_user_id = user_id.strip()
+    if not normalized_user_id:
+        return False
+    try:
+        from src.platform.hr_specialist_service import is_hr_specialist as check_hr_specialist
+
+        return check_hr_specialist(normalized_platform, normalized_user_id)
+    except Exception:
+        return False
+
+
 def _verify_admin_console_token(
     *,
     platform: str,
@@ -214,8 +275,9 @@ def decode_and_refresh_admin_token(
     *,
     token: str,
     ttl_seconds: int = DEFAULT_ADMIN_SESSION_TTL_SECONDS,
+    now: float | None = None,
 ) -> str:
-    """Given a possibly-expired token (HMAC still valid), return a fresh token."""
+    """Given a recently expired token (HMAC still valid), return a fresh token."""
     secret = _admin_secret()
     if not secret or not token or "." not in token:
         raise HTTPException(401, "管理员访问令牌无效")
@@ -230,11 +292,18 @@ def decode_and_refresh_admin_token(
     user_id = str(payload.get("user_id", ""))
     if not platform or not user_id:
         raise HTTPException(401, "管理员访问令牌内容无效")
+    try:
+        exp = int(payload.get("exp", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(401, "管理员访问令牌内容无效")
+    current = int(time.time() if now is None else now)
+    if current > exp + _admin_refresh_grace_seconds():
+        raise HTTPException(401, "管理员访问令牌已过期，请从 Bot 重新打开管理员控制台")
     jti = payload.get("jti", "")
-    _cleanup_revoked_jtis()
+    _cleanup_revoked_jtis(now)
     if jti and jti in _revoked_jtis:
         raise HTTPException(401, "管理员访问令牌已失效")
-    return create_admin_console_token(platform=platform, user_id=user_id, ttl_seconds=ttl_seconds)
+    return create_admin_console_token(platform=platform, user_id=user_id, ttl_seconds=ttl_seconds, now=now)
 
 
 def _verify_im_user_token(*, platform: str, user_id: str, token: str, now: float | None = None) -> bool:
@@ -295,6 +364,17 @@ def _admin_secret_from_env_file() -> str:
         except OSError:
             continue
     return ""
+
+
+def _admin_refresh_grace_seconds() -> int:
+    raw = os.environ.get("ANT_COLONY_ADMIN_REFRESH_GRACE_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_ADMIN_REFRESH_GRACE_SECONDS
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return DEFAULT_ADMIN_REFRESH_GRACE_SECONDS
+    return max(0, min(parsed, 7 * 86400))
 
 
 def _normalize_platform(platform: str) -> str:

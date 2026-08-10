@@ -82,6 +82,10 @@ async def validate_wecom_configuration(values: dict[str, str]) -> dict[str, Any]
     }
 
 
+def wecom_configuration_ok(report: dict[str, Any]) -> bool:
+    return bool(report.get("corp_api", {}).get("ok") and report.get("bot_ws", {}).get("ok"))
+
+
 async def _async_main() -> int:
     values = dict(load_env_file(DEFAULT_ENV_FILE))
     for key in (
@@ -95,7 +99,7 @@ async def _async_main() -> int:
             values[key] = os.environ[key]
     report = await validate_wecom_configuration(values)
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0
+    return 0 if wecom_configuration_ok(report) else 1
 
 
 def main() -> int:

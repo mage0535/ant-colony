@@ -51,7 +51,7 @@ class ContractsSmokeTest(unittest.TestCase):
         agent = PersonalAgent("u1", engine)
         context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
 
-        response = agent.process_message("u1", "hello", context)
+        response = agent.process_message("u1", "please analyze this request", context)
 
         self.assertTrue(response.text.startswith("[LLM"))
 

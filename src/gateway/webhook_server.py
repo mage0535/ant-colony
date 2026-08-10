@@ -63,6 +63,11 @@ class WecomWebhookHandler(BaseHTTPRequestHandler):
             self._handle_create_task(payload)
             return
 
+        fast_reply = _fast_direct_reply_for_payload(payload)
+        if fast_reply:
+            self._respond(200, fast_reply)
+            return
+
         if self.gateway is None:
             self._respond(503, {"error": "gateway not initialized"})
             return
@@ -77,7 +82,7 @@ class WecomWebhookHandler(BaseHTTPRequestHandler):
             if self.sqlite_repo is not None:
                 from_user = payload.get("from") or payload.get("from_user_id", "unknown")
                 raw_content = payload.get("content") or payload.get("text") or payload.get("text_content", "")
-                self.sqlite_repo.save_message(result.target_id, str(from_user), str(raw_content))
+                _save_message_best_effort(self.sqlite_repo, result.target_id, str(from_user), str(raw_content))
 
             if result.route_kind == "space_batch" and self.sqlite_repo is not None:
                 space_id = result.target_id
@@ -120,7 +125,11 @@ class WecomWebhookHandler(BaseHTTPRequestHandler):
             self._respond(200, body)
         except Exception as e:
             logger.exception("webhook handler error")
-            self._respond(500, {"error": str(e)})
+            fallback = _fallback_reply_for_payload(payload)
+            if fallback:
+                self._respond(200, fallback)
+            else:
+                self._respond(500, {"error": str(e)})
 
     def _confirm_pending(self, space_id: str) -> list[dict[str, Any]]:
         if self.sqlite_repo is None or self.task_service is None:
@@ -426,15 +435,128 @@ class WecomWebhookHandler(BaseHTTPRequestHandler):
 
     def _respond(self, code: int, data: dict[str, Any]) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            logger.warning("client disconnected before webhook response could be written")
 
     def log_message(self, fmt: str, *args: Any) -> None:
         WecomWebhookHandler.request_count += 1
         logger.info("webhook: %s", fmt % args)
+
+
+def _save_message_best_effort(repo: SqliteTaskRepo, space_id: str, from_user: str, content: str) -> bool:
+    try:
+        repo.save_message(space_id, from_user, content)
+        return True
+    except Exception:
+        logger.exception("failed to persist inbound message; continuing response")
+        return False
+
+
+def _fast_direct_reply_for_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    user_id = str(payload.get("from_user_id") or payload.get("from") or "").strip()
+    content = str(payload.get("content") or payload.get("text") or payload.get("text_content") or "")
+    is_direct = bool(payload.get("is_direct", True))
+    if not user_id or not is_direct:
+        return None
+    normalized = "".join(content.strip().lower().split())
+    if not normalized:
+        return None
+    reply = ""
+    if normalized in {"\u4f60\u597d", "\u60a8\u597d", "\u5728\u5417", "\u5728\u4e0d\u5728", "hello", "hi", "hey"}:
+        reply = (
+            "\u4f60\u597d\uff0c\u6211\u5728\u3002\u4f60\u53ef\u4ee5\u76f4\u63a5\u544a\u8bc9\u6211\u8981\u5904\u7406\u7684\u4e8b\u60c5\uff0c"
+            "\u4f8b\u5982\u67e5\u8d44\u6599\u3001\u67e5\u5ba1\u6279\u3001\u67e5\u65e5\u7a0b\u3001\u6c47\u603b\u90ae\u4ef6\u3001"
+            "\u6253\u5f00\u77e5\u8bc6\u5e93\u3001\u751f\u6210\u6587\u6863\u6216\u8d77\u8349\u56de\u590d\u3002"
+        )
+    elif _contains_any(normalized, ("\u56de\u90ae", "\u56de\u590d\u90ae\u4ef6", "\u5e2e\u6211\u56de\u90ae", "\u4ee3\u56de\u90ae")):
+        reply = (
+            "\u53ef\u4ee5\u5e2e\u4f60\u8d77\u8349\u56de\u90ae\u5185\u5bb9\uff0c\u4f46\u4e0d\u4f1a\u66ff\u4f60\u76f4\u63a5\u53d1\u9001\u90ae\u4ef6\u6216\u4ee3\u4f60\u56de\u590d\u90ae\u4ef6\u3002\n"
+            "\u4f60\u53ef\u4ee5\u628a\u6536\u5230\u7684\u90ae\u4ef6\u5185\u5bb9\u8f6c\u53d1\u7ed9\u6211\uff0c\u6216\u8005\u8bf4\u201c\u6839\u636e\u6700\u8fd1\u90ae\u4ef6\u5e2e\u6211\u8d77\u8349\u56de\u590d\u201d\uff0c"
+            "\u6211\u4f1a\u751f\u6210\u4e00\u6bb5\u53ef\u590d\u5236\u7684\u56de\u90ae\u8349\u7a3f\u3002"
+        )
+    elif _contains_any(normalized, ("\u77e5\u8bc6\u5e93\u540e\u53f0", "\u6253\u5f00\u77e5\u8bc6\u5e93", "\u77e5\u8bc6\u5e93\u7ba1\u7406", "\u6211\u7684\u77e5\u8bc6\u5e93")):
+        reply = _build_fast_knowledge_reply(payload, user_id)
+    elif _contains_any(normalized, ("\u7ba1\u7406\u540e\u53f0", "\u7ba1\u7406\u5458\u63a7\u5236\u53f0", "\u7ba1\u7406\u5458\u540e\u53f0", "\u8fdb\u5165\u540e\u53f0", "\u6253\u5f00\u540e\u53f0")):
+        reply = _build_fast_admin_reply(payload, user_id)
+    if not reply:
+        return None
+    return {
+        "route_kind": "personal",
+        "target_id": user_id,
+        "reply": reply,
+        "fast_reply": True,
+    }
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any("".join(needle.lower().split()) in text for needle in needles)
+
+
+def _build_fast_knowledge_reply(payload: dict[str, Any], user_id: str) -> str:
+    from src.gateway.entry_links import _knowledge_url, _normalize_platform
+
+    platform = _normalize_platform(str(payload.get("provider") or payload.get("platform") or "wecom"))
+    try:
+        url = _knowledge_url(platform, user_id)
+    except Exception:
+        return (
+            "\u77e5\u8bc6\u5e93\u5165\u53e3\u6682\u65f6\u65e0\u6cd5\u751f\u6210\uff1a\u540e\u53f0\u8fd8\u6ca1\u6709\u914d\u7f6e\u5165\u53e3\u7b7e\u540d\u5bc6\u94a5\u3002\n"
+            "\u8bf7\u8054\u7cfb IT \u4eba\u5458\u68c0\u67e5 ANT_COLONY_ADMIN_SESSION_SECRET \u6216 ANT_COLONY_AUTH_TOKEN\u3002"
+        )
+    return (
+        "\u77e5\u8bc6\u5e93\u7ba1\u7406\u5165\u53e3\uff1a\n"
+        f"{url}\n\n"
+        "\u8fdb\u5165\u540e\u53ef\u4ee5\u67e5\u770b\u3001\u4e0a\u4f20\u3001\u8fc1\u79fb\u3001\u5220\u9664\u4f60\u6743\u9650\u8303\u56f4\u5185\u7684\u77e5\u8bc6\u6587\u6863\u3002"
+    )
+
+
+def _build_fast_admin_reply(payload: dict[str, Any], user_id: str) -> str:
+    from src.gateway.entry_links import _admin_url, _normalize_platform
+    from src.web import admin_auth
+
+    platform = _normalize_platform(str(payload.get("provider") or payload.get("platform") or "wecom"))
+    try:
+        is_admin = admin_auth.is_platform_admin(platform, user_id)
+    except Exception:
+        is_admin = False
+    if not is_admin:
+        return (
+            "\u4f60\u5f53\u524d\u6ca1\u6709\u7ba1\u7406\u5458\u6743\u9650\uff0c\u4e0d\u80fd\u6253\u5f00\u7ba1\u7406\u5458\u63a7\u5236\u53f0\u3002\n"
+            "\u5982\u679c\u53ea\u662f\u8981\u7ba1\u7406\u81ea\u5df1\u6743\u9650\u8303\u56f4\u5185\u7684\u77e5\u8bc6\u5e93\uff0c\u53ef\u4ee5\u53d1\u9001\u201c\u6253\u5f00\u77e5\u8bc6\u5e93\u201d\u3002"
+        )
+    try:
+        url = _admin_url(platform, user_id)
+    except Exception:
+        return (
+            "\u7ba1\u7406\u5458\u63a7\u5236\u53f0\u5165\u53e3\u6682\u65f6\u65e0\u6cd5\u751f\u6210\uff1a\u540e\u53f0\u8fd8\u6ca1\u6709\u914d\u7f6e\u5165\u53e3\u7b7e\u540d\u5bc6\u94a5\u3002\n"
+            "\u8bf7\u68c0\u67e5 ANT_COLONY_ADMIN_SESSION_SECRET \u6216 ANT_COLONY_AUTH_TOKEN\u3002"
+        )
+    return (
+        "\u7ba1\u7406\u5458\u63a7\u5236\u53f0\u5165\u53e3\uff1a\n"
+        f"{url}\n\n"
+        "\u8fdb\u5165\u540e\u53ef\u4ee5\u7ba1\u7406\u5458\u5de5 AI \u52a9\u624b\u3001\u77e5\u8bc6\u5e93\u3001\u90ae\u7bb1\u3001\u6a21\u578b\u3001\u7387\u654f\u5bf9\u63a5\u548c\u5de5\u5177\u96c6\u6210\u72b6\u6001\u3002"
+    )
+
+
+def _fallback_reply_for_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    user_id = str(payload.get("from_user_id") or payload.get("from") or "").strip()
+    content = str(payload.get("content") or payload.get("text") or payload.get("text_content") or "")
+    is_direct = bool(payload.get("is_direct", True))
+    if not user_id or not is_direct:
+        return None
+    return {
+        "route_kind": "personal",
+        "target_id": user_id,
+        "reply": "刚才处理这条消息时系统遇到异常，但消息已经到达服务器。请稍后再发一次，或换一种更具体的说法重试。",
+        "fallback": True,
+        "content_preview": content[:80],
+    }
 
 
 def serve(host: str = "0.0.0.0", port: int = 18090, profile_id: str = "server-deepseek") -> None:

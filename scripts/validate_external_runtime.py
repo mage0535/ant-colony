@@ -28,6 +28,9 @@ ENV_FILES = [
     Path("data/openvort_runtime.env"),
 ]
 
+REQUIRED_RUNTIME_PORTS = tuple(SERVICE_PORTS)
+REQUIRED_RUNTIME_PLATFORMS = ("wecom",)
+
 
 def collect_runtime_validation_report() -> dict[str, Any]:
     env_file_values = _load_env_files()
@@ -38,6 +41,18 @@ def collect_runtime_validation_report() -> dict[str, Any]:
         },
         "ports": {name: _probe_port(port) for name, port in SERVICE_PORTS.items()},
     }
+
+
+def runtime_validation_ok(report: dict[str, Any]) -> bool:
+    platforms = report.get("platforms", {})
+    ports = report.get("ports", {})
+    required_platforms_ready = all(
+        bool(platforms.get(name, {}).get("configured")) for name in REQUIRED_RUNTIME_PLATFORMS
+    )
+    required_ports_ready = all(
+        bool(ports.get(name, {}).get("reachable")) for name in REQUIRED_RUNTIME_PORTS
+    )
+    return required_platforms_ready and required_ports_ready
 
 
 def _platform_status(name: str, keys: tuple[str, ...], env_file_values: dict[str, str]) -> dict[str, Any]:
@@ -83,8 +98,11 @@ def _probe_port(port: int) -> dict[str, Any]:
 
 
 def main() -> int:
-    print(json.dumps(collect_runtime_validation_report(), ensure_ascii=False, indent=2))
-    return 0
+    report = collect_runtime_validation_report()
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if os.environ.get("ANT_COLONY_VALIDATE_EXTERNAL_ALLOW_DEGRADED", "").strip().lower() in {"1", "true", "yes"}:
+        return 0
+    return 0 if runtime_validation_ok(report) else 1
 
 
 if __name__ == "__main__":

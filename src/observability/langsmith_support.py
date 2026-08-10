@@ -31,19 +31,24 @@ def configure_langsmith_env() -> dict[str, str]:
     values = _load_env_file()
     for key, value in values.items():
         os.environ.setdefault(key, value)
-    os.environ.setdefault("LANGSMITH_TRACING", "true")
+    if not _is_true(os.environ.get("LANGSMITH_PUBLISH", "")):
+        os.environ["LANGSMITH_TRACING"] = "false"
+        os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    else:
+        os.environ.setdefault("LANGSMITH_TRACING", "false")
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", os.environ["LANGSMITH_TRACING"])
     os.environ.setdefault("LANGSMITH_PROJECT", "ant-colony")
     return values
 
 
 def langsmith_enabled() -> bool:
     configure_langsmith_env()
-    return bool(os.environ.get("LANGSMITH_API_KEY")) and os.environ.get("LANGSMITH_TRACING", "").lower() == "true"
+    return bool(os.environ.get("LANGSMITH_API_KEY")) and _is_true(os.environ.get("LANGSMITH_TRACING", ""))
 
 
 def get_langsmith_client():
     configure_langsmith_env()
-    if not langsmith_enabled():
+    if not os.environ.get("LANGSMITH_API_KEY"):
         return None
     try:
         from langsmith import Client
@@ -108,3 +113,11 @@ def wrap_anthropic_client(client):
         return wrap_anthropic(client)
     except Exception:
         return client
+
+
+def _is_true(value: str) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_false(value: str) -> bool:
+    return str(value or "").strip().lower() in {"0", "false", "no", "off"}

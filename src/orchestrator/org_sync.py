@@ -87,12 +87,12 @@ class OrgSynchronizer:
         except Exception:
             return []
 
-    def sync_all(self) -> dict[str, Any]:
+    def sync_all(self, *, sync_graph: bool = True) -> dict[str, Any]:
         from src.platform.org_graph import OrgGraphService
 
         try:
             graph = OrgGraphService()
-            graph_summary = graph.sync_wecom_directory()
+            graph_summary = graph.sync_wecom_directory() if sync_graph else {}
             depts = self.fetch_departments()
             users = self.fetch_users()
         except Exception as e:

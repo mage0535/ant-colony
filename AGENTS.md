@@ -162,12 +162,18 @@ src/
 
 1. `./README.md`
 2. `./AGENTS.md`
-3. `./data/heartbeat-state.json`（如果存在；不存在不算异常）
-4. `./docs/handoff.md`
-5. `./docs/decisions.md`
-6. `./docs/architecture.md`
-7. `./docs/m1-plan.md`
-8. `./docs/user-manual.md`
+3. `./docs/current-handoff-summary.md`
+4. `./data/heartbeat-state.json`（如果存在；不存在不算异常）
+5. `./docs/handoff.md` 最新部分
+6. `./docs/decisions.md`
+7. `./docs/architecture.md`
+8. `./docs/m1-plan.md`
+9. `./docs/user-manual.md`
+
+说明：
+
+- `docs/current-handoff-summary.md` 是干净交接摘要，应作为新同事第一阅读入口。
+- `docs/handoff.md` 是完整连续开发流水，包含历史长记录和部分不可逆乱码段；默认只读最新部分，追溯历史原因时再深入阅读。
 
 ### 会话内自循环
 

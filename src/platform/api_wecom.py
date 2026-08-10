@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import urllib.request
 import urllib.error
-from datetime import datetime
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from src.platform.capability_audit import CapabilityInvocationContext
@@ -20,6 +20,7 @@ _corp_id: str = ""
 _agent_id: int = 0
 _app_secret: str = ""
 _token_cache: dict[str, tuple[str, float]] = {}
+_token_lock = threading.Lock()
 
 
 def _init_creds():
@@ -49,16 +50,18 @@ def _get_token(secret: str | None = None) -> str:
     if not _corp_id:
         _init_creds()
     resolved_secret = secret or _app_secret
-    token, expires = _token_cache.get(resolved_secret, ("", 0))
-    if token and time.time() < expires - 60:
-        return token
+    with _token_lock:
+        token, expires = _token_cache.get(resolved_secret, ("", 0))
+        if token and time.time() < expires - 60:
+            return token
     url = f"{WECOM_API}/gettoken?corpid={_corp_id}&corpsecret={resolved_secret}"
     with urllib.request.urlopen(urllib.request.Request(url), timeout=10) as resp:
         data = json.loads(resp.read())
     if data.get("errcode", 0) != 0:
         raise RuntimeError(f"WeCom token error: {data.get('errmsg')}")
-    _token_cache[resolved_secret] = (data["access_token"], time.time() + data.get("expires_in", 7200))
-    return _token_cache[resolved_secret][0]
+    with _token_lock:
+        _token_cache[resolved_secret] = (data["access_token"], time.time() + data.get("expires_in", 7200))
+        return _token_cache[resolved_secret][0]
 
 
 def _post(path: str, body: dict[str, Any], *, secret: str | None = None) -> dict[str, Any]:
@@ -70,7 +73,7 @@ def _post(path: str, body: dict[str, Any], *, secret: str | None = None) -> dict
     with urllib.request.urlopen(req, timeout=15) as resp:
         result = json.loads(resp.read())
     if result.get("errcode", 0) != 0:
-        raise RuntimeError(f"WeCom API error ({path}): {result.get('errmsg')}")
+        raise RuntimeError(f"WeCom API error ({path}): [{result.get('errcode', 0)}] {result.get('errmsg')}")
     return result
 
 
@@ -109,11 +112,12 @@ def _get(path: str, params: str = "", *, secret: str | None = None) -> dict[str,
     with urllib.request.urlopen(urllib.request.Request(url), timeout=15) as resp:
         result = json.loads(resp.read())
     if result.get("errcode", 0) != 0:
-        raise RuntimeError(f"WeCom API error ({path}): {result.get('errmsg')}")
+        raise RuntimeError(f"WeCom API error ({path}): [{result.get('errcode', 0)}] {result.get('errmsg')}")
     return result
 
 
 class WeComClient:
+    last_process_event_error: str = ""
 
     def search_user(self, query: str) -> str | None:
         try:
@@ -172,98 +176,71 @@ class WeComClient:
         del capability_context
         plan = plan_enterprise_query(query)
         room_name = plan.entities[0] if plan.entities else "会议室"
-        # Same-day time range (API does not support cross-day queries)
-        now = datetime.now()
-        start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
-        end = int(now.replace(hour=23, minute=59, second=59, microsecond=0).timestamp())
-        sections: list[str] = []
-        errors: list[str] = []
-        payloads: list[dict[str, Any]] = []
-
-        secret = _resolve_domain_secret("meeting")
 
         # Step 1: list all meeting rooms
+        secret = _resolve_domain_secret("meeting")
         room_list_resp = _post_optional("oa/meetingroom/list", {
             "city": "", "building": "", "floor": "",
         }, secret=secret)
+        room_list_error = ""
+        if not room_list_resp:
+            room_list_resp, room_list_error = _post_optional_diagnostic(
+                "oa/meetingroom/list",
+                {"city": "", "building": "", "floor": ""},
+                secret=secret,
+            )
         room_list: list[dict[str, Any]] = []
-        room_map: dict[str, dict[str, Any]] = {}
         if room_list_resp:
             room_list = room_list_resp.get("meetingroom_list", [])
-            for r in room_list:
-                name = r.get("name", "")
-                if name:
-                    room_map[name] = r
-        if room_list_resp:
-            payloads.append(room_list_resp)
 
-        # Step 2: match user's spoken name to real room
-        matched_rooms: list[str] = []
-        if room_name and room_name != "会议室":
-            if room_name in room_map:
-                matched_rooms.append(room_name)
-            else:
-                numbers = _extract_numbers(room_name)
-                for rn in room_map:
-                    if any(n in rn for n in numbers):
-                        matched_rooms.append(rn)
-                if not matched_rooms:
-                    matched_rooms = list(room_map.keys())[:3]
+        if not room_list:
+            if room_list_error:
+                return f"暂时无法读取会议室真实占用数据：{room_list_error}"
+            return f"没有查到{room_name or '该会议室'}的会议室列表。"
 
-        # Step 3: get same-day booking info using meetingroom_id
-        for query_room in (matched_rooms or list(room_map.keys()) or [room_name]):
-            room_info = room_map.get(query_room, {})
-            room_id = room_info.get("meetingroom_id")
-            if room_id is not None:
-                info, err = _post_optional_diagnostic("oa/meetingroom/get_booking_info", {
-                    "meetingroom_id": room_id,
-                    "start_time": start,
-                    "end_time": end,
-                }, secret=secret)
-                if info:
-                    payloads.append(info)
-                    text = _format_room_payload(info, query_room)
-                    if text:
-                        sections.append(text)
-                elif err:
-                    errors.append(err)
-
-        # Step 4: fallback meeting API
-        meeting_resp, meeting_err = _post_optional_diagnostic("meeting/list", {
-            "begin_time": start, "end_time": end, "limit": 50,
-        }, secret=secret)
-        if meeting_resp:
-            payloads.append(meeting_resp)
-        elif meeting_err:
-            errors.append(meeting_err)
-
-        if plan.operation == "availability" and payloads:
-            availability = _format_room_availability(payloads)
+        booking_resp, booking_error = _post_optional_diagnostic(
+            "oa/meetingroom/bookinfo",
+            {"days": max(int(days or 1), 1)},
+            secret=secret,
+        )
+        if booking_resp:
+            availability = _format_room_availability([room_list_resp, booking_resp])
             if availability:
                 return availability
 
-        if sections:
-            return "\n".join(dict.fromkeys(sections))
+        # Step 2: build room approval map from approval API (fallback occupancy source)
+        room_bookings, errors = _build_room_approval_map(room_list, filter_today=bool(plan.start_date))
+        if booking_error:
+            errors.append(booking_error)
+        occupied_rooms = set(room_bookings.keys())
 
-        # Step 5: room list fallback
-        if room_list:
-            lines = [f"{r.get('name', '')} (容纳{r.get('capacity', '?')}人)" for r in room_list]
-            first_room = lines[0].split("(")[0].strip() if lines else "会议室"
-            return (
-                f"当前企业共 {len(room_list)} 间会议室：\n"
-                + "\n".join(lines)
-                + f"\n\n暂未获取到今日占用详情。可使用具体会议室名称（如\"{first_room}\"）查询占用情况。"
-            )
+        # Step 3: match user's query to real room
+        matched_rooms: list[str] = []
+        if room_name and room_name != "会议室":
+            if room_name in {r.get("name", "") for r in room_list}:
+                matched_rooms.append(room_name)
+            else:
+                numbers = _extract_numbers(room_name)
+                for r in room_list:
+                    rn = r.get("name", "")
+                    if any(n in rn for n in numbers) or _match_room_name_approval(rn, room_name):
+                        matched_rooms.append(rn)
+                if not matched_rooms:
+                    # Try matching original query against room names
+                    for r in room_list:
+                        rn = r.get("name", "")
+                        if room_name in rn or any(c in rn for c in room_name if c.isdigit()):
+                            matched_rooms.append(rn)
+                if not matched_rooms:
+                    matched_rooms = [r.get("name", "") for r in room_list[:3] if r.get("name")]
 
-        if errors:
-            if any("48002" in error or "forbidden" in error.lower() for error in errors):
-                return (
-                    f"暂时无法读取{room_name or '该会议室'}的真实占用数据："
-                    "当前企业微信应用缺少会议室或会议数据接口权限（错误码 48002）。"
-                    "请由企业管理员为承载 AI 助手的自建应用补充会议室、会议和日程只读权限后重试。"
-                )
-            return f"暂时无法读取{room_name or '该会议室'}的真实占用数据。"
-        return f"没有查到{room_name or '该会议室'}在当前查询时段的真实占用记录。"
+        # Step 4: format result
+        if plan.operation == "availability":
+            return _format_room_availability_from_approvals(room_list, room_bookings, errors)
+        elif matched_rooms:
+            return _format_specific_room_from_approvals(matched_rooms, room_bookings, errors)
+        else:
+            return _format_room_availability_from_approvals(room_list, room_bookings, errors)
 
     def create_event(self, summary: str, start_at: str, end_at: str) -> str | None:
         try:
@@ -288,10 +265,11 @@ class WeComClient:
             raise
 
     def search_docs(self, query: str) -> str | None:
+        """Search WeCom online documents. Fallback gracefully since the doc/search endpoint is deprecated."""
         try:
             resp = _post(
-                "doc/search",
-                {"query": query, "offset": 0, "limit": 10},
+                "wedoc/search",
+                {"query": query, "limit": 10},
                 secret=_resolve_domain_secret("docs"),
             )
             results = []
@@ -312,7 +290,7 @@ class WeComClient:
             raise
         except Exception as e:
             logger.warning("WeCom search_docs failed: %s", e)
-            raise
+            return None
 
     def create_doc(self, title: str, content: str = "") -> str | None:
         try:
@@ -348,6 +326,10 @@ class WeComClient:
                 meetings.append(f"{start_str} {title} [{status_str}]")
             return "\n".join(meetings[:10]) if meetings else None
         except Exception as e:
+            err_msg = str(e)
+            if "730007" in err_msg:
+                logger.info("WeCom meeting module requires Professional edition (730007)")
+                return None
             logger.warning("WeCom list_meetings failed: %s", e)
             raise
 
@@ -480,14 +462,81 @@ class WeComClient:
             })
         return details, ""
 
+    def list_process_events(
+        self,
+        capability_context: CapabilityInvocationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return structured approval/process events for automatic notifications."""
+        self.last_process_event_error = ""
+        now = int(time.time())
+        start = now - 14 * 86400
+        end = now + 7 * 86400
+        approval_secret = _resolve_domain_secret("approval")
+        response, error = _post_optional_diagnostic(
+            "oa/getapprovalinfo",
+            {"starttime": start, "endtime": end, "cursor": 0, "size": 100},
+            secret=approval_secret,
+        )
+        if not response:
+            if error:
+                self.last_process_event_error = error
+                logger.info("WeCom process event list unavailable: %s", error)
+            return []
+        user_id = capability_context.user_id if capability_context else ""
+        can_view_all = _is_approval_admin(user_id)
+        events: list[dict[str, Any]] = []
+        user_ids_to_resolve: set[str] = set()
+        raw_events: list[dict[str, Any]] = []
+        for sp_no in response.get("sp_no_list", [])[:100]:
+            detail = _post_optional("oa/getapprovaldetail", {"sp_no": sp_no}, secret=approval_secret)
+            info = detail.get("info", {}) if isinstance(detail, dict) else {}
+            if not info:
+                continue
+            participants = _approval_participants(info)
+            if user_id and not can_view_all and user_id not in participants:
+                continue
+            applyer = info.get("applyer") or {}
+            applicant_uid = str(applyer.get("userid") or "")
+            handlers = _approval_current_handler_userids(info)
+            user_ids_to_resolve.update(uid for uid in [applicant_uid, *handlers] if uid)
+            raw_events.append(
+                {
+                    "source": "approval",
+                    "item_id": str(info.get("sp_no") or sp_no),
+                    "title": str(info.get("sp_name") or info.get("template_name") or "未命名审批"),
+                    "status": _approval_status_label(info.get("sp_status")),
+                    "current_node": _approval_current_node(info),
+                    "applicant_user_id": applicant_uid,
+                    "applicant_name": applicant_uid,
+                    "recipient_user_ids": handlers,
+                    "content": _approval_content_summary(info),
+                    "event_time": _format_timestamp(info.get("apply_time"), "%Y-%m-%d %H:%M"),
+                }
+            )
+        name_map = _batch_resolve_user_names(user_ids_to_resolve)
+        for event in raw_events:
+            applicant_uid = str(event.get("applicant_user_id") or "")
+            event["applicant_name"] = name_map.get(applicant_uid, applicant_uid)
+            if event.get("recipient_user_ids"):
+                event["current_node"] = "、".join(
+                    name_map.get(str(uid), str(uid))
+                    for uid in event.get("recipient_user_ids", [])
+                    if str(uid)
+                )
+            events.append(event)
+        return events
+
     def create_meeting(self, title: str, start_at: str, end_at: str, attendees: list[str] | None = None) -> str | None:
         try:
             start_dt = datetime.strptime(start_at, "%Y-%m-%d %H:%M")
             end_dt = datetime.strptime(end_at, "%Y-%m-%d %H:%M")
+            start_ts = int(start_dt.timestamp())
+            end_ts = int(end_dt.timestamp())
             body = {
                 "title": title,
-                "start_time": int(start_dt.timestamp()),
-                "end_time": int(end_dt.timestamp()),
+                "start_time": start_ts,
+                "end_time": end_ts,
+                "meeting_duration": max(end_ts - start_ts, 60),
                 "attendees": [{"userid": uid} for uid in (attendees or [])],
             }
             resp = _post("meeting/create", body, secret=_resolve_domain_secret("meeting"))
@@ -596,7 +645,8 @@ class WeComClient:
                     name = e.get("name", e["user_id"])
                     admins.append(f"{name} (企业管理员)")
                 return "\n".join(admins) if admins else None
-        except Exception:
+        except Exception as e:
+            logger.info("WeCom get_admin_users failed: %s", e)
             pass
         return None
 
@@ -636,7 +686,8 @@ class WeComClient:
         try:
             from src.platform.admin_registry import get_admin_ids
             ids.update(get_admin_ids("wecom"))
-        except Exception:
+        except Exception as e:
+            logger.info("WeCom get_admin_userids failed: %s", e)
             pass
         return ids
 
@@ -667,6 +718,204 @@ def _extract_room_name(query: str) -> str:
     return "会议室" if "会议室" in query else query.strip()
 
 
+def _build_room_approval_map(
+    room_list: list[dict[str, Any]],
+    filter_today: bool = False,
+) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+    """Return {room_name: [approval details]} from approval API, and error list.
+    Only rooms with matching approval records appear as keys.
+    """
+    if not room_list:
+        return {}, []
+    room_bookings: dict[str, list[dict[str, Any]]] = {}
+    errors: list[str] = []
+    # Build room name set for matching
+    room_names: set[str] = {r.get("name", "") for r in room_list if r.get("name")}
+    if not room_names:
+        return {}, []
+    # Query approval API
+    now = int(time.time())
+    today_start = int(datetime.combine(date.today(), datetime.min.time()).timestamp())
+    try:
+        approval_resp = _post_optional("oa/getapprovalinfo", {
+            "starttime": today_start - 7 * 86400,
+            "endtime": now,
+            "offset": 0,
+            "size": 100,
+        }, secret=_resolve_domain_secret("approval"))
+        if not approval_resp or not approval_resp.get("sp_no_list"):
+            return {}, errors
+        for sp_no in approval_resp.get("sp_no_list", [])[:50]:
+            try:
+                detail = _post_optional("oa/getapprovaldetail", {"sp_no": sp_no},
+                                        secret=_resolve_domain_secret("approval"))
+                if not detail:
+                    continue
+                info = detail.get("info", {}) or {}
+                apply_data = info.get("apply_data", {}) or {}
+                sp_status = info.get("sp_status", 0)
+                if sp_status not in {1, 2}:
+                    continue  # Only pending or approved
+                applicant_userid = str((info.get("applyer") or {}).get("userid", "") or "")
+                if not applicant_userid:
+                    continue
+                # Extract room name from Selector options
+                matched_room = ""
+                meeting_time = ""
+                meeting_subject = ""
+                for item in (apply_data.get("contents") or apply_data.get("content") or []) or []:
+                    if isinstance(item, dict):
+                        ctrl = item.get("control", "")
+                        val = item.get("value", {}) or {}
+                        if ctrl == "Selector":
+                            options = (val.get("selector") or {}).get("options", []) or []
+                            for opt in options:
+                                opt_text = ""
+                                for tv in (opt.get("value") or []):
+                                    if isinstance(tv, dict):
+                                        opt_text = tv.get("text", "")
+                                        if opt_text:
+                                            break
+                                for rn in room_names:
+                                    if rn in opt_text or _match_room_name_approval(opt_text, rn):
+                                        matched_room = rn
+                                        break
+                                if matched_room:
+                                    break
+                        elif ctrl in ("Text", "Textarea"):
+                            text_val = val.get("text", "") or ""
+                            if text_val and ("日" in text_val or ":" in text_val):
+                                meeting_time = text_val
+                            elif text_val and not meeting_subject:
+                                meeting_subject = text_val
+                if not matched_room:
+                    continue
+                # If filtering for today, check meeting date
+                if filter_today and meeting_time:
+                    import re as _re
+                    date_match = _re.search(r"(\d{1,2})月(\d{1,2})日", meeting_time)
+                    if date_match:
+                        m = int(date_match.group(1))
+                        d = int(date_match.group(2))
+                        today = date.today()
+                        if m != today.month or d != today.day:
+                            continue
+                apply_time = info.get("apply_time", 0)
+                time_str = datetime.fromtimestamp(apply_time).strftime("%m-%d %H:%M") if apply_time else ""
+                status_label = {1: "审批中", 2: "已批准"}.get(sp_status, f"状态{sp_status}")
+                room_bookings.setdefault(matched_room, []).append({
+                    "applicant_uid": applicant_userid,
+                    "time": time_str,
+                    "status": status_label,
+                    "subject": meeting_subject,
+                    "meeting_time": meeting_time,
+                })
+            except Exception:
+                continue
+        # Resolve user names
+        if room_bookings:
+            all_uids: set[str] = set()
+            for apps in room_bookings.values():
+                for a in apps:
+                    all_uids.add(a["applicant_uid"])
+            from src.platform.api_wecom import _batch_resolve_user_names
+            name_map = _batch_resolve_user_names(all_uids)
+            for apps in room_bookings.values():
+                for a in apps:
+                    a["applicant_name"] = name_map.get(a["applicant_uid"], a["applicant_uid"])
+    except Exception as e:
+        logger.info("Approval-based room occupancy query failed: %s", e)
+    return room_bookings, errors
+
+
+def _format_room_availability_from_approvals(
+    room_list: list[dict[str, Any]],
+    room_bookings: dict[str, list[dict[str, Any]]],
+    errors: list[str],
+) -> str:
+    """Format availability as a natural summary."""
+    occupied: list[dict[str, Any]] = []
+    available: list[dict[str, Any]] = []
+    for r in room_list:
+        rname = r.get("name", "")
+        bookings = room_bookings.get(rname, [])
+        if bookings:
+            occupied.append({"name": rname, "capacity": r.get("capacity", "?"), "bookings": bookings})
+        else:
+            available.append({"name": rname, "capacity": r.get("capacity", "?")})
+
+    total = len(room_list)
+    if not occupied:
+        avail_names = "、".join(f"{a['name']}（容{a['capacity']}人）" for a in available)
+        result = f"今日共 {total} 间会议室，均无人申请，全部可申请：{avail_names}"
+    else:
+        occ_lines = []
+        for o in occupied:
+            b = o["bookings"][0]
+            line = f"  • {o['name']}（容{o['capacity']}人）：{b['applicant_name']} {b['time']} 申请「{b['subject'] or '会议室预定'}」— {b['status']}"
+            if b.get("meeting_time"):
+                line += f"（{b['meeting_time']}）"
+            occ_lines.append(line)
+        if available:
+            avail_names = "、".join(f"{a['name']}（容{a['capacity']}人）" for a in available)
+            result = (
+                f"今日共 {total} 间会议室，{len(occupied)} 间已被申请：\n"
+                + "\n".join(occ_lines)
+                + f"\n\n其余 {len(available)} 间可申请：{avail_names}"
+            )
+        else:
+            result = (
+                f"今日共 {total} 间会议室，全部已被申请：\n"
+                + "\n".join(occ_lines)
+            )
+    if errors:
+        result += "\n\n（部分接口查询失败：" + "；".join(errors[:2]) + "）"
+    return result
+
+
+def _format_specific_room_from_approvals(
+    matched_rooms: list[str],
+    room_bookings: dict[str, list[dict[str, Any]]],
+    errors: list[str],
+) -> str:
+    """Format specific room query as a natural summary."""
+    lines: list[str] = []
+    for rname in matched_rooms:
+        bookings = room_bookings.get(rname, [])
+        if bookings:
+            for b in bookings:
+                line = f"{rname}：{b['applicant_name']} {b['time']} 申请「{b['subject'] or '会议室预定'}」— {b['status']}"
+                if b.get("meeting_time"):
+                    line += f"（{b['meeting_time']}）"
+                lines.append(line)
+        else:
+            lines.append(f"{rname}：可申请")
+    if not lines:
+        return "没有找到匹配的会议室信息。"
+    if len(lines) == 1:
+        return lines[0]
+    return "\n".join(lines)
+
+
+def _match_room_name_approval(option_text: str, room_name: str) -> bool:
+    """Check if an approval selector option matches a room name."""
+    if not option_text or not room_name:
+        return False
+    ot = option_text.strip().lower()
+    rn = room_name.strip().lower()
+    if rn in ot:
+        return True
+    # Fuzzy: extract all digit groups and match any
+    import re
+    num_pattern = r"\d+"
+    for tn in (ot, rn):
+        rn_nums = set(re.findall(num_pattern, rn))
+        ot_nums = set(re.findall(num_pattern, ot))
+        if rn_nums and ot_nums and rn_nums & ot_nums:
+            return True
+    return False
+
+
 def _format_room_payload(payload: dict[str, Any], room_name: str) -> str:
     lines: list[str] = []
     raw_items: list[Any] = []
@@ -680,11 +929,26 @@ def _format_room_payload(payload: dict[str, Any], room_name: str) -> str:
                 nested = value.get(nested_key)
                 if isinstance(nested, list):
                     raw_items.extend(nested)
+    for item in raw_items[:]:
+        if isinstance(item, dict) and isinstance(item.get("schedule"), list):
+            parent_room = str(item.get("room_name") or item.get("meeting_room_name") or "")
+            parent_schedule = item["schedule"]
+            raw_items.remove(item)  # Remove parent — only expandable children remain
+            if parent_schedule:
+                for s in parent_schedule:
+                    if isinstance(s, dict):
+                        s = dict(s)
+                        if parent_room and not s.get("room_name") and not s.get("meeting_room_name"):
+                            s["room_name"] = parent_room
+                        raw_items.append(s)
+            # If schedule is empty, don't inject placeholder — the WeCom API
+            # always returns a booking_list entry with empty schedule regardless
+            # of actual occupancy on non-professional editions.
     for item in raw_items:
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title") or item.get("summary") or item.get("name") or item.get("room_name") or item.get("meeting_room_name") or "")
-        location = str(item.get("location") or item.get("room_name") or item.get("meeting_room_name") or "")
+        title = str(item.get("title") or item.get("subject") or item.get("summary") or item.get("name") or item.get("room_name") or item.get("meeting_room_name") or "")
+        location = str(item.get("location") or item.get("room_name") or item.get("meeting_room_name") or room_name or "")
         if room_name and room_name != "会议室" and room_name not in title and room_name not in location:
             continue
         start_ts = int(item.get("start_time") or item.get("begin_time") or 0)
@@ -736,11 +1000,30 @@ def _format_room_availability(payloads: list[dict[str, Any]]) -> str:
     bookings: dict[str, list[str]] = {}
     for payload in payloads:
         for item in _nested_list_items(payload, ("meetingroom_list", "room_list", "meeting_room_list")):
-            room_id = str(item.get("room_id") or item.get("meeting_room_id") or item.get("id") or "")
+            room_id = str(item.get("room_id") or item.get("meetingroom_id") or item.get("meeting_room_id") or item.get("id") or "")
             room_name = str(item.get("room_name") or item.get("meeting_room_name") or item.get("name") or "")
             if room_name:
                 rooms[room_id or room_name] = room_name
-        for item in _nested_list_items(payload, ("booking_list", "bookings", "schedule_items", "meeting_list")):
+        booking_items = _nested_list_items(payload, ("booking_list", "bookings", "schedule_items", "meeting_list"))
+        expanded: list[dict[str, Any]] = []
+        for item in booking_items:
+            if isinstance(item.get("schedule"), list):
+                parent_room = str(item.get("room_name") or item.get("meeting_room_name") or "")
+                parent_rid = str(item.get("room_id") or item.get("meetingroom_id") or "")
+                if item["schedule"]:
+                    for s in item["schedule"]:
+                        if isinstance(s, dict):
+                            s = dict(s)
+                            if parent_room and not s.get("room_name"):
+                                s["room_name"] = parent_room
+                            if parent_rid and not s.get("room_id") and not s.get("meetingroom_id") and not s.get("meeting_room_id"):
+                                s["meeting_room_id"] = parent_rid
+                            expanded.append(s)
+                # Empty schedule: don't inject placeholder — the WeCom API
+                # always returns a booking_list entry regardless of occupancy
+            else:
+                expanded.append(item)
+        for item in expanded:
             room_id = str(item.get("room_id") or item.get("meeting_room_id") or "")
             room_name = str(item.get("room_name") or item.get("meeting_room_name") or item.get("location") or "")
             key = room_id or room_name
@@ -798,6 +1081,88 @@ def _approval_participants(info: dict[str, Any]) -> set[str]:
             approver = detail.get("approver") or {}
             participants.add(str(approver.get("userid") or ""))
     return {user_id for user_id in participants if user_id}
+
+
+def _approval_current_handler_userids(info: dict[str, Any]) -> list[str]:
+    if _approval_status_label(info.get("sp_status")) != "审批中":
+        return []
+    handlers: list[str] = []
+    for record in info.get("sp_record", []) or []:
+        if not isinstance(record, dict):
+            continue
+        record_status = str(record.get("sp_status") or record.get("status") or "")
+        if record_status and record_status not in {"1", "审批中", "pending"}:
+            continue
+        record_handlers: list[str] = []
+        for detail in record.get("details", []) or []:
+            if not isinstance(detail, dict):
+                continue
+            status = str(detail.get("sp_status") or detail.get("status") or "")
+            approver = detail.get("approver") or {}
+            userid = str(approver.get("userid") or "")
+            if userid and status in {"1", "审批中", "pending"} and userid not in record_handlers:
+                record_handlers.append(userid)
+        if record_handlers:
+            handlers.extend(record_handlers)
+            break
+    return handlers
+
+
+def _approval_current_node(info: dict[str, Any]) -> str:
+    return "、".join(_approval_current_handler_userids(info))
+
+
+def _approval_content_summary(info: dict[str, Any]) -> str:
+    labels: list[str] = []
+    apply_data = info.get("apply_data") or {}
+    contents = apply_data.get("contents") if isinstance(apply_data, dict) else []
+    for content in contents or []:
+        if not isinstance(content, dict):
+            continue
+        title = _approval_control_value(content.get("title") or content.get("control"))
+        value = _approval_control_value(content.get("value"))
+        if title and value:
+            labels.append(f"{title}：{value}")
+        elif value:
+            labels.append(value)
+        if len("；".join(labels)) > 120:
+            break
+    return "；".join(labels)[:160] if labels else str(info.get("sp_name") or info.get("template_name") or "审批流程")
+
+
+def _approval_control_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        if text[0] in "{[":
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return ""
+            return _approval_control_value(parsed)
+        return text
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        parts = [_approval_control_value(item) for item in value]
+        return "、".join(part for part in parts if part)
+    if isinstance(value, dict):
+        for key in ("text", "title", "name", "value", "new_text"):
+            if key in value:
+                parsed = _approval_control_value(value.get(key))
+                if parsed:
+                    return parsed
+        for key in ("tips", "members", "userlist", "children", "departments", "files"):
+            v = value.get(key)
+            if isinstance(v, list) and v:
+                parsed = _approval_control_value(v)
+                if parsed:
+                    return parsed
+        return ""
+    return str(value)
 
 
 def _approval_status_label(value: Any) -> str:
@@ -871,8 +1236,8 @@ def _looks_personal_approval_query(query: str) -> bool:
     """Returns True if the query asks for the user's own approvals."""
     normalized = str(query or "").replace(" ", "").lower()
     personal_words = ("我的", "我", "个人", "自己", "本人")
-    all_words = ("所有", "全部", "所有人员", "公司", "全员", "全部审批")
-    if any(w in normalized for w in all_words):
+    org_all_words = ("所有人员", "全部人员", "全部人", "公司", "全员", "全部审批", "全部流程")
+    if any(w in normalized for w in org_all_words) and not any(w in normalized for w in personal_words):
         return False
     return any(w in normalized for w in personal_words)
 
@@ -960,13 +1325,24 @@ def _batch_resolve_user_names(user_ids: set[str]) -> dict[str, str]:
     name_map: dict[str, str] = {}
     if not user_ids:
         return name_map
-    for uid in user_ids:
+    # Batch resolve: use user/list on root department to get all users at once
+    try:
+        resp = _get("user/list", "department_id=1&fetch_child=1", secret=None)
+        for u in resp.get("userlist", []):
+            uid = u.get("userid", "")
+            name = u.get("name", "")
+            if uid and name and uid in user_ids:
+                name_map[uid] = name
+    except Exception:
+        logger.info("Batch user resolve failed, falling back to per-user lookup")
+    # Fallback: resolve remaining users individually
+    remaining = [u for u in user_ids if u not in name_map]
+    for uid in remaining:
         try:
-            resp = _get("user/get", f"userid={uid}", secret=None)  # use app secret, not contacts sync secret
+            resp = _get("user/get", f"userid={uid}", secret=None)
             name = resp.get("name", "")
             if name:
                 name_map[uid] = name
-                logger.debug("Resolved user %s -> %s", uid, name)
         except Exception:
             logger.info("Could not resolve user name for %s", uid)
     return name_map
@@ -975,11 +1351,47 @@ def _batch_resolve_user_names(user_ids: set[str]) -> dict[str, str]:
 _calendar_id_cache: str | None = None
 
 
+def _load_persisted_calendar_id() -> str:
+    """Try to load persisted cal_id from runtime_settings.json."""
+    import json as _json
+    try:
+        path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "runtime_settings.json")
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                settings = _json.load(f)
+            return settings.get("wecom_calendar_id", "") or ""
+    except Exception:
+        pass
+    return ""
+
+
+def _persist_calendar_id(cal_id: str):
+    """Persist cal_id to runtime_settings.json."""
+    import json as _json
+    try:
+        path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "runtime_settings.json")
+        settings = {}
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                settings = _json.load(f)
+        settings["wecom_calendar_id"] = cal_id
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(settings, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning("Could not persist calendar id: %s", e)
+
+
 def _get_app_calendar_id() -> str:
-    """Get or create the default calendar for this WeCom app. Caches the cal_id."""
+    """Get or create the default calendar for this WeCom app. Persists cal_id across restarts."""
     global _calendar_id_cache
     if _calendar_id_cache:
         return _calendar_id_cache
+    persisted = _load_persisted_calendar_id()
+    if persisted:
+        _calendar_id_cache = persisted
+        logger.info("Loaded persisted calendar id: %s", persisted)
+        return persisted
     secret = _resolve_domain_secret("calendar")
     try:
         resp = _post("oa/calendar/add", {
@@ -993,7 +1405,8 @@ def _get_app_calendar_id() -> str:
         cal_id = resp.get("cal_id", "")
         if cal_id:
             _calendar_id_cache = cal_id
-            logger.info("Created default calendar: %s", cal_id)
+            _persist_calendar_id(cal_id)
+            logger.info("Created and persisted default calendar: %s", cal_id)
             return cal_id
     except Exception as e:
         logger.info("Could not create / access app calendar: %s (will retry next call)", e)

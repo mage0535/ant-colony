@@ -22,6 +22,22 @@ def test_knowledge_command_returns_signed_user_link() -> None:
     assert "user_token=" in reply
 
 
+def test_knowledge_backstage_phrase_prefers_knowledge_link_over_admin() -> None:
+    from src.gateway.entry_links import build_entry_link_reply
+
+    with patch.dict(
+        "os.environ",
+        {"ANT_COLONY_PUBLIC_BASE_URL": "http://example.test", "ANT_COLONY_ADMIN_SESSION_SECRET": "secret"},
+        clear=False,
+    ), patch("src.web.admin_auth.is_platform_admin", return_value=True):
+        reply = build_entry_link_reply("wecom", "u-admin", "知识库后台")
+
+    assert reply is not None
+    assert "知识库管理入口" in reply
+    assert "/knowledge/user?" in reply
+    assert "/admin/console" not in reply
+
+
 def test_admin_command_requires_platform_admin() -> None:
     from src.gateway.entry_links import build_entry_link_reply
 
@@ -45,7 +61,7 @@ def test_admin_command_returns_signed_admin_console_link_for_admin() -> None:
         {"ANT_COLONY_PUBLIC_BASE_URL": "http://example.test", "ANT_COLONY_ADMIN_SESSION_SECRET": "secret"},
         clear=False,
     ), patch("src.web.admin_auth.is_platform_admin", return_value=True):
-        reply = build_entry_link_reply("wecom", "u-admin", "进入后台")
+        reply = build_entry_link_reply("wecom", "u-admin", "管理后台")
 
     assert reply is not None
     assert "管理员控制台" in reply
@@ -53,6 +69,19 @@ def test_admin_command_returns_signed_admin_console_link_for_admin() -> None:
     assert "platform=wecom" in reply
     assert "user_id=u-admin" in reply
     assert "admin_token=" in reply
+
+
+def test_admin_backstage_synonyms_are_supported() -> None:
+    from src.gateway.entry_links import build_entry_link_reply
+
+    with patch.dict(
+        "os.environ",
+        {"ANT_COLONY_PUBLIC_BASE_URL": "http://example.test", "ANT_COLONY_ADMIN_SESSION_SECRET": "secret"},
+        clear=False,
+    ), patch("src.web.admin_auth.is_platform_admin", return_value=True):
+        assert "管理员控制台入口" in build_entry_link_reply("wecom", "u-admin", "管理员后台")
+        assert "管理员控制台入口" in build_entry_link_reply("wecom", "u-admin", "进入后台")
+        assert "管理员控制台入口" in build_entry_link_reply("wecom", "u-admin", "后台")
 
 
 def test_builtin_entry_link_accepts_wecom_bot_provider_alias() -> None:

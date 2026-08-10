@@ -34,7 +34,15 @@ def _default_owner(user_id: str, context: MessageContext) -> tuple[str, str]:
     return default_write_scope(role, user_id, platform=platform)
 
 
-def _record_artifacts(user_id: str, context: MessageContext, title: str, content: str, source: str) -> None:
+def _record_artifacts(
+    user_id: str,
+    context: MessageContext,
+    title: str,
+    content: str,
+    source: str,
+    *,
+    collect_knowledge: bool = True,
+) -> None:
     conn = Database.get().connect()
     store = ScopedMemoryStore(conn)
     scope_type = "personal"
@@ -45,9 +53,10 @@ def _record_artifacts(user_id: str, context: MessageContext, title: str, content
         scope_type, scope_id = "department", context.dept_id
     store.retain(f"{title}\n\n{content}", scope_type=scope_type, scope_id=scope_id, source=source)
 
-    owner_type, owner_id = _default_owner(user_id, context)
-    collector = KnowledgeCollector(build_knowledge_repository())
-    collector.collect_text(content, title, owner_type=owner_type, owner_id=owner_id, tags=["workflow", source])
+    if collect_knowledge:
+        owner_type, owner_id = _default_owner(user_id, context)
+        collector = KnowledgeCollector(build_knowledge_repository())
+        collector.collect_text(content, title, owner_type=owner_type, owner_id=owner_id, tags=["workflow", source])
 
 
 def _role_prefix(query: str) -> str:
@@ -133,7 +142,7 @@ class OfficeWorkflowService:
             + f"【企业应用查询结果】\n{app_data}\n\n"
         )
         body += _enterprise_next_steps(query)
-        _record_artifacts(user_id, context, "企业应用查询结果", body, "enterprise_app_query")
+        _record_artifacts(user_id, context, "企业应用查询结果", body, "enterprise_app_query", collect_knowledge=False)
         return WorkflowResult("企业应用查询结果", body)
 
     def approval_followup(self, user_id: str, query: str, context: MessageContext) -> WorkflowResult:
@@ -150,7 +159,7 @@ class OfficeWorkflowService:
             + f"【相关邮件摘要】\n{mail or '暂无相关邮件'}\n\n"
             + "【下一步建议】\n1. 先确认审批当前节点和卡点原因。\n2. 如果缺材料，直接整理补件清单。\n3. 如需催办，可生成催办消息或发起会议。"
         )
-        _record_artifacts(user_id, context, "审批跟踪结果", body, "approval_followup")
+        _record_artifacts(user_id, context, "审批跟踪结果", body, "approval_followup", collect_knowledge=False)
         return WorkflowResult("审批跟踪结果", body)
 
     def meeting_coordination(self, user_id: str, query: str, context: MessageContext) -> WorkflowResult:

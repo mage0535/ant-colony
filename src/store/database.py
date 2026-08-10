@@ -103,6 +103,8 @@ class Database:
 
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
+        self._local = threading.local()
+        self._init_lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
 
     @classmethod
@@ -114,38 +116,39 @@ class Database:
             return cls._instances[path]
 
     def connect(self) -> sqlite3.Connection:
-        if self._conn is None:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
             os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.row_factory = sqlite3.Row
-            self._init_schema()
+            conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")
+            conn.row_factory = sqlite3.Row
+            with self._init_lock:
+                self._init_schema(conn)
+            self._local.conn = conn
+            self._conn = conn
             logger.info("Database opened: %s", self.db_path)
-        return self._conn
+        return conn
 
-    def _init_schema(self) -> None:
-        if self._conn is None:
-            return
+    def _init_schema(self, conn: sqlite3.Connection) -> None:
         for statement in _SCHEMA.strip().split(";"):
             s = statement.strip()
             if s:
-                self._conn.execute(s)
-        self._migrate()
-        self._conn.commit()
+                conn.execute(s)
+        self._migrate(conn)
+        conn.commit()
 
-    def _migrate(self) -> None:
-        if self._conn is None:
-            return
-        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(tasks)").fetchall()}
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         if "blocked_by_task_id" not in cols:
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN blocked_by_task_id TEXT DEFAULT NULL")
+            conn.execute("ALTER TABLE tasks ADD COLUMN blocked_by_task_id TEXT DEFAULT NULL")
             logger.info("Migration: added blocked_by_task_id to tasks")
         if "priority" not in cols:
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium'")
+            conn.execute("ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium'")
             logger.info("Migration: added priority to tasks")
-        tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         if "space_meta" not in tables:
-            self._conn.execute(
+            conn.execute(
                 """CREATE TABLE space_meta (
                     space_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL DEFAULT '',
@@ -158,12 +161,12 @@ class Database:
             )
             logger.info("Migration: created space_meta table")
         else:
-            space_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(space_meta)").fetchall()}
+            space_cols = {r[1] for r in conn.execute("PRAGMA table_info(space_meta)").fetchall()}
             if "metadata_json" not in space_cols:
-                self._conn.execute("ALTER TABLE space_meta ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
+                conn.execute("ALTER TABLE space_meta ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
                 logger.info("Migration: added metadata_json to space_meta")
         if "knowledge_items" not in tables:
-            self._conn.execute(
+            conn.execute(
                 """CREATE TABLE knowledge_items (
                     id TEXT PRIMARY KEY,
                     owner_type TEXT NOT NULL,
@@ -176,18 +179,18 @@ class Database:
                     created_at REAL NOT NULL DEFAULT (cast(strftime('%s','now') as real))
                 )"""
             )
-            self._conn.execute(
+            conn.execute(
                 """CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts
                    USING fts5(id, owner_type, owner_id, content, tags, tokenize='unicode61')"""
             )
             logger.info("Migration: created knowledge_items and knowledge_fts")
         # ACL column migration for existing knowledge_items tables
         else:
-            knowledge_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(knowledge_items)").fetchall()}
+            knowledge_cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_items)").fetchall()}
             for col, default_val in [("read_roles", '["self"]'), ("write_roles", '["admin","self"]')]:
                 if col not in knowledge_cols:
                     try:
-                        self._conn.execute(
+                        conn.execute(
                             f"ALTER TABLE knowledge_items ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default_val}'"
                         )
                         logger.info("Migration: added %s to knowledge_items", col)
@@ -195,6 +198,9 @@ class Database:
                         pass
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
+        conn = getattr(self._local, "conn", None)
+        if conn:
+            conn.close()
+            self._local.conn = None
+        if self._conn is conn:
             self._conn = None

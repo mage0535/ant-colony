@@ -9,6 +9,8 @@ import time
 import urllib.request
 from urllib.parse import unquote
 
+from src.gateway.message_chunking import split_text_for_im
+
 logger = logging.getLogger(__name__)
 
 WECOM_API = "https://qyapi.weixin.qq.com/cgi-bin"
@@ -34,7 +36,7 @@ def _load_env_values() -> dict[str, str]:
                 values[key.strip()] = value.strip()
         break
     for key in ("WECOM_CORP_ID", "WECOM_AGENT_ID", "WECOM_SECRET"):
-        if os.environ.get(key):
+        if os.environ.get(key) and not values.get(key):
             values[key] = os.environ[key]
     return values
 
@@ -43,6 +45,7 @@ _ENV = _load_env_values()
 CORP_ID = _ENV.get("WECOM_CORP_ID", "")
 AGENT_ID = int(_ENV.get("WECOM_AGENT_ID", "1000006"))
 APP_SECRET = _ENV.get("WECOM_SECRET", "")
+TEXT_CHUNK_DELAY_SECONDS = float(os.environ.get("ANT_COLONY_WECOM_TEXT_CHUNK_DELAY_SECONDS", "0.25"))
 
 _token_cache: tuple[str, float] = ("", 0)
 
@@ -92,21 +95,27 @@ def send_text(user_id: str, content: str) -> bool:
         return False
     try:
         token = _get_token()
-        payload = {
-            "touser": user_id,
-            "msgtype": "text",
-            "agentid": AGENT_ID,
-            "text": {"content": content[:2048]},
-        }
         url = f"{WECOM_API}/message/send?access_token={token}"
-        body = json.dumps(payload, ensure_ascii=False).encode()
-        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        if data.get("errcode", 0) != 0:
-            logger.warning("WeCom send failed: %s", data.get("errmsg"))
-            return False
-        logger.info("WeCom message sent to %s (%d chars)", user_id, len(content))
+        chunks = split_text_for_im(content, hard_limit=2048)
+        total_chunks = len(chunks)
+        for index, chunk in enumerate(chunks, start=1):
+            payload = {
+                "touser": user_id,
+                "msgtype": "text",
+                "agentid": AGENT_ID,
+                "text": {"content": chunk},
+            }
+            body = json.dumps(payload, ensure_ascii=False).encode()
+            req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            if data.get("errcode", 0) != 0:
+                logger.warning("WeCom send failed: chunk=%s/%s error=%s", index, total_chunks, data.get("errmsg"))
+                return False
+            logger.info("WeCom text chunk sent to %s (%s/%s, %d bytes)", user_id, index, total_chunks, len(chunk.encode("utf-8")))
+            if index < total_chunks and TEXT_CHUNK_DELAY_SECONDS > 0:
+                time.sleep(TEXT_CHUNK_DELAY_SECONDS)
+        logger.info("WeCom message sent to %s (%d chars, %d chunks)", user_id, len(content), total_chunks)
         return True
     except Exception as e:
         logger.error("WeCom send error: %s", e)

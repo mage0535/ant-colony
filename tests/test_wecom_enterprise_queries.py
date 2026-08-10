@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from unittest.mock import patch
 
 from src.platform.capability_audit import CapabilityInvocationContext
@@ -30,36 +31,47 @@ def test_room_query_does_not_call_approval_domain() -> None:
 
 def test_room_availability_is_computed_from_inventory_minus_bookings() -> None:
     client = WeComClient()
+    today = date.today()
     inventory = {
         "meetingroom_list": [
             {"meetingroom_id": "r1", "name": "一号会议室"},
             {"meetingroom_id": "r2", "name": "三号会议室"},
         ]
     }
-    bookings = {
-        "booking_list": [
-            {
-                "room_id": "r2",
-                "room_name": "三号会议室",
-                "title": "生产例会",
-                "start_time": 1893459600,
-                "end_time": 1893463200,
-            }
-        ]
+    approval_info = {"sp_no_list": ["202607200001"]}
+    approval_detail = {
+        "info": {
+            "sp_status": 2,
+            "sp_name": "预定会议室",
+            "applyer": {"userid": "testuser"},
+            "apply_time": 1893459600,
+            "apply_data": {
+                "contents": [
+                    {"control": "Selector", "value": {"selector": {"options": [{"value": [{"text": "三号会议室"}]}]}}},
+                    {"control": "Text", "value": {"text": f"{today.month}月{today.day}日 14:00-16:00"}},
+                    {"control": "Text", "value": {"text": "生产例会"}},
+                ]
+            },
+        }
     }
-    with patch(
-        "src.platform.api_wecom._post_optional",
-        return_value=inventory,
-    ), patch(
-        "src.platform.api_wecom._post_optional_diagnostic",
-        side_effect=[(bookings, ""), (None, ""), (None, "")],
-    ):
+
+    def side_effect(path, body=None, secret=None):
+        if path == "oa/meetingroom/list":
+            return inventory
+        if path == "oa/getapprovalinfo":
+            return approval_info
+        if path == "oa/getapprovaldetail":
+            return approval_detail
+        return None
+
+    with patch("src.platform.api_wecom._post_optional", side_effect=side_effect), \
+         patch("src.platform.api_wecom._post_optional_diagnostic", return_value=(None, "")):
         result = client.query_meeting_room("哪个会议室今天可以申请")
 
     assert "一号会议室" in result
     assert "可申请" in result
     assert "三号会议室" in result
-    assert "已占用时段" in result
+    assert "生产例会" in result
 
 
 def test_approval_query_filters_details_to_current_user() -> None:

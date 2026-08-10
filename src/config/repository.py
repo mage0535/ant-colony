@@ -29,6 +29,9 @@ class InMemorySettingsRepository:
         record = self._llm_profiles.get(profile_id)
         return replace(record) if record else None
 
+    def delete_llm_profile(self, profile_id: str) -> bool:
+        return self._llm_profiles.pop(profile_id, None) is not None
+
     def list_llm_profiles(self) -> list[LLMSettingsRecord]:
         return [replace(record) for record in self._llm_profiles.values()]
 

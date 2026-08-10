@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 _LLM_MAX_RETRIES = 3
 _LLM_RETRY_BASE = 1.0
-_TOOL_CALL_RE = re.compile(r"<tool_call>([^(\s]+)\((.*?)\)</tool_call>", re.DOTALL)
+_TOOL_CALL_RE = re.compile(r"<tool_call>\s*([A-Za-z0-9_:\.-]+)\s*\((.*?)\)\s*</tool_call>", re.DOTALL)
 
 
 def _retry_llm(fn, max_retries: int = _LLM_MAX_RETRIES) -> str:
@@ -291,8 +291,15 @@ class AgentEngine:
     def _openai_inner(self, client_kwargs: dict, system: str, user_text: str) -> str:
         from openai import OpenAI
         client = wrap_openai_client(OpenAI(**client_kwargs))
+        model_name = self.config.model_name or "gpt-4o-mini"
+        try:
+            from src.platform.model_management_service import normalize_model_name_for_api
+
+            model_name = normalize_model_name_for_api(model_name, self.config.api_base)
+        except Exception:
+            pass
         resp = client.chat.completions.create(
-            model=self.config.model_name or "gpt-4o-mini",
+            model=model_name,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_text},

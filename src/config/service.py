@@ -73,6 +73,9 @@ class SettingsManagementService:
     def get_llm_profile(self, profile_id: str) -> LLMSettingsRecord | None:
         return self.repository.get_llm_profile(profile_id)
 
+    def delete_llm_profile(self, profile_id: str) -> bool:
+        return self.repository.delete_llm_profile(profile_id)
+
     def list_llm_profiles(self, *, enabled_only: bool = False) -> list[LLMSettingsRecord]:
         profiles = self.repository.list_llm_profiles()
         if enabled_only:

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from src.platform.employee_bot_service import get_employee_bot_assignment
+from src.platform.assistant_profile_service import get_assistant_profile
+from src.platform.hr_specialist_service import is_hr_specialist
 from src.platform.org_graph import OrgGraphService
 from src.store.database import Database
 
@@ -26,6 +28,7 @@ def list_admin_user_details(platform: str = "wecom", *, sync: bool = True) -> di
     for user in users:
         user_id = user["user_id"]
         assignment = get_employee_bot_assignment(normalized, user_id) or {}
+        assistant_profile = get_assistant_profile(platform=normalized, user_id=user_id) or {}
         memberships = _list_memberships(normalized, user_id)
         details.append(
             {
@@ -34,10 +37,16 @@ def list_admin_user_details(platform: str = "wecom", *, sync: bool = True) -> di
                 "department_path": _department_path(memberships, departments),
                 "is_admin": any(item.get("is_admin") for item in memberships),
                 "is_leader": any(item.get("is_leader") for item in memberships),
+                "is_hr_specialist": is_hr_specialist(normalized, user_id),
                 "online_status": _infer_online_status(user_id, usage),
                 "bot_status": assignment.get("status", "not_opened"),
                 "bot_display_name": assignment.get("display_name", ""),
                 "bot_notify_status": assignment.get("notify_status", ""),
+                "assistant_profile": assistant_profile,
+                "assistant_name": assistant_profile.get("assistant_name", ""),
+                "assistant_user_call_name": assistant_profile.get("user_call_name", ""),
+                "assistant_role_name": assistant_profile.get("role_name", ""),
+                "assistant_role_id": assistant_profile.get("role_id", ""),
                 "usage": usage.get(user_id, _empty_usage()),
             }
         )

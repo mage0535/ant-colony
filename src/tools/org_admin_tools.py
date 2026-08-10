@@ -20,9 +20,17 @@ def leave_tool(args: dict[str, Any]) -> str:
 
 
 def leave_balance_tool(args: dict[str, Any]) -> str:
+    from src.platform.leave_quota_service import build_employee_leave_form_notice
     from src.tools.attendance_tool import query_leave_balance
 
-    return query_leave_balance(_resolve_user_id(args))
+    user_id = _resolve_user_id(args)
+    try:
+        local_notice = build_employee_leave_form_notice(platform="wecom", user_id=user_id)
+        if "当前未同步公司假期类型" not in local_notice:
+            return local_notice
+    except Exception:
+        pass
+    return query_leave_balance(user_id)
 
 
 def dept_attendance_tool(args: dict[str, Any]) -> str:

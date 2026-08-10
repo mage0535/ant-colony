@@ -72,6 +72,23 @@ class TestWeComBotPayloadHelpers(unittest.TestCase):
 
 
 class TestWeComBotBridge(unittest.IsolatedAsyncioTestCase):
+    async def test_reply_text_splits_long_replies_into_multiple_messages(self) -> None:
+        from src.gateway.wecom_bot_bridge import WeComBotBridge
+
+        bridge = WeComBotBridge("http://127.0.0.1:18090", "bot-1", "secret-1")
+        bridge._send_reply_request = AsyncMock()
+        bridge._send_request = AsyncMock()
+        bridge._ws = object()
+
+        long_text = ("这是一个很长的回复内容。" * 220).strip()
+        await bridge._reply_text("req-1", long_text, chat_id="chat-1")
+
+        bridge._send_reply_request.assert_awaited_once()
+        assert bridge._send_request.await_count >= 1
+        proactive_body = bridge._send_request.await_args_list[0].args[1]
+        assert proactive_body["msgtype"] == "markdown"
+        assert proactive_body["markdown"]["content"].startswith("（2/")
+
     async def test_file_download_rejects_oversized_payloads(self) -> None:
         from src.gateway.wecom_bot_bridge import WeComBotBridge
 
@@ -314,6 +331,80 @@ class TestWeComBotBridge(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(seen["timeout"], 600)
+
+    async def test_forward_to_gateway_replies_visible_fallback_when_gateway_fails(self) -> None:
+        from src.gateway.wecom_bot_bridge import WeComBotBridge
+
+        bridge = WeComBotBridge("http://127.0.0.1:18090", "bot-1", "secret-1")
+        bridge._reply_text = AsyncMock()
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, *args, **kwargs):
+                raise RuntimeError("gateway down")
+
+        with patch("src.gateway.wecom_bot_bridge.httpx.AsyncClient", _FakeClient):
+            await bridge._forward_to_gateway(
+                {"content": "hello", "provider": "wecom_bot"},
+                req_id="req-1",
+                chat_id="chat-1",
+            )
+
+        bridge._reply_text.assert_awaited_once()
+        assert "后端处理服务暂时异常" in bridge._reply_text.await_args.args[1]
+
+    async def test_safe_message_callback_replies_visible_fallback_when_handler_crashes(self) -> None:
+        from src.gateway.wecom_bot_bridge import WeComBotBridge
+
+        bridge = WeComBotBridge("http://127.0.0.1:18090", "bot-1", "secret-1")
+        bridge._handle_message_callback = AsyncMock(side_effect=RuntimeError("parser crashed"))  # type: ignore[method-assign]
+        bridge._reply_text = AsyncMock()
+
+        await bridge._safe_handle_message_callback(
+            {
+                "msgid": "msg-1",
+                "chatid": "chat-1",
+                "chattype": "single",
+                "from": {"userid": "u123"},
+                "msgtype": "file",
+            },
+            req_id="req-1",
+        )
+
+        bridge._reply_text.assert_awaited_once()
+        self.assertEqual(bridge._reply_text.await_args.args[0], "req-1")
+        self.assertIn("处理附件或消息内容时遇到异常", bridge._reply_text.await_args.args[1])
+
+    async def test_unsupported_or_empty_message_replies_with_visible_guidance(self) -> None:
+        from src.gateway.wecom_bot_bridge import WeComBotBridge
+
+        bridge = WeComBotBridge("http://127.0.0.1:18090", "bot-1", "secret-1")
+        bridge._reply_text = AsyncMock()
+        bridge._forward_to_gateway = AsyncMock()
+
+        await bridge._handle_message_callback(
+            {
+                "msgid": "msg-1",
+                "chatid": "chat-1",
+                "chattype": "single",
+                "from": {"userid": "u123"},
+                "msgtype": "image",
+                "image": {"url": "https://example.com/a.png"},
+            },
+            req_id="req-1",
+        )
+
+        bridge._forward_to_gateway.assert_not_awaited()
+        bridge._reply_text.assert_awaited_once()
+        self.assertIn("没有识别到可处理的文字内容", bridge._reply_text.await_args.args[1])
 
     async def test_forward_to_gateway_sends_progress_notice_for_file_generation(self) -> None:
         from src.gateway.wecom_bot_bridge import WeComBotBridge

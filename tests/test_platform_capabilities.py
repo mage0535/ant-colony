@@ -169,6 +169,16 @@ class TestBuiltinCapabilityTools(unittest.TestCase):
         self.assertEqual(mock_invoke.call_args.args[:2], ("mail.summary", "today"))
         self.assertEqual(result, "mail-result")
 
+    def test_mail_summary_tool_hides_raw_email_env_errors(self) -> None:
+        from src.tools.builtin import _mail_summary_tool
+
+        raw = "Email not configured: missing env var(s) EMAIL_IMAP_SERVER, EMAIL_PASSWORD"
+        with patch("src.platform.invoke_capability", return_value=raw):
+            result = _mail_summary_tool({"query": "today"})
+
+        self.assertIn("当前企业 IM 账号尚未配置邮箱摘要", result)
+        self.assertNotIn("EMAIL_PASSWORD", result)
+
     def test_list_capabilities_tool_delegates_to_platform(self) -> None:
         from src.tools.builtin import _list_capabilities_tool
 

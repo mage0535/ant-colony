@@ -34,6 +34,35 @@ def test_personal_approval_query_uses_self_scope_only() -> None:
     assert plan.user_scope == "self"
 
 
+def test_personal_application_process_query_resolves_to_approval_self_scope() -> None:
+    from src.platform.enterprise_query import plan_enterprise_query
+
+    plan = plan_enterprise_query("我所有的申请和流程是否还有未完成的")
+
+    assert plan.domains == ("approval",)
+    assert plan.operation == "list"
+    assert plan.user_scope == "self"
+    assert plan.query_terms == ()
+
+
+def test_admin_all_process_query_resolves_to_approval_authorized_scope() -> None:
+    from src.platform.enterprise_query import plan_enterprise_query
+
+    plan = plan_enterprise_query("作为管理员查询全部流程情况")
+
+    assert plan.domains == ("approval",)
+    assert plan.operation == "list"
+    assert plan.user_scope == "authorized"
+
+
+def test_wecom_personal_approval_scope_handles_my_all_wording() -> None:
+    from src.platform.api_wecom import _looks_personal_approval_query
+
+    assert _looks_personal_approval_query("我所有的申请和流程是否还有未完成的") is True
+    assert _looks_personal_approval_query("我是要查我自己的申请流程，不是全部人的") is True
+    assert _looks_personal_approval_query("作为管理员查询全部流程情况") is False
+
+
 def test_explicit_summary_can_cross_domains() -> None:
     from src.platform.enterprise_query import plan_enterprise_query
 

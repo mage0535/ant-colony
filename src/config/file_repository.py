@@ -32,6 +32,12 @@ class JsonFileSettingsRepository(InMemorySettingsRepository):
         self._flush()
         return saved
 
+    def delete_llm_profile(self, profile_id: str) -> bool:
+        deleted = super().delete_llm_profile(profile_id)
+        if deleted:
+            self._flush()
+        return deleted
+
     def save_admin_settings(self, record: AdminSettingsRecord) -> AdminSettingsRecord:
         saved = super().save_admin_settings(record)
         self._flush()

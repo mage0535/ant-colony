@@ -38,8 +38,12 @@ def _get_app_token() -> str:
     corpid = _ENV.get("WECOM_CORP_ID", "")
     secret = _ENV.get("WECOM_SECRET", "")
     url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={corpid}&corpsecret={secret}"
-    resp = json.loads(urllib.request.urlopen(urllib.request.Request(url), timeout=10).read())
-    return resp["access_token"]
+    try:
+        resp = json.loads(urllib.request.urlopen(urllib.request.Request(url), timeout=10).read())
+        return resp["access_token"]
+    except Exception as e:
+        logger.warning("Token fetch failed: %s", e)
+        raise
 
 
 def sync_dept_leaders() -> dict[str, list[str]]:

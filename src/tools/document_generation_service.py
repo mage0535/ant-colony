@@ -37,6 +37,7 @@ def generate_document(args: dict[str, Any]) -> str:
     user_id = args.get("from", "")
     context_text = args.pop("_context_text", "")
     source_provider = args.get("_source_provider", "")
+    skip_enrichment = bool(args.get("_skip_enrichment"))
     expected_template_kind = {
         "docx": "docx_template",
         "xlsx": "xlsx_template",
@@ -61,6 +62,8 @@ def generate_document(args: dict[str, Any]) -> str:
     enriched = False
     err = ""
     try:
+        if skip_enrichment:
+            raise RuntimeError("skip_enrichment")
         from src.config.bootstrap import build_settings_service
 
         snapshot = None
@@ -119,7 +122,8 @@ def generate_document(args: dict[str, Any]) -> str:
                     err = f"API {response.status_code}: {response.text[:200]}"
                 break
     except Exception as exc:
-        err = str(exc)
+        if not skip_enrichment:
+            err = str(exc)
 
     if enriched:
         logger.info("Content enriched: %d -> %d chars", original_len, len(content))

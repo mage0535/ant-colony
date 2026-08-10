@@ -51,9 +51,19 @@ def validate_outbound_flow(probe_file_path: str = "") -> dict[str, Any]:
     return report
 
 
+def outbound_flow_ok(report: dict[str, Any]) -> bool:
+    return bool(
+        report.get("configured")
+        and report.get("text", {}).get("ok")
+        and report.get("file_card", {}).get("ok")
+        and report.get("file_send", {}).get("ok")
+    )
+
+
 def main() -> int:
-    print(json.dumps(validate_outbound_flow(), ensure_ascii=False, indent=2))
-    return 0
+    report = validate_outbound_flow()
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if outbound_flow_ok(report) else 1
 
 
 if __name__ == "__main__":

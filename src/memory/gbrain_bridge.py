@@ -91,6 +91,7 @@ class GbrainHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length)
+        request: dict[str, Any] = {}
         try:
             request = json.loads(raw)
             method = request.get("method", "")

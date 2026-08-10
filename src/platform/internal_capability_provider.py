@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import os
 from pathlib import Path
 
 from src.knowledge.repository_factory import build_knowledge_repository
@@ -18,6 +17,42 @@ class InternalCapabilityProvider:
         from src.tools.document_tool import OFFICECLI
 
         return "officecli-ready" if os.path.isfile(OFFICECLI) else None
+
+    def search_user(self, query: str, capability_context=None) -> str | None:
+        from src.store.database import Database
+
+        q = str(query or "").strip()
+        if not q:
+            return None
+        platform = getattr(capability_context, "platform", "") if capability_context else ""
+        platform = platform or "wecom"
+        conn = Database.get().connect()
+        like = f"%{q}%"
+        rows = conn.execute(
+            """
+            SELECT u.platform,u.user_id,u.name,u.email,u.mobile,u.title,
+                   group_concat(d.name, '/') AS departments
+            FROM org_users u
+            LEFT JOIN org_memberships m ON m.platform=u.platform AND m.user_id=u.user_id
+            LEFT JOIN org_departments d ON d.platform=m.platform AND d.dept_id=m.dept_id
+            WHERE u.platform=? AND (
+                u.user_id LIKE ? OR u.name LIKE ? OR u.email LIKE ? OR u.mobile LIKE ? OR u.title LIKE ?
+            )
+            GROUP BY u.platform,u.user_id,u.name,u.email,u.mobile,u.title
+            ORDER BY u.name,u.user_id
+            LIMIT 10
+            """,
+            (platform, like, like, like, like, like),
+        ).fetchall()
+        if not rows:
+            return None
+        lines = []
+        for row in rows:
+            lines.append(
+                f"{row['name'] or row['user_id']} | {row['mobile'] or '-'} | "
+                f"{row['email'] or '-'} | {row['departments'] or '-'} | {row['title'] or '-'}"
+            )
+        return "\n".join(lines)
 
     def search_drive_docs(self, query: str) -> str | None:
         from src.knowledge.cloud_drive import list_drives
@@ -50,7 +85,16 @@ class InternalCapabilityProvider:
 
         return sync_from_cloud(drive_id=drive_id, remote_path=remote_path, local_path=local_path, user_id="")
 
-    def summarize_mailbox(self, query: str = "") -> str | None:
+    def summarize_mailbox(self, query: str = "", capability_context=None) -> str | None:
+        if capability_context and getattr(capability_context, "user_id", ""):
+            from src.platform.mail_account_service import summarize_user_mailbox
+
+            return summarize_user_mailbox(
+                getattr(capability_context, "platform", "") or "wecom",
+                getattr(capability_context, "user_id", ""),
+                query=query,
+                limit=10,
+            )
         from src.tools.email_tool import list_inbox, search_emails
 
         if query.strip():
@@ -72,12 +116,29 @@ class InternalCapabilityProvider:
         lines = [f"[{item.owner_type.value}] {item.content[:120]}" for item in results]
         return "\n".join(lines)
 
-    def list_mail_messages(self, limit: int = 10) -> str | None:
+    def list_mail_messages(self, limit: int = 10, capability_context=None) -> str | None:
+        if capability_context and getattr(capability_context, "user_id", ""):
+            from src.platform.mail_account_service import summarize_user_mailbox
+
+            return summarize_user_mailbox(
+                getattr(capability_context, "platform", "") or "wecom",
+                getattr(capability_context, "user_id", ""),
+                limit=limit,
+            )
         from src.tools.email_tool import list_inbox
 
         return list_inbox(limit=limit)
 
-    def search_mail_messages(self, query: str) -> str | None:
+    def search_mail_messages(self, query: str, capability_context=None) -> str | None:
+        if capability_context and getattr(capability_context, "user_id", ""):
+            from src.platform.mail_account_service import summarize_user_mailbox
+
+            return summarize_user_mailbox(
+                getattr(capability_context, "platform", "") or "wecom",
+                getattr(capability_context, "user_id", ""),
+                query=query,
+                limit=10,
+            )
         from src.tools.email_tool import search_emails
 
         return search_emails(query)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 from typing import Any
 
@@ -11,44 +12,72 @@ from src.store.database import Database
 logger = logging.getLogger(__name__)
 
 _SYNC_TTL_SECONDS = 300.0
+_SQLITE_LOCK_RETRY_ATTEMPTS = 6
 
 
 class OrgGraphService:
     def __init__(self, db_path: str = "") -> None:
         self._db = Database.get(db_path)
         self._conn = self._db.connect()
+        try:
+            self._conn.execute("PRAGMA busy_timeout=30000")
+        except Exception:
+            logger.debug("failed to set org graph sqlite busy_timeout", exc_info=True)
+
+    def _write_with_retry(self, action: Any) -> None:
+        delay = 0.05
+        for attempt in range(_SQLITE_LOCK_RETRY_ATTEMPTS):
+            try:
+                action()
+                self._conn.commit()
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == _SQLITE_LOCK_RETRY_ATTEMPTS - 1:
+                    raise
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+                time.sleep(delay)
+                delay = min(delay * 2, 1.0)
 
     def upsert_department(self, platform: str, dept_id: str, name: str, parent_dept_id: str = "") -> None:
-        self._conn.execute(
-            """
-            INSERT OR REPLACE INTO org_departments (platform, dept_id, name, parent_dept_id, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (platform, str(dept_id), name, str(parent_dept_id or ""), time.time()),
-        )
-        self._conn.commit()
-
-    def upsert_user(self, platform: str, user_id: str, name: str, *, email: str = "", mobile: str = "", title: str = "") -> None:
-        self._conn.execute(
-            """
-            INSERT OR REPLACE INTO org_users (platform, user_id, name, email, mobile, title, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (platform, user_id, name, email, mobile, title, time.time()),
-        )
-        self._conn.commit()
-
-    def replace_user_memberships(self, platform: str, user_id: str, memberships: list[tuple[str, bool, bool]]) -> None:
-        self._conn.execute("DELETE FROM org_memberships WHERE platform = ? AND user_id = ?", (platform, user_id))
-        for dept_id, is_leader, is_admin in memberships:
+        def action() -> None:
             self._conn.execute(
                 """
-                INSERT INTO org_memberships (platform, user_id, dept_id, is_leader, is_admin, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO org_departments (platform, dept_id, name, parent_dept_id, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (platform, user_id, str(dept_id), 1 if is_leader else 0, 1 if is_admin else 0, time.time()),
+                (platform, str(dept_id), name, str(parent_dept_id or ""), time.time()),
             )
-        self._conn.commit()
+
+        self._write_with_retry(action)
+
+    def upsert_user(self, platform: str, user_id: str, name: str, *, email: str = "", mobile: str = "", title: str = "") -> None:
+        def action() -> None:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO org_users (platform, user_id, name, email, mobile, title, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (platform, user_id, name, email, mobile, title, time.time()),
+            )
+
+        self._write_with_retry(action)
+
+    def replace_user_memberships(self, platform: str, user_id: str, memberships: list[tuple[str, bool, bool]]) -> None:
+        def action() -> None:
+            self._conn.execute("DELETE FROM org_memberships WHERE platform = ? AND user_id = ?", (platform, user_id))
+            for dept_id, is_leader, is_admin in memberships:
+                self._conn.execute(
+                    """
+                    INSERT INTO org_memberships (platform, user_id, dept_id, is_leader, is_admin, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (platform, user_id, str(dept_id), 1 if is_leader else 0, 1 if is_admin else 0, time.time()),
+                )
+
+        self._write_with_retry(action)
 
     def is_admin(self, platform: str, user_id: str) -> bool:
         row = self._conn.execute(

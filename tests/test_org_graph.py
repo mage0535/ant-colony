@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -65,3 +66,35 @@ class TestOrgGraphService(unittest.TestCase):
         self.assertEqual(summary["users"], 2)
         self.assertTrue(graph.is_admin("wecom", "u1"))
         self.assertEqual(sorted(graph.get_department_members("wecom", "2")), ["u1", "u2"])
+
+    def test_org_graph_write_retries_transient_database_lock(self) -> None:
+        from src.platform.org_graph import OrgGraphService
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.execute_count = 0
+                self.rollback_count = 0
+                self.commit_count = 0
+
+            def execute(self, *args, **kwargs):
+                self.execute_count += 1
+                if self.execute_count == 1:
+                    raise sqlite3.OperationalError("database is locked")
+                return None
+
+            def rollback(self):
+                self.rollback_count += 1
+
+            def commit(self):
+                self.commit_count += 1
+
+        graph = OrgGraphService(db_path=self.tmp)
+        fake = FakeConnection()
+        graph._conn = fake  # type: ignore[assignment]
+
+        with patch("src.platform.org_graph.time.sleep", return_value=None):
+            graph.upsert_department("wecom", "1", "公司", "")
+
+        self.assertEqual(fake.rollback_count, 1)
+        self.assertEqual(fake.commit_count, 1)
+        self.assertEqual(fake.execute_count, 2)

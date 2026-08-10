@@ -44,13 +44,20 @@ async def validate_dingtalk_configuration(values: dict[str, str]) -> dict[str, A
     return {"api": fetch_dingtalk_token(values)}
 
 
+def dingtalk_configuration_ok(report: dict[str, Any]) -> bool:
+    return bool(report.get("api", {}).get("ok"))
+
+
 def main() -> int:
     values = dict(load_env_file(DEFAULT_ENV_FILE))
     for key in ("DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"):
         if os.environ.get(key):
             values[key] = os.environ[key]
-    print(json.dumps(asyncio.run(validate_dingtalk_configuration(values)), ensure_ascii=False, indent=2))
-    return 0
+    report = asyncio.run(validate_dingtalk_configuration(values))
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if os.environ.get("ANT_COLONY_VALIDATE_ALLOW_UNCONFIGURED", "").strip().lower() in {"1", "true", "yes"} and not report.get("api", {}).get("configured"):
+        return 0
+    return 0 if dingtalk_configuration_ok(report) else 1
 
 
 if __name__ == "__main__":

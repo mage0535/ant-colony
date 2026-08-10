@@ -84,14 +84,17 @@ def _ensure_table():
 
 def _query(sql: str, params: tuple = ()) -> list[dict]:
     _ensure_table()
-    from src.store.database import Database
     """Query the cloud_drives table, returning rows as dicts."""
     from src.store.database import Database
     db = Database.get()
     conn = db.connect()
+    previous_row_factory = conn.row_factory
     conn.row_factory = _dict_factory
-    rows = conn.execute(sql, params).fetchall()
-    return rows
+    try:
+        rows = conn.execute(sql, params).fetchall()
+        return rows
+    finally:
+        conn.row_factory = previous_row_factory
 
 
 def _execute(sql: str, params: tuple = ()) -> None:

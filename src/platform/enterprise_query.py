@@ -20,7 +20,7 @@ class EnterpriseQueryPlan:
 
 _DOMAIN_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("meeting_room", ("会议室", "会义室", "会议房间")),
-    ("approval", ("审批", "申批", "审批流", "流程状态", "待办")),
+    ("approval", ("审批", "申批", "审批流", "流程状态", "申请流程", "流程情况", "流程", "申请", "待办")),
     ("meeting", ("会议", "参会")),
     ("calendar", ("日程", "日历", "安排")),
     ("docs", ("在线文档", "文档")),
@@ -56,7 +56,7 @@ def plan_enterprise_query(query: str) -> EnterpriseQueryPlan:
 
     query_terms = _extract_query_terms(normalized, domains)
     today = date.today().isoformat() if "今天" in normalized else ""
-    user_scope = "self" if re.search(r"(?:^|查询|查|看)(?:一下)?我|我的|本人", normalized) else "authorized"
+    user_scope = "self" if _looks_self_scope(normalized) else "authorized"
     return EnterpriseQueryPlan(
         original_query=query,
         domains=domains,
@@ -84,8 +84,8 @@ def _match_domains(query: str) -> tuple[str, ...]:
     matched = [domain for _, domain in positioned]
     if "meeting_room" in matched and "meeting" in matched:
         matched.remove("meeting")
-    if not matched and "申请" in query and any(
-        word in query for word in ("状态", "进度", "到哪", "查询", "查一下", "情况")
+    if not matched and any(word in query for word in ("申请", "流程", "待办")) and any(
+        word in query for word in ("状态", "进度", "到哪", "查询", "查一下", "情况", "是否", "未完成", "完成")
     ):
         matched.append("approval")
     return tuple(matched)
@@ -106,8 +106,17 @@ def _extract_query_terms(query: str, domains: tuple[str, ...]) -> tuple[str, ...
         "查一下",
         "查",
         "看看",
+        "是要",
+        "不是全部人的",
+        "不是全部人",
+        "不是人",
+        "不是",
         "我",
         "我的",
+        "自己",
+        "本人",
+        "的",
+        "和",
         "所有",
         "全部",
         "状态",
@@ -122,6 +131,13 @@ def _extract_query_terms(query: str, domains: tuple[str, ...]) -> tuple[str, ...
         "有人",
         "可以",
         "申请",
+        "流程",
+        "是否",
+        "还有",
+        "未完成",
+        "完成",
+        "作为管理员",
+        "管理员",
         "吗",
         "？",
         "?",
@@ -131,5 +147,39 @@ def _extract_query_terms(query: str, domains: tuple[str, ...]) -> tuple[str, ...
     if not terms and domains == ("approval",):
         match = re.search(r"(.{2,20}?)(?:申请|申批)", query)
         if match:
-            terms.append(match.group(1))
+            fallback = _strip_query_noise(match.group(1))
+            if fallback:
+                terms.append(fallback)
     return tuple(dict.fromkeys(terms))
+
+
+def _looks_self_scope(query: str) -> bool:
+    if any(word in query for word in ("我自己的", "我个人", "本人", "自己的", "我的")):
+        return True
+    if "我" in query and not any(word in query for word in ("所有人", "全部人", "全员", "公司")):
+        return True
+    return False
+
+
+def _strip_query_noise(value: str) -> str:
+    cleaned = str(value or "")
+    for word in (
+        "查询",
+        "查一下",
+        "查",
+        "看看",
+        "是要",
+        "我",
+        "我的",
+        "自己",
+        "本人",
+        "的",
+        "和",
+        "所有",
+        "全部",
+        "目前",
+        "情况",
+        "状态",
+    ):
+        cleaned = cleaned.replace(word, "")
+    return cleaned.strip()
