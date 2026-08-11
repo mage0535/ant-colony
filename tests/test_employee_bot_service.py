@@ -78,7 +78,7 @@ def test_send_employee_bot_welcome_updates_notify_status_and_intro_message(tmp_p
         "企业应用查询",
         "审批与流程提醒",
         "业务系统通知与查询",
-        "邮件摘要",
+        "邮箱未读统计",
         "待办和任务协作",
         "会议和日程协助",
         "联网检索",
@@ -145,7 +145,7 @@ def test_employee_bot_welcome_message_has_complete_function_list() -> None:
     assert "直接推送文件" in message
     assert "业务系统有新待办" in message
     assert "AI 助手只提醒和查询，不代替你审批" in message
-    assert "不会替你发邮件或回复邮件" in message
+    assert "不会读取正文摘要、代发邮件或回复邮件" in message
     assert "你的名字叫小智" in message
     assert "发现任何问题" in message
     assert "需要增加的功能" in message

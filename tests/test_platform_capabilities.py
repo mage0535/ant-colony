@@ -176,7 +176,7 @@ class TestBuiltinCapabilityTools(unittest.TestCase):
         with patch("src.platform.invoke_capability", return_value=raw):
             result = _mail_summary_tool({"query": "today"})
 
-        self.assertIn("当前企业 IM 账号尚未配置邮箱摘要", result)
+        self.assertIn("当前企业 IM 账号尚未配置邮箱未读统计", result)
         self.assertNotIn("EMAIL_PASSWORD", result)
 
     def test_list_capabilities_tool_delegates_to_platform(self) -> None:

@@ -60,7 +60,7 @@ def _build_brief(platform: str, user_id: str) -> str:
     for label, capability, query in (
         ("日程", "calendar.list", "today"),
         ("待办审批", "approval.list", "all"),
-        ("邮件摘要", "mail.summary", ""),
+        ("邮箱未读统计", "mail.summary", ""),
     ):
         try:
             content = str(invoke_capability(capability, query, context=context, empty_message="") or "").strip()

@@ -103,11 +103,11 @@ def _mail_status(platform: str, user_id: str) -> dict[str, Any]:
         status = "ready" if configured else "needs_config"
         summary = f"已启用邮箱配置 {len(configured)} 个。"
     return _item(
-        name="邮件摘要",
+        name="邮箱未读统计",
         status=status,
         summary=summary,
         metrics={"configured_accounts": len(configured), "all_accounts": len(accounts), "protocols": protocols},
-        next_action="管理员后台 -> 邮箱配置中为员工配置 IMAP/POP3/Exchange 账号；Exchange EWS 需可访问服务器，Microsoft Graph 需后续 OAuth 应用授权。",
+        next_action="管理员后台 -> 邮箱配置中为员工配置 IMAP/POP3/Exchange 账号；当前对员工只开放新邮件提醒和未读数量查询，不读取正文摘要。",
     )
 
 
@@ -177,7 +177,7 @@ def _phase2_gate(items: dict[str, dict[str, Any]]) -> dict[str, Any]:
     blocking = [
         item["name"]
         for item in items.values()
-        if item.get("status") in {"blocked", "needs_config"} and item["name"] in {"通讯录搜索", "邮件摘要", "审批/流程"}
+        if item.get("status") in {"blocked", "needs_config"} and item["name"] in {"通讯录搜索", "邮箱未读统计", "审批/流程"}
     ]
     return {
         "ready_for_phase2": not blocking,

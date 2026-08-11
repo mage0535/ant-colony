@@ -84,7 +84,7 @@ Implemented Bot entries:
 - `创建任务 ...` / `查询任务列表` / `完成任务 task-...`
 - `找...联系方式` / `通讯录搜索 ...`
 - `查今天日程`
-- `汇总今天邮件`
+- `查看未读邮件`
 - existing enterprise queries such as `查询我所有审批的状态` and meeting-room questions keep priority over generic office shortcuts
 
 Known external constraints:

@@ -88,11 +88,11 @@ def test_phase1_leave_balance_query_returns_dynamic_employee_notice() -> None:
 
 
 def test_phase1_mail_summary_uses_mail_tool() -> None:
-    with patch("src.tools.platform_capability_tools.mail_summary_tool", return_value="邮件摘要") as mail:
-        result = run_phase1_shortcut("u1", "汇总今天邮件", _context())
+    with patch("src.tools.platform_capability_tools.mail_summary_tool", return_value="当前有 2 封未读邮件") as mail:
+        result = run_phase1_shortcut("u1", "查看未读邮件", _context())
 
     assert result is not None
-    assert result.text == "邮件摘要"
+    assert result.text == "当前有 2 封未读邮件"
     assert mail.call_args.args[0]["user_id"] == "u1"
 
 

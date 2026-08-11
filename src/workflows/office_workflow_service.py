@@ -156,7 +156,7 @@ class OfficeWorkflowService:
             + f"【审批待办】\n{approvals or '暂无待办'}\n\n"
             + f"【审批详情】\n{detail or '暂无详情'}\n\n"
             + f"【相关文档】\n{docs or '未找到相关文档'}\n\n"
-            + f"【相关邮件摘要】\n{mail or '暂无相关邮件'}\n\n"
+            + f"【相关邮箱未读情况】\n{mail or '暂无相关邮箱未读信息'}\n\n"
             + "【下一步建议】\n1. 先确认审批当前节点和卡点原因。\n2. 如果缺材料，直接整理补件清单。\n3. 如需催办，可生成催办消息或发起会议。"
         )
         _record_artifacts(user_id, context, "审批跟踪结果", body, "approval_followup", collect_knowledge=False)

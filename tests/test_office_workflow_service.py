@@ -12,14 +12,14 @@ def _context() -> MessageContext:
 def test_approval_followup_workflow_composes_capabilities_and_records_artifacts() -> None:
     from src.workflows.office_workflow_service import OfficeWorkflowService
 
-    with patch("src.workflows.office_workflow_service.invoke_capability", side_effect=["审批列表", "邮件摘要"]), \
+    with patch("src.workflows.office_workflow_service.invoke_capability", side_effect=["审批列表", "邮箱未读统计"]), \
          patch("src.workflows.office_workflow_service.invoke_capability_first", side_effect=["审批详情", "制度内容"]), \
          patch("src.workflows.office_workflow_service._record_artifacts") as record:
         result = OfficeWorkflowService().approval_followup("u1", "付款审批卡在哪", _context())
 
     assert "审批列表" in result.content
     assert "审批详情" in result.content
-    assert "邮件摘要" in result.content
+    assert "邮箱未读统计" in result.content
     record.assert_called_once()
 
 

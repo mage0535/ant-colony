@@ -309,11 +309,15 @@ def test_summarize_user_mailbox_reads_all_enabled_accounts_with_source_label(tmp
         result = summarize_user_mailbox("wecom", "u1", limit=3)
 
     assert "来源邮箱：公司邮箱 <u1@example.com>" in result
-    assert "标题：公司通知" in result
     assert "来源邮箱：业务邮箱 <u1-business@example.com>" in result
-    assert "标题：业务通知" in result
+    assert "当前有 1 封未读邮件" in result
+    assert "邮件摘要功能已关闭" in result
+    assert "标题：" not in result
+    assert "公司通知" not in result
     assert fake_first.login.call_args.args == ("u1@example.com", "secret1")
     assert fake_second.login.call_args.args == ("u1-business@example.com", "secret2")
+    fake_first.uid.assert_not_called()
+    fake_second.uid.assert_not_called()
 
 
 def test_summarize_single_mail_account_only_reads_requested_account(tmp_path, monkeypatch) -> None:
@@ -364,11 +368,15 @@ def test_summarize_single_mail_account_only_reads_requested_account(tmp_path, mo
         result = summarize_mail_account(first["account_id"], limit=3)
 
     assert "来源邮箱：公司邮箱 <u1@example.com>" in result
-    assert "标题：公司通知" in result
+    assert "当前有 1 封未读邮件" in result
+    assert "邮件摘要功能已关闭" in result
+    assert "标题：" not in result
+    assert "公司通知" not in result
     assert "招聘" not in result
     assert "hr@example.com" not in result
     imap_cls.assert_called_once_with("imap.example.com", 993)
     fake_first.login.assert_called_once_with("u1@example.com", "secret1")
+    fake_first.uid.assert_not_called()
 
 
 def test_mail_new_message_notifier_baselines_existing_messages(tmp_path, monkeypatch) -> None:
@@ -512,7 +520,7 @@ def test_mail_new_message_notification_only_announces_arrival() -> None:
     text = sent[0][2]
     assert "【新邮件提醒】" in text
     assert "你有一封新邮件到达" in text
-    assert "汇总今天邮件" in text
+    assert "查看未读邮件" in text
     assert "sender@example.com" not in text
     assert "重要合同" not in text
     assert "这是一段邮件正文摘要" not in text
@@ -725,7 +733,7 @@ def test_missing_mailbox_configuration_does_not_require_imap(tmp_path, monkeypat
 
     result = summarize_user_mailbox("wecom", "not-configured")
 
-    assert "当前企业 IM 账号尚未配置邮箱摘要" in result
+    assert "当前企业 IM 账号尚未配置邮箱未读统计" in result
     assert "IMAP" not in result
     assert "接收协议" in result
     assert "不会共享" in result
@@ -769,13 +777,52 @@ def test_summarize_user_mailbox_uses_user_specific_imap_config(tmp_path, monkeyp
 
     imap_cls.assert_called_once_with("imap.example.com", 993)
     fake_imap.login.assert_called_once_with("u1@example.com", "secret")
-    assert "邮件到达时间：Fri, 17 Jul 2026 08:30:00 +0800" in result
-    assert "发件人：sender@example.com" in result
-    assert "标题：设备巡检" in result
-    assert "摘要：" in result
-    assert "设备巡检计划" in result
-    assert "附件：plan.pdf" in result
+    assert "当前有 1 封未读邮件" in result
+    assert "邮件摘要功能已关闭" in result
+    assert "邮件到达时间：" not in result
+    assert "发件人：" not in result
+    assert "标题：" not in result
+    assert "摘要：" not in result
+    assert "附件：" not in result
+    fake_imap.uid.assert_not_called()
     assert "secret" not in result
+
+
+def test_mail_query_reports_unread_count_without_fetching_body(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ANT_COLONY_DB_PATH", str(tmp_path / "ant.db"))
+
+    from src.platform.mail_account_service import save_mail_account, summarize_user_mailbox
+
+    save_mail_account(
+        {
+            "platform": "wecom",
+            "user_id": "u1",
+            "account_label": "工作邮箱",
+            "email_address": "u1@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "protocol": "imap",
+            "username": "u1@example.com",
+            "password": "secret",
+            "enabled": True,
+        },
+        updated_by="admin",
+    )
+
+    fake_imap = MagicMock()
+    fake_imap.search.return_value = ("OK", [b"101 102 103"])
+    fake_imap.uid.side_effect = AssertionError("unread count should not fetch mail body")
+
+    with patch("imaplib.IMAP4_SSL", return_value=fake_imap):
+        result = summarize_user_mailbox("wecom", "u1")
+
+    fake_imap.search.assert_called_once_with(None, "UNSEEN")
+    assert "来源邮箱：工作邮箱 <u1@example.com>" in result
+    assert "当前有 3 封未读邮件" in result
+    assert "邮件摘要功能已关闭" in result
+    assert "发件人：" not in result
+    assert "标题：" not in result
+    assert "摘要：" not in result
 
 
 def test_summarize_user_mailbox_supports_pop3(tmp_path, monkeypatch) -> None:
@@ -812,11 +859,13 @@ def test_summarize_user_mailbox_supports_pop3(tmp_path, monkeypatch) -> None:
     with patch("poplib.POP3_SSL", return_value=fake_pop) as pop_cls:
         result = summarize_user_mailbox("wecom", "u1", limit=5)
 
-    pop_cls.assert_called_once_with("pop.example.com", 995, timeout=20)
-    fake_pop.user.assert_called_once_with("u1@example.com")
-    fake_pop.pass_.assert_called_once_with("secret")
-    assert "发件人：boss@example.com" in result
-    assert "标题：会议通知" in result
+    pop_cls.assert_not_called()
+    fake_pop.user.assert_not_called()
+    fake_pop.pass_.assert_not_called()
+    assert "POP3 协议不提供可靠未读状态" in result
+    assert "如需查看未读数量" in result
+    assert "发件人：" not in result
+    assert "标题：" not in result
 
 
 def test_mail_summary_uses_clean_body_not_signature_or_forward_headers(monkeypatch) -> None:
@@ -1087,8 +1136,8 @@ def test_pop3_plain_connection_does_not_force_ssl(tmp_path, monkeypatch) -> None
         result = summarize_user_mailbox("wecom", "u-pop3")
 
     assert "来源邮箱：默认邮箱 <u@example.com>" in result
-    assert "当前 POP3 邮箱没有邮件。" in result
-    plain.assert_called_once_with("pop.example.com", 110, timeout=20)
+    assert "POP3 协议不提供可靠未读状态" in result
+    plain.assert_not_called()
     ssl.assert_not_called()
 
 
@@ -1109,8 +1158,8 @@ def test_pop3_starttls_upgrades_before_login(tmp_path, monkeypatch) -> None:
         result = summarize_user_mailbox("wecom", "u-starttls")
 
     assert "来源邮箱：默认邮箱 <u@example.com>" in result
-    assert "当前 POP3 邮箱没有邮件。" in result
-    client.stls.assert_called_once()
+    assert "POP3 协议不提供可靠未读状态" in result
+    client.stls.assert_not_called()
 
 
 def test_pop3_login_passerr_returns_actionable_message(tmp_path, monkeypatch) -> None:
@@ -1133,12 +1182,12 @@ def test_pop3_login_passerr_returns_actionable_message(tmp_path, monkeypatch) ->
     )
     client = MagicMock()
     client.pass_.side_effect = Exception("b'-ERR ERR.LOGIN.PASSERR'")
-    with patch("src.platform.mail_account_service.poplib.POP3", return_value=client):
+    with patch("src.platform.mail_account_service.poplib.POP3", return_value=client) as pop_cls:
         result = summarize_mail_account(account["account_id"])
 
     assert "来源邮箱：招聘 <hr@example.com>" in result
-    assert "账号或密码/授权码不正确" in result
-    assert "重新保存" in result
+    assert "POP3 协议不提供可靠未读状态" in result
+    pop_cls.assert_not_called()
     assert "wrong-secret" not in result
 
 

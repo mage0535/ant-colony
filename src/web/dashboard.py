@@ -3405,8 +3405,8 @@ def admin_console_page(request: Request = None):
       <section id="mailAccounts">
         <div class="grid two">
           <div class="panel">
-            <h2>员工邮箱摘要配置</h2>
-            <p>为员工绑定一个或多个公司邮箱读取配置。保存后系统会立即使用该员工账号实际读取最多三封邮件，显示成功或失败原因。员工在企业 AI 助手里发送“汇总今天邮件”“查找合同相关邮件”后，会按来源邮箱展示到达时间、发件人、标题、内容摘要和附件名，不支持通过企微回复邮件。</p>
+            <h2>员工邮箱未读统计配置</h2>
+            <p>为员工绑定一个或多个公司邮箱读取配置。员工在企业 AI 助手里发送“查看未读邮件”后，只返回当前未读邮件数量；新邮件到达时只提醒有新邮件，不展示发件人、标题、正文摘要或附件名，不支持通过企微回复邮件。</p>
             <label>平台</label><select id="mailPlatform" onchange="loadMailAccounts()"><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="dingtalk">钉钉</option></select>
             <label>员工姓名</label><input id="mailUserName" placeholder="例如 张三（优先按企业 IM 通讯录匹配）">
             <label>企业 IM 用户 ID（可选）</label><input id="mailUserId" placeholder="仅同名或未同步通讯录时填写">
@@ -3422,7 +3422,7 @@ def admin_console_page(request: Request = None):
             <label>文件夹</label><input id="mailFolder" value="INBOX">
             <label>查询频率（分钟）</label><input id="mailPollInterval" type="number" value="1">
             <p class="muted">新增员工邮箱时可先点“自动匹配邮箱配置”：系统会按企业 IM 通讯录邮箱和同域已配置邮箱自动补齐协议、服务器、端口、加密方式和 1 分钟监听频率；管理员只需补密码/授权码并保存测试。</p>
-            <label><input id="mailEnabled" type="checkbox" checked style="width:auto"> 启用邮箱摘要</label>
+            <label><input id="mailEnabled" type="checkbox" checked style="width:auto"> 启用邮箱未读统计</label>
             <div class="actions">
               <button class="secondary" onclick="newMailAccount()">新增邮箱</button>
               <button class="secondary" onclick="inferMailAccount()">自动匹配邮箱配置</button>

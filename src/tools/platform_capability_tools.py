@@ -293,7 +293,7 @@ def mail_summary_tool(args: dict[str, str]) -> str:
     result = invoke_capability("mail.summary", str(args.get("query", "")), context=_context_from_args(args), empty_message="暂无可用邮箱能力（待接入企业邮箱能力）")
     normalized = result.lower()
     if "email not configured" in normalized or "missing env var" in normalized:
-        return "当前企业 IM 账号尚未配置邮箱摘要。请管理员优先在后台为当前员工配置邮箱接收协议、服务器、账号和授权码；其他员工的邮箱配置不会共享。"
+        return "当前企业 IM 账号尚未配置邮箱未读统计。请管理员优先在后台为当前员工配置邮箱接收协议、服务器、账号和授权码；其他员工的邮箱配置不会共享。"
     return result
 
 

@@ -480,9 +480,9 @@ def test_admin_mail_account_apis_require_admin_context() -> None:
     status.assert_called_once_with("wecom", "u1", enabled=False, updated_by="u-admin")
 
     with patch("src.web.dashboard.require_admin_context_from_request", return_value=admin_context), \
-         patch("src.platform.mail_account_service.summarize_user_mailbox", return_value="邮件摘要") as test_mail:
+         patch("src.platform.mail_account_service.summarize_user_mailbox", return_value="邮箱未读统计") as test_mail:
         result = admin_test_mail_account(MailAccountStatusRequest(platform="wecom", user_id="u1"), request)
-    assert result["result"] == "邮件摘要"
+    assert result["result"] == "邮箱未读统计"
     assert result["ok"] is True
     test_mail.assert_called_once_with("wecom", "u1", limit=3)
 
@@ -792,14 +792,14 @@ def test_admin_mail_account_test_uses_single_account_when_account_id_present() -
     account = {"account_id": "mail-1", "user_id": "UserA", "email_address": "bin.han@example.com"}
     with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "admin"}), \
          patch("src.platform.mail_account_service.get_mail_account_by_id", return_value=account) as get_account, \
-         patch("src.platform.mail_account_service.summarize_mail_account", return_value="单邮箱摘要") as summarize_one, \
+         patch("src.platform.mail_account_service.summarize_mail_account", return_value="单邮箱未读统计") as summarize_one, \
          patch("src.platform.mail_account_service.summarize_user_mailbox") as summarize_all:
         result = admin_test_mail_account(MailAccountStatusRequest(platform="wecom", user_id="UserA", account_id="mail-1"), request)
 
     assert result["ok"] is True
     assert result["user_id"] == "UserA"
     assert result["account_source"] == "默认邮箱 <bin.han@example.com>"
-    assert result["result"] == "单邮箱摘要"
+    assert result["result"] == "单邮箱未读统计"
     get_account.assert_called_once_with("mail-1")
     summarize_one.assert_called_once_with("mail-1", limit=3)
     summarize_all.assert_not_called()

@@ -30,7 +30,7 @@ def list_integrations(*, platform: str = "wecom", user_id: str = "") -> dict[str
         lambda: _phase1_items(platform=normalized_platform, user_id=normalized_user),
     )
     _extend_safe(items, "system:models", "模型服务", "LLM 模型配置", "models", _model_items)
-    _extend_safe(items, "system:mail", "企业邮箱", "邮箱摘要与新邮件提醒", "mailAccounts", lambda: _mail_items(platform=normalized_platform))
+    _extend_safe(items, "system:mail", "企业邮箱", "邮箱未读统计与新邮件提醒", "mailAccounts", lambda: _mail_items(platform=normalized_platform))
     _extend_safe(
         items,
         "system:knowledge",
@@ -244,7 +244,7 @@ def _mail_items(*, platform: str) -> list[dict[str, Any]]:
         _item(
             id="mail:accounts",
             category="企业邮箱",
-            name="邮箱摘要与新邮件提醒",
+            name="邮箱未读统计与新邮件提醒",
             status=status,
             summary=f"已配置 {len(accounts)} 个邮箱账号；启用且有密码/授权码 {len(password_ready)} 个。",
             configure_tab="mailAccounts",

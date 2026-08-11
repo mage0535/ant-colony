@@ -411,12 +411,12 @@ def summarize_user_mailbox(platform: str, user_id: str, *, query: str = "", limi
     secret_accounts = [account for account in secret_accounts if account]
     if not secret_accounts:
         return (
-            "当前企业 IM 账号尚未配置邮箱摘要。请管理员在后台“邮箱配置”中为当前员工保存邮件接收协议、"
+            "当前企业 IM 账号尚未配置邮箱未读统计。请管理员在后台“邮箱配置”中为当前员工保存邮件接收协议、"
             "服务器、账号和授权码；其他员工的邮箱配置不会共享给本账号。"
         )
     enabled_accounts = [account for account in secret_accounts if int(account.get("enabled") or 0)]
     if not enabled_accounts:
-        return "该员工邮箱摘要功能已停用，请管理员在后台启用后再使用。"
+        return "该员工邮箱未读统计功能已停用，请管理员在后台启用后再使用。"
     blocks: list[str] = []
     for account in enabled_accounts:
         body = _summarize_account_mailbox(account, query=query, limit=limit)
@@ -429,7 +429,7 @@ def summarize_mail_account(account_id: str, *, query: str = "", limit: int = 10)
     if not account:
         return "未找到邮箱配置。"
     if not int(account.get("enabled") or 0):
-        return "该邮箱摘要功能已停用，请管理员在后台启用后再使用。"
+        return "该邮箱未读统计功能已停用，请管理员在后台启用后再使用。"
     body = _summarize_account_mailbox(account, query=query, limit=limit)
     return _with_source_context(account, body)
 
@@ -616,6 +616,7 @@ def diagnose_mail_account_connection(account_id: str) -> str:
 
 
 def _summarize_account_mailbox(account: dict[str, Any], *, query: str = "", limit: int = 10) -> str:
+    del limit
     password = str(account.get("password") or "")
     if not password:
         return "该员工邮箱授权码/密码尚未配置，请管理员在后台补充后再使用。"
@@ -626,9 +627,9 @@ def _summarize_account_mailbox(account: dict[str, Any], *, query: str = "", limi
     username = str(account.get("username") or account.get("email_address") or "")
     folder = str(account.get("folder") or "INBOX")
     if protocol == "pop3":
-        return _summarize_pop3(account, query=query, limit=limit)
+        return "POP3 协议不提供可靠未读状态，当前只能提醒有新邮件到达；如需查看未读数量，请将该邮箱改为 IMAP 或 Exchange/Graph 接入。"
     if protocol == "exchange":
-        return _summarize_exchange_ews(account, query=query, limit=limit)
+        return "Exchange 邮箱未读统计需要启用 EWS 或 Microsoft Graph 未读计数能力；当前已关闭邮件摘要，不读取邮件正文。"
     if protocol != "imap":
         return f"暂不支持的邮箱协议：{protocol}"
     try:
@@ -639,19 +640,11 @@ def _summarize_account_mailbox(account: dict[str, Any], *, query: str = "", limi
                 client.starttls()
             client.login(username, password)
             client.select(folder)
-            criteria = _imap_search_criteria(query)
-            _, data = client.search(None, *criteria)
+            _, data = client.search(None, "UNSEEN")
             uids = data[0].split() if data and data[0] else []
-            if not uids:
-                return f"未找到匹配邮件：{query}" if query else "当前收件箱没有邮件。"
-            lines = []
-            for uid in uids[-max(1, min(int(limit or 10), 30)):]:
-                _, msg_data = client.uid("fetch", uid, "(RFC822)")
-                raw = _extract_raw_message(msg_data)
-                if not raw:
-                    continue
-                lines.append(_format_mail_summary(email.message_from_bytes(raw), account=account))
-            return "\n\n".join(lines) if lines else "未读取到可展示的邮件内容。"
+            unread_count = len(uids)
+            scope = f"（未按关键词“{query}”过滤；邮件摘要功能已关闭）" if str(query or "").strip() else "（邮件摘要功能已关闭）"
+            return f"当前有 {unread_count} 封未读邮件。{scope}"
         finally:
             try:
                 client.logout()
@@ -1472,7 +1465,7 @@ def _send_mail_notification(account: dict[str, Any], item: dict[str, Any]) -> bo
     text = (
         "【新邮件提醒】\n"
         "你有一封新邮件到达。\n\n"
-        "可回复“汇总今天邮件”查看近期邮件摘要。AI 助手只提醒和查询，不代发邮件或回复邮件。"
+        "可回复“查看未读邮件”了解当前未读数量。AI 助手只提醒和查询，不读取正文摘要、不代发邮件或回复邮件。"
     )
     return provider_outbound.send_platform_text(
         _clean(account.get("platform") or "wecom"),
