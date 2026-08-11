@@ -105,9 +105,17 @@
 
 - 对员工关闭邮件摘要功能：不再通过 AI 助手展示邮件到达时间、发件人、标题、正文摘要、附件名，也不再读取邮件正文做摘要。
 - 保留新邮件主动提醒：只提示“你有一封新邮件到达”，并引导回复“查看未读邮件”。
-- 保留邮箱查询能力：员工可发送“查看未读邮件”“我有几封未读邮件”，IMAP 邮箱通过 `UNSEEN` 返回未读数量，不拉取正文；POP3 无可靠未读状态，会提示改用 IMAP 或 Exchange/Graph；Exchange 当前提示需启用 EWS/Graph 未读统计能力。
+- 保留邮箱查询能力：员工可发送“查看未读邮件”“我有几封未读邮件”，IMAP 邮箱通过 `UNSEEN` 返回服务端未读数量，不拉取正文；POP3 协议无法读取服务器真实未读状态，系统统计“AI 助手已提醒但员工未确认”的本地新邮件提醒数；员工处理完邮箱后可回复“清空邮件提醒”归零；Exchange 当前提示需启用 EWS/Graph 未读统计能力。
 - 管理后台文案已从“员工邮箱摘要配置”改为“员工邮箱未读统计配置”。
 
 ### 验证
 
 - `python -m pytest -q tests/test_mail_account_service.py`：37 passed。
+
+## 2026-08-11 POP3 邮箱未读统计落地
+
+- 背景：企业邮箱只支持 POP3 时，POP3 协议没有服务端“未读”标记，无法像 IMAP 一样读取真实未读邮件。
+- 处理：新增本地新邮件提醒台账，POP3 查询“查看未读邮件”时返回“当前有 N 封未确认的新邮件提醒”，不登录 POP3 拉正文，也不展示邮件头。
+- 员工操作：处理完邮箱后可回复“清空邮件提醒”或“标记邮件提醒已读”，系统只清空 AI 助手本地计数，不修改邮箱服务器状态。
+- 数据：`mail_notification_events` 新增 `acknowledged_at` 字段；`delivery_status='sent' AND acknowledged_at=0` 作为 POP3 本地未确认提醒数。
+- 测试：`python -m pytest -q tests/test_mail_account_service.py tests/test_phase1_shortcuts.py`，结果 `51 passed`。

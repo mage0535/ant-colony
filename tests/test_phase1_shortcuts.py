@@ -96,6 +96,15 @@ def test_phase1_mail_summary_uses_mail_tool() -> None:
     assert mail.call_args.args[0]["user_id"] == "u1"
 
 
+def test_phase1_mail_acknowledgement_clears_local_reminders() -> None:
+    with patch("src.platform.mail_account_service.mark_mail_notifications_read", return_value={"cleared": 2}) as clear:
+        result = run_phase1_shortcut("u1", "清空邮件提醒", _context())
+
+    assert result is not None
+    assert "已清空 2 条邮件提醒" in result.text
+    clear.assert_called_once_with("wecom", "u1")
+
+
 def test_phase1_mail_reply_request_drafts_only_and_does_not_call_mail_tool() -> None:
     with patch("src.tools.platform_capability_tools.mail_summary_tool") as mail:
         result = run_phase1_shortcut("u1", "你可以帮我回邮吗", _context())

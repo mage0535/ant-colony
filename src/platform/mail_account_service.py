@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS mail_notification_events (
     received_at_ts REAL NOT NULL DEFAULT 0,
     delivery_status TEXT NOT NULL DEFAULT '',
     delivery_error TEXT NOT NULL DEFAULT '',
+    acknowledged_at REAL NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     PRIMARY KEY (account_id, message_key)
@@ -154,6 +155,9 @@ def _pragma_column_name(row: Any) -> str:
 def _ensure_mail_notification_schema(conn) -> None:
     conn.execute(_NOTIFICATION_STATE_SQL)
     conn.execute(_NOTIFICATION_EVENT_SQL)
+    cols = {_pragma_column_name(row) for row in conn.execute("PRAGMA table_info(mail_notification_events)").fetchall()}
+    if "acknowledged_at" not in cols:
+        conn.execute("ALTER TABLE mail_notification_events ADD COLUMN acknowledged_at REAL NOT NULL DEFAULT 0")
     conn.commit()
 
 
@@ -434,6 +438,34 @@ def summarize_mail_account(account_id: str, *, query: str = "", limit: int = 10)
     return _with_source_context(account, body)
 
 
+def mark_mail_notifications_read(platform: str, user_id: str, *, account_id: str = "") -> dict[str, Any]:
+    """Acknowledge locally tracked new-mail reminders for POP3-style mailboxes."""
+    normalized_platform = _clean(platform or "wecom")
+    normalized_user = _clean(user_id)
+    now = time.time()
+    conn = _conn()
+    if account_id:
+        cur = conn.execute(
+            """
+            UPDATE mail_notification_events
+            SET acknowledged_at=?, updated_at=?
+            WHERE account_id=? AND platform=? AND user_id=? AND delivery_status='sent' AND acknowledged_at=0
+            """,
+            (now, now, _clean(account_id), normalized_platform, normalized_user),
+        )
+    else:
+        cur = conn.execute(
+            """
+            UPDATE mail_notification_events
+            SET acknowledged_at=?, updated_at=?
+            WHERE platform=? AND user_id=? AND delivery_status='sent' AND acknowledged_at=0
+            """,
+            (now, now, normalized_platform, normalized_user),
+        )
+    conn.commit()
+    return {"platform": normalized_platform, "user_id": normalized_user, "cleared": int(cur.rowcount or 0)}
+
+
 def run_mail_new_message_notifier(platform: str = "wecom", *, force: bool = False, limit: int = 30) -> dict[str, Any]:
     """Poll enabled mailboxes and push only newly seen messages to active assistants."""
     lock_path = _acquire_mail_notifier_lock()
@@ -627,7 +659,12 @@ def _summarize_account_mailbox(account: dict[str, Any], *, query: str = "", limi
     username = str(account.get("username") or account.get("email_address") or "")
     folder = str(account.get("folder") or "INBOX")
     if protocol == "pop3":
-        return "POP3 协议不提供可靠未读状态，当前只能提醒有新邮件到达；如需查看未读数量，请将该邮箱改为 IMAP 或 Exchange/Graph 接入。"
+        count = _local_unacknowledged_mail_count(account)
+        return (
+            f"当前有 {count} 封未确认的新邮件提醒。"
+            "说明：POP3 邮箱无法读取服务器真实未读状态，这里统计的是 AI 助手已提醒但你尚未确认的邮件；"
+            "处理完邮箱后，可回复“清空邮件提醒”把这里的计数归零。"
+        )
     if protocol == "exchange":
         return "Exchange 邮箱未读统计需要启用 EWS 或 Microsoft Graph 未读计数能力；当前已关闭邮件摘要，不读取邮件正文。"
     if protocol != "imap":
@@ -691,42 +728,6 @@ def _fetch_recent_mail_items(account: dict[str, Any], *, limit: int = 30) -> lis
             client.logout()
         except Exception:
             pass
-
-
-def _summarize_pop3(account: dict[str, Any], *, query: str = "", limit: int = 10) -> str:
-    host = str(account.get("imap_host") or "")
-    port = int(account.get("imap_port") or 995)
-    username = str(account.get("username") or account.get("email_address") or "")
-    password = str(account.get("password") or "")
-    encryption = _account_encryption(account)
-    try:
-        client = poplib.POP3_SSL(host, port, timeout=20) if encryption == "ssl_tls" else poplib.POP3(host, port, timeout=20)
-        try:
-            if encryption == "starttls":
-                client.stls()
-            client.user(username)
-            client.pass_(password)
-            _, listings, _ = client.list()
-            if not listings:
-                return "当前 POP3 邮箱没有邮件。"
-            messages: list[email.message.Message] = []
-            for listing in listings[-max(1, min(int(limit or 10), 30)):]:
-                number = str(listing.split()[0].decode() if isinstance(listing, bytes) else str(listing).split()[0])
-                _, lines, _ = client.retr(int(number))
-                raw = b"\n".join(line if isinstance(line, bytes) else str(line).encode("utf-8") for line in lines)
-                msg = email.message_from_bytes(raw)
-                if _matches_query(msg, query):
-                    messages.append(msg)
-            if not messages:
-                return f"未找到匹配邮件：{query}" if query else "未读取到可展示的邮件内容。"
-            return "\n\n".join(_format_mail_summary(msg, account=account) for msg in messages)
-        finally:
-            try:
-                client.quit()
-            except Exception:
-                pass
-    except Exception as exc:
-        return _mail_connection_error("POP3", encryption, exc)
 
 
 def _fetch_recent_pop3_items(account: dict[str, Any], *, limit: int = 30) -> list[dict[str, Any]]:
@@ -1400,6 +1401,28 @@ def _mail_notification_event_exists(conn: Any, account_id: str, message_key: str
         (_clean(account_id), _clean(message_key)),
     ).fetchone()
     return row is not None
+
+
+def _local_unacknowledged_mail_count(account: dict[str, Any]) -> int:
+    conn = _conn()
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM mail_notification_events
+        WHERE account_id=? AND platform=? AND user_id=? AND delivery_status='sent' AND acknowledged_at=0
+        """,
+        (
+            _clean(account.get("account_id")),
+            _clean(account.get("platform") or "wecom"),
+            _clean(account.get("user_id")),
+        ),
+    ).fetchone()
+    if not row:
+        return 0
+    try:
+        return int(row["total"] or 0)
+    except Exception:
+        return int(row[0] or 0)
 
 
 def _record_mail_notification_event(

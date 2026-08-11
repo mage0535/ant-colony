@@ -92,7 +92,7 @@ Known external constraints:
 - WeCom contact live API may still require tenant-side permission; local org cache is the fallback.
 - WeCom meeting list may require a higher WeCom edition; meeting-room query remains the bounded supported path.
 - Calendar data depends on tenant calendar permission and actual user-visible schedule data.
-- IMAP/POP3 mail summary is production-shaped; Exchange EWS and Microsoft 365 Graph require site-specific authorization.
+- 邮箱员工侧已关闭正文摘要；IMAP 使用 `UNSEEN` 做真实未读统计，POP3 使用本地未确认新邮件提醒台账，Exchange EWS and Microsoft 365 Graph require site-specific authorization.
 
 ### Phase 2: Active Reminder And Aggregation Layer
 

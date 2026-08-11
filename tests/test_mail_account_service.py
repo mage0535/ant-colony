@@ -825,10 +825,11 @@ def test_mail_query_reports_unread_count_without_fetching_body(tmp_path, monkeyp
     assert "摘要：" not in result
 
 
-def test_summarize_user_mailbox_supports_pop3(tmp_path, monkeypatch) -> None:
+def test_summarize_user_mailbox_supports_pop3_local_unread_ledger(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("ANT_COLONY_DB_PATH", str(tmp_path / "ant.db"))
 
     from src.platform.mail_account_service import save_mail_account, summarize_user_mailbox
+    from src.store.database import Database
 
     save_mail_account(
         {
@@ -845,27 +846,68 @@ def test_summarize_user_mailbox_supports_pop3(tmp_path, monkeypatch) -> None:
         updated_by="admin",
     )
 
-    msg = email.message.EmailMessage()
-    msg["From"] = "boss@example.com"
-    msg["Subject"] = "会议通知"
-    msg["Date"] = "Fri, 17 Jul 2026 09:00:00 +0800"
-    msg.set_content("下午三点开会，请准备材料。")
-    raw_lines = msg.as_bytes().splitlines()
+    conn = Database.get().connect()
+    account_id = "mail-" + __import__("hashlib").sha1("wecom|u1|u1@example.com".encode("utf-8")).hexdigest()[:16]
+    for idx, status in enumerate(["sent", "sent", "baseline"], start=1):
+        conn.execute(
+            """
+            INSERT INTO mail_notification_events (
+                account_id,message_key,platform,user_id,source_label,subject,sender,received_at,received_at_ts,
+                delivery_status,delivery_error,created_at,updated_at
+            ) VALUES (?, ?, 'wecom', 'u1', '默认邮箱 <u1@example.com>', ?, 'boss@example.com', 'today', ?, ?, '', 1000, 1000)
+            """,
+            (account_id, f"msg-{idx}", f"邮件{idx}", float(idx), status),
+        )
+    conn.commit()
 
-    fake_pop = MagicMock()
-    fake_pop.list.return_value = (b"+OK", [b"1 123"], 123)
-    fake_pop.retr.return_value = (b"+OK", raw_lines, 123)
-
-    with patch("poplib.POP3_SSL", return_value=fake_pop) as pop_cls:
+    with patch("poplib.POP3_SSL") as pop_cls:
         result = summarize_user_mailbox("wecom", "u1", limit=5)
 
     pop_cls.assert_not_called()
-    fake_pop.user.assert_not_called()
-    fake_pop.pass_.assert_not_called()
-    assert "POP3 协议不提供可靠未读状态" in result
-    assert "如需查看未读数量" in result
+    assert "当前有 2 封未确认的新邮件提醒" in result
+    assert "POP3 邮箱无法读取服务器真实未读状态" in result
+    assert "清空邮件提醒" in result
     assert "发件人：" not in result
     assert "标题：" not in result
+
+
+def test_mark_mail_notifications_read_clears_pop3_local_unread_ledger(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ANT_COLONY_DB_PATH", str(tmp_path / "ant.db"))
+
+    from src.platform.mail_account_service import mark_mail_notifications_read, save_mail_account, summarize_user_mailbox
+    from src.store.database import Database
+
+    saved = save_mail_account(
+        {
+            "platform": "wecom",
+            "user_id": "u1",
+            "email_address": "u1@example.com",
+            "protocol": "pop3",
+            "imap_host": "pop.example.com",
+            "imap_port": 995,
+            "username": "u1@example.com",
+            "password": "secret",
+            "enabled": True,
+        },
+        updated_by="admin",
+    )
+    conn = Database.get().connect()
+    conn.execute(
+        """
+        INSERT INTO mail_notification_events (
+            account_id,message_key,platform,user_id,source_label,subject,sender,received_at,received_at_ts,
+            delivery_status,delivery_error,created_at,updated_at
+        ) VALUES (?, 'msg-1', 'wecom', 'u1', '默认邮箱 <u1@example.com>', '邮件1', 'boss@example.com', 'today', 1, 'sent', '', 1000, 1000)
+        """,
+        (saved["account_id"],),
+    )
+    conn.commit()
+
+    cleared = mark_mail_notifications_read("wecom", "u1")
+    result = summarize_user_mailbox("wecom", "u1")
+
+    assert cleared["cleared"] == 1
+    assert "当前有 0 封未确认的新邮件提醒" in result
 
 
 def test_mail_summary_uses_clean_body_not_signature_or_forward_headers(monkeypatch) -> None:
@@ -1136,7 +1178,8 @@ def test_pop3_plain_connection_does_not_force_ssl(tmp_path, monkeypatch) -> None
         result = summarize_user_mailbox("wecom", "u-pop3")
 
     assert "来源邮箱：默认邮箱 <u@example.com>" in result
-    assert "POP3 协议不提供可靠未读状态" in result
+    assert "当前有 0 封未确认的新邮件提醒" in result
+    assert "POP3 邮箱无法读取服务器真实未读状态" in result
     plain.assert_not_called()
     ssl.assert_not_called()
 
@@ -1158,7 +1201,8 @@ def test_pop3_starttls_upgrades_before_login(tmp_path, monkeypatch) -> None:
         result = summarize_user_mailbox("wecom", "u-starttls")
 
     assert "来源邮箱：默认邮箱 <u@example.com>" in result
-    assert "POP3 协议不提供可靠未读状态" in result
+    assert "当前有 0 封未确认的新邮件提醒" in result
+    assert "POP3 邮箱无法读取服务器真实未读状态" in result
     client.stls.assert_not_called()
 
 
@@ -1186,7 +1230,8 @@ def test_pop3_login_passerr_returns_actionable_message(tmp_path, monkeypatch) ->
         result = summarize_mail_account(account["account_id"])
 
     assert "来源邮箱：招聘 <hr@example.com>" in result
-    assert "POP3 协议不提供可靠未读状态" in result
+    assert "当前有 0 封未确认的新邮件提醒" in result
+    assert "POP3 邮箱无法读取服务器真实未读状态" in result
     pop_cls.assert_not_called()
     assert "wrong-secret" not in result
 

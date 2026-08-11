@@ -46,6 +46,17 @@ def run_phase1_shortcut(user_id: str, text: str, context: MessageContext) -> Age
     if _looks_mail_reply_drafting(normalized):
         return AgentResponse(text=_mail_reply_drafting_reply())
 
+    if _looks_mail_acknowledgement(normalized):
+        from src.platform.mail_account_service import mark_mail_notifications_read
+
+        result = mark_mail_notifications_read(str(args["platform"]), str(args["user_id"]))
+        return AgentResponse(
+            text=(
+                f"已清空 {int(result.get('cleared') or 0)} 条邮件提醒。"
+                "说明：这只会清空 AI 助手本地的新邮件提醒计数，不会登录邮箱修改真实邮件状态。"
+            )
+        )
+
     if _looks_mail_summary(normalized):
         from src.tools.platform_capability_tools import mail_summary_tool
 
@@ -185,6 +196,10 @@ def _mail_reply_drafting_reply() -> str:
         "3. 粘贴后请说明回复口径，例如“语气正式、确认收到、下午给进度”。\n\n"
         "我会帮你整理一段可复制到邮箱里的中文或英文回复。"
     )
+
+
+def _looks_mail_acknowledgement(text: str) -> bool:
+    return any(word in text for word in ("邮件", "邮箱")) and any(word in text for word in ("清空", "已读", "确认", "归零"))
 
 
 def _looks_mail_summary(text: str) -> bool:
