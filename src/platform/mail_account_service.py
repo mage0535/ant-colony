@@ -1469,10 +1469,9 @@ def _assistant_allows_notification(platform: str, user_id: str) -> bool:
 def _send_mail_notification(account: dict[str, Any], item: dict[str, Any]) -> bool:
     from src.gateway import provider_outbound
 
-    item = _hydrate_mail_item_for_notification(account, item)
     text = (
         "【新邮件提醒】\n"
-        f"{item.get('text') or ''}\n\n"
+        "你有一封新邮件到达。\n\n"
         "可回复“汇总今天邮件”查看近期邮件摘要。AI 助手只提醒和查询，不代发邮件或回复邮件。"
     )
     return provider_outbound.send_platform_text(

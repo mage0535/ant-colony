@@ -489,6 +489,37 @@ def test_mail_new_message_notifier_pushes_only_new_messages_after_baseline(tmp_p
     assert sent == [("u1", new_item)]
 
 
+def test_mail_new_message_notification_only_announces_arrival() -> None:
+    from src.platform.mail_account_service import _send_mail_notification
+
+    sent: list[tuple[str, str, str]] = []
+
+    account = {"platform": "wecom", "user_id": "u1", "email_address": "u1@example.com"}
+    item = {
+        "message_key": "new-1",
+        "received_at": "Fri, 17 Jul 2026 08:30:00 +0800",
+        "sender": "sender@example.com",
+        "subject": "重要合同",
+        "summary": "这是一段邮件正文摘要",
+        "attachments": ["合同.docx"],
+        "text": "邮件到达时间：Fri, 17 Jul 2026 08:30:00 +0800\n发件人：sender@example.com\n标题：重要合同\n摘要：这是一段邮件正文摘要\n附件：合同.docx",
+    }
+
+    with patch("src.gateway.provider_outbound.send_platform_text", side_effect=lambda p, u, t: sent.append((p, u, t)) or True):
+        assert _send_mail_notification(account, item) is True
+
+    assert sent
+    text = sent[0][2]
+    assert "【新邮件提醒】" in text
+    assert "你有一封新邮件到达" in text
+    assert "汇总今天邮件" in text
+    assert "sender@example.com" not in text
+    assert "重要合同" not in text
+    assert "这是一段邮件正文摘要" not in text
+    assert "合同.docx" not in text
+    assert "邮件到达时间" not in text
+
+
 def test_mail_new_message_notifier_does_not_summarize_already_seen_messages(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("ANT_COLONY_DB_PATH", str(tmp_path / "ant.db"))
     monkeypatch.setenv("ANT_COLONY_MAIL_FIRST_RUN_NOTIFY_SECONDS", "0")
