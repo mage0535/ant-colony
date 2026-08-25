@@ -37,7 +37,7 @@
 ## 最新验证
 
 - 本地全量测试：`872 passed`。
-- 测试服务器全量测试：`863 passed`。
+- 测试服务器全量测试：`872 passed`。
 - 测试服务器服务状态：
   - `ant-colony-dashboard` active。
   - `ant-colony-gateway` active。
