@@ -12,11 +12,8 @@ server:
   secret_key: "ant-colony-searxng-secret-2026"
   image_proxy: false
 outgoing:
-  request_timeout: 10.0
-  max_request_timeout: 15.0
-  proxies:
-    all://:
-      - http://127.0.0.1:8118
+  request_timeout: 4.0
+  max_request_timeout: 6.0
 ui:
   static_use_hash: true
   default_theme: simple
@@ -30,22 +27,32 @@ doi_resolvers:
   sci-hub.ru: 'https://sci-hub.ru/'
 default_doi_resolver: 'oadoi.org'
 engines:
-  - name: duckduckgo
-    engine: duckduckgo
-    shortcut: ddg
-  - name: google
-    engine: google
-    shortcut: go
-  - name: bing
-    engine: bing
-    shortcut: bi
-  - name: wikipedia
-    engine: wikipedia
-    shortcut: wp
   - name: github
     engine: github
     shortcut: gh
+    timeout: 4.0
+  - name: brave
+    engine: brave
+    shortcut: br
+    timeout: 4.0
+    disabled: false
+  - name: qwant
+    engine: qwant
+    shortcut: qw
+    timeout: 4.0
+    disabled: false
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+    timeout: 4.0
+    disabled: false
+  - name: bing
+    engine: bing
+    shortcut: bi
+    timeout: 4.0
+    disabled: true
   - name: yahoo
     engine: yahoo
     shortcut: yh
-    disabled: true
+    timeout: 4.0
+    disabled: false

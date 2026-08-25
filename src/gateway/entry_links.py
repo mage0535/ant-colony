@@ -7,7 +7,10 @@ from src.web import admin_auth
 
 
 _KNOWLEDGE_TRIGGERS = (
+    "知识库",
     "打开知识库",
+    "知识库后台",
+    "知识后台",
     "知识库管理",
     "进入知识库",
     "我的知识库",
@@ -17,8 +20,11 @@ _KNOWLEDGE_TRIGGERS = (
 _ADMIN_TRIGGERS = (
     "打开管理员控制台",
     "管理员控制台",
+    "管理后台",
+    "管理员后台",
     "进入后台",
     "打开后台",
+    "后台",
     "开通员工助手",
     "平台管理",
 )
@@ -37,19 +43,26 @@ def build_entry_link_reply(platform: str, user_id: str, text: str) -> str | None
     normalized_text = _normalize_text(text)
     if not normalized_user_id or not normalized_text:
         return None
+    knowledge_match = _matches(normalized_text, _KNOWLEDGE_TRIGGERS)
+    admin_match = _matches(normalized_text, _ADMIN_TRIGGERS)
     if _matches(normalized_text, _MENU_TRIGGERS):
         return _menu_reply(normalized_platform, normalized_user_id)
-    if _matches(normalized_text, _ADMIN_TRIGGERS):
-        if not admin_auth.is_platform_admin(normalized_platform, normalized_user_id):
-            return "你当前没有管理员权限，不能打开管理员控制台。你可以发送“打开知识库”进入自己的知识库管理页面。"
-        return _admin_reply(normalized_platform, normalized_user_id)
-    if _matches(normalized_text, _KNOWLEDGE_TRIGGERS):
+    # 用户明确提到知识库时，优先返回知识库入口，避免“后台”泛词误进管理员控制台。
+    if knowledge_match:
         return _knowledge_reply(normalized_platform, normalized_user_id)
+    if admin_match:
+        if not (admin_auth.is_platform_admin(normalized_platform, normalized_user_id) or admin_auth.is_hr_specialist(normalized_platform, normalized_user_id)):
+            return "你当前没有管理员权限或人事专员权限，不能打开后台控制台。你可以发送“打开知识库”进入自己的知识库管理页面。"
+        return _admin_reply(normalized_platform, normalized_user_id)
     return None
 
 
 def is_entry_menu_command(text: str) -> bool:
-    return _matches(_normalize_text(text), _MENU_TRIGGERS)
+    """Only match short obvious menu commands for zero-cost pre-filter."""
+    normalized = _normalize_text(text)
+    if len(normalized) > 4:
+        return False
+    return normalized in {_normalize_text(item) for item in _MENU_TRIGGERS}
 
 
 def build_platform_entry_menu(platform: str, user_id: str, *, is_admin: bool = False) -> dict[str, object]:
@@ -68,12 +81,13 @@ def build_platform_entry_menu(platform: str, user_id: str, *, is_admin: bool = F
             "url": _knowledge_url(normalized_platform, user_id),
         },
     ]
-    if is_admin:
+    is_hr = admin_auth.is_hr_specialist(normalized_platform, user_id)
+    if is_admin or is_hr:
         items.append(
             {
                 "key": "admin_console",
-                "title": "管理员控制台",
-                "description": "平台 Bot、员工助手和公司级知识库管理",
+                "title": "管理员控制台" if is_admin else "人事专员后台",
+                "description": "平台 Bot、员工助手、公司级知识库、邮箱、业务系统和集成管理" if is_admin else "进入审批假期管理，查看和调整员工假期额度",
                 "url": _admin_url(normalized_platform, user_id),
             }
         )
@@ -85,7 +99,7 @@ def build_platform_entry_payloads(platform: str, user_id: str, *, is_admin: bool
     items = menu["items"]
     lines = ["可用入口："]
     for index, item in enumerate(items, start=1):
-        lines.append(f"{index}. {item['title']}: {item['url']}")
+        lines.append(f"{index}. {item['title']}：{item['url']}")
     text = "\n".join(lines)
     return {
         "platform": menu["platform"],
@@ -98,6 +112,7 @@ def build_platform_entry_payloads(platform: str, user_id: str, *, is_admin: bool
 
 
 def _knowledge_reply(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
     return (
         "知识库管理入口：\n"
         f"{_knowledge_url(platform, user_id)}\n\n"
@@ -106,26 +121,36 @@ def _knowledge_reply(platform: str, user_id: str) -> str:
 
 
 def _admin_reply(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
+    title = "管理员控制台入口" if admin_auth.is_platform_admin(platform, user_id) else "人事专员后台入口"
+    description = (
+        "进入后可以开通平台 Bot、管理员工 AI 助手、导入公司说明书、管理公司级知识库、配置邮箱、业务系统和外部集成。"
+        if admin_auth.is_platform_admin(platform, user_id)
+        else "进入后可以使用审批假期管理，查看员工动态假期提示、调整假期额度、处理负数假期和运行审批假期同步。"
+    )
     return (
-        "管理员控制台入口：\n"
+        f"{title}：\n"
         f"{_admin_url(platform, user_id)}\n\n"
-        "进入后可以开通平台 Bot、管理员工 AI 助手、导入公司说明书和管理公司级知识库。"
+        f"{description}"
     )
 
 
 def _menu_reply(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
     is_admin = admin_auth.is_platform_admin(platform, user_id)
     payloads = build_platform_entry_payloads(platform, user_id, is_admin=is_admin)
-    return payloads["text"]
+    return str(payloads["text"])
 
 
 def _knowledge_url(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
     token = admin_auth.create_im_user_token(platform=platform, user_id=user_id, ttl_seconds=_ttl_seconds())
     query = urlencode({"platform": platform, "user_id": user_id, "user_token": token})
     return f"{_base_url()}/knowledge/user?{query}"
 
 
 def _admin_url(platform: str, user_id: str) -> str:
+    platform = _normalize_platform(platform)
     token = admin_auth.create_admin_console_token(platform=platform, user_id=user_id, ttl_seconds=_ttl_seconds())
     query = urlencode({"platform": platform, "user_id": user_id, "admin_token": token})
     return f"{_base_url()}/admin/console?{query}"
@@ -166,16 +191,25 @@ def _normalize_platform(platform: str) -> str:
     return normalized
 
 
-def _build_feishu_entry_card(items: list[dict[str, str]]) -> dict[str, object]:
+def _build_feishu_entry_card(items: object) -> dict[str, object]:
     elements = []
-    for item in items:
+    for item in items:  # type: ignore[assignment]
+        elements.append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"**{item['title']}**\n{item['description']}",
+                },
+            }
+        )
         elements.append(
             {
                 "tag": "action",
                 "actions": [
                     {
                         "tag": "button",
-                        "text": {"tag": "plain_text", "content": item["title"]},
+                        "text": {"tag": "plain_text", "content": "打开"},
                         "type": "primary",
                         "url": item["url"],
                     }
@@ -189,8 +223,13 @@ def _build_feishu_entry_card(items: list[dict[str, str]]) -> dict[str, object]:
     }
 
 
-def _build_dingtalk_entry_card(items: list[dict[str, str]]) -> dict[str, object]:
+def _build_dingtalk_entry_card(items: object) -> dict[str, object]:
+    lines = ["### Ant Colony 入口"]
+    for item in items:  # type: ignore[assignment]
+        lines.append(f"- [{item['title']}]({item['url']})：{item['description']}")
     return {
         "title": "Ant Colony 入口",
-        "buttons": [{"title": item["title"], "actionURL": item["url"]} for item in items],
+        "markdown": "\n".join(lines),
+        "single_title": "打开入口",
+        "single_url": items[0]["url"] if items else "",  # type: ignore[index]
     }

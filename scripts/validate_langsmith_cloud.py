@@ -22,9 +22,16 @@ def validate_langsmith_cloud() -> dict:
     }
 
 
+def langsmith_cloud_ok(report: dict) -> bool:
+    return bool(report.get("configured") and report.get("project_ready") and report.get("project_visible"))
+
+
 def main() -> int:
-    print(json.dumps(validate_langsmith_cloud(), ensure_ascii=False, indent=2))
-    return 0
+    report = validate_langsmith_cloud()
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if os.environ.get("ANT_COLONY_VALIDATE_ALLOW_UNCONFIGURED", "").strip().lower() in {"1", "true", "yes"} and not report.get("configured"):
+        return 0
+    return 0 if langsmith_cloud_ok(report) else 1
 
 
 if __name__ == "__main__":

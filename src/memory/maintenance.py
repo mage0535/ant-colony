@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 from typing import Any
 
@@ -22,22 +23,40 @@ class MemoryMaintenanceCycle:
         self.cold = cold_store
 
     def archive_session(self, space_id: str, batch_size: int = 50) -> dict[str, Any]:
-        messages = self._repo.list_messages(space_id=space_id, limit=batch_size)
+        try:
+            messages = self._repo.list_messages(space_id=space_id, limit=batch_size)
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower():
+                logger.warning("MemoryMaintenance: database busy while listing messages for %s: %s", space_id, exc)
+                return {"space_id": space_id, "messages_archived": 0, "facts_retained": 0, "relations_extracted": 0, "skipped": "database_busy"}
+            raise
         if not messages:
-            return {"space_id": space_id, "archived": 0}
+            return {"space_id": space_id, "messages_archived": 0, "facts_retained": 0, "relations_extracted": 0}
 
         warm_count = 0
         cold_count = 0
-        for m in messages:
-            content = str(m.get("content", ""))
-            if len(content) < 20:
-                continue
-            self.warm.retain(content, source=f"space:{space_id}", domain=space_id)
-            warm_count += 1
-            cold_count += self.cold.extract_and_ingest(content, domain=space_id)
+        try:
+            for m in messages:
+                content = str(m.get("content", ""))
+                if len(content) < 20:
+                    continue
+                self.warm.retain(content, source=f"space:{space_id}", domain=space_id)
+                warm_count += 1
+                cold_count += self.cold.extract_and_ingest(content, domain=space_id)
 
-        # Mark as processed
-        self._repo.mark_messages_processed(space_id)
+            # Mark as processed
+            self._repo.mark_messages_processed(space_id)
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower():
+                logger.warning("MemoryMaintenance: database busy while archiving %s: %s", space_id, exc)
+                return {
+                    "space_id": space_id,
+                    "messages_archived": 0,
+                    "facts_retained": warm_count,
+                    "relations_extracted": cold_count,
+                    "skipped": "database_busy",
+                }
+            raise
 
         logger.info("MemoryMaintenance: archived %d msgs → %d facts, %d edges (space=%s)",
                      len(messages), warm_count, cold_count, space_id)

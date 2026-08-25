@@ -5,10 +5,11 @@ import json
 import logging
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from threading import Thread
 
-from src.orchestrator.cron_job import CronJobRegistry, run_no_agent
+from src.orchestrator.cron_job import CronJobRegistry, cron_result_status, run_no_agent
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,8 @@ class CronScheduler:
                     if job.no_agent:
                         result = run_no_agent(job.command)
                     else:
-                        result = "(agent mode not yet implemented)"
-                    status = "OK" if not result.startswith(("FAILED", "EXCEPTION")) else result[:100]
+                        result = "REJECTED: agent mode cron execution is not implemented"
+                    status = cron_result_status(result)
                     self._registry.record_run(job.id, status)
                     logger.info("Cron job %s result: %s", job.name, result[:200])
             except Exception as e:
@@ -91,15 +92,90 @@ def _register_defaults(reg: CronJobRegistry) -> None:
             no_agent=True,
             tags=["system", "health"],
         ),
+        CronJob(
+            id="process-change-notifier",
+            name="审批/流程状态变更通知",
+            schedule="every 1 min",
+            command="python:src.platform.process_change_notifier.run_process_change_notifier",
+            no_agent=True,
+            tags=["system", "workflow", "notification"],
+        ),
+        CronJob(
+            id="leave-quota-realtime-sync",
+            name="假期额度实时同步",
+            schedule="every 1 min",
+            command="python:src.platform.leave_quota_service.run_realtime_leave_sync",
+            no_agent=True,
+            tags=["system", "workflow", "leave"],
+        ),
+        CronJob(
+            id="daily-personal-brief",
+            name="员工每日工作简报",
+            schedule="every 30 min",
+            command="python:src.platform.daily_brief_service.run_daily_briefs",
+            no_agent=True,
+            enabled=False,
+            tags=["system", "brief", "notification"],
+        ),
+        CronJob(
+            id="mail-new-message-notifier",
+            name="企业邮箱新邮件提醒",
+            schedule="every 1 min",
+            command="python:src.platform.mail_account_service.run_mail_new_message_notifier",
+            no_agent=True,
+            tags=["system", "mail", "notification"],
+        ),
+        CronJob(
+            id="public-data-subscriptions",
+            name="公共数据订阅检查",
+            schedule="every 30 min",
+            command="python:src.platform.public_data_service.run_public_data_subscriptions",
+            no_agent=True,
+            tags=["system", "public-data", "notification"],
+        ),
+        CronJob(
+            id="ratemin-pending-notifier",
+            name="业务系统待办通知补发",
+            schedule="every 1 min",
+            command="python:src.platform.ratemin_service.run_ratemin_pending_notifier",
+            no_agent=True,
+            tags=["system", "ratemin", "notification"],
+        ),
+        CronJob(
+            id="ratemin-collector-health",
+            name="业务系统采集器健康检查",
+            schedule="every 1 min",
+            command="python:src.platform.ratemin_collector_health.run_ratemin_collector_health_check",
+            no_agent=True,
+            tags=["system", "ratemin", "health"],
+        ),
     ]
     for j in defaults:
         existing = reg.get(j.id)
         if not existing:
             reg.register(j)
-        elif existing.command != j.command:
-            existing.command = j.command
-            existing.no_agent = True
-            reg.register(existing)
+        else:
+            changed = False
+            if existing.command != j.command:
+                existing.command = j.command
+                existing.no_agent = True
+                changed = True
+            if j.id == "mail-new-message-notifier" and existing.schedule != j.schedule:
+                existing.schedule = j.schedule
+                existing.last_status = "已迁移：邮箱新邮件监听刷新频率为 1 分钟"
+                changed = True
+            if j.id == "process-change-notifier" and existing.schedule != j.schedule:
+                existing.schedule = j.schedule
+                existing.last_status = "process notifications migrated to every 1 min"
+                changed = True
+            # Daily briefs are retained for manual/audited use but must not
+            # proactively message employees unless a later product decision enables them.
+            if j.id == "daily-personal-brief" and existing.enabled:
+                existing.enabled = False
+                existing.last_status = "已停用：默认不主动推送每日工作简报"
+                changed = True
+            if changed:
+                reg.register(existing)
 
 
 def _health_check() -> str:
@@ -124,8 +200,13 @@ def _org_sync() -> str:
         data=b"",
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=120) as response:
-        return f"HTTP {response.status}"
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            body = response.read(500).decode("utf-8", errors="replace")
+            return f"HTTP {response.status}: {body}"
+    except urllib.error.HTTPError as exc:
+        body = exc.read(1000).decode("utf-8", errors="replace")
+        return f"HTTP {exc.code}: {body}"
 
 
 if __name__ == "__main__":

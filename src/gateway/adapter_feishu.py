@@ -14,6 +14,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from src.gateway.entry_links import build_platform_entry_payloads, is_entry_menu_command
+from src.gateway.message_chunking import split_text_for_im
 from src.gateway.provider_file_ingestion import summarize_platform_file_bytes
 from src.web import admin_auth
 
@@ -129,24 +130,25 @@ class FeishuAdapter:
                 logger.error("Cannot send: no tenant token")
                 return False
 
-            content = json.dumps({"text": text}, ensure_ascii=False)
             url = f"{self._domain}/open-apis/im/v1/messages?receive_id_type=chat_id"
-            payload = json.dumps({
-                "receive_id": chat_id,
-                "msg_type": msg_type,
-                "content": content,
-            }, ensure_ascii=False).encode("utf-8")
+            for chunk in split_text_for_im(text, hard_limit=4000):
+                content = json.dumps({"text": chunk}, ensure_ascii=False)
+                payload = json.dumps({
+                    "receive_id": chat_id,
+                    "msg_type": msg_type,
+                    "content": content,
+                }, ensure_ascii=False).encode("utf-8")
 
-            req = Request(url, data=payload, headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json; charset=utf-8",
-            })
-            with urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
+                req = Request(url, data=payload, headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json; charset=utf-8",
+                })
+                with urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
 
-            if data.get("code", 0) != 0:
-                logger.warning("Feishu send failed: %s (code=%s)", data.get("msg", "unknown"), data.get("code"))
-                return False
+                if data.get("code", 0) != 0:
+                    logger.warning("Feishu send failed: %s (code=%s)", data.get("msg", "unknown"), data.get("code"))
+                    return False
 
             logger.info("Feishu message sent to chat %s (%d chars)", chat_id, len(text))
             return True

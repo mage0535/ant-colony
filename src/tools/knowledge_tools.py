@@ -54,19 +54,33 @@ def _candidate_queries(query: str) -> list[str]:
     return unique
 
 
-def search_knowledge_entries(query: str, *, user_id: str = "", space_id: str = "", limit: int = 5):
+def search_knowledge_entries(
+    query: str,
+    *,
+    user_id: str = "",
+    space_id: str = "",
+    limit: int = 5,
+    allow_manual_fallback: bool = True,
+):
     from src.knowledge.contracts import KnowledgeOwnerType
     from src.knowledge.repository_factory import build_knowledge_repository
 
     repo = build_knowledge_repository()
     merged = []
     seen_ids: set[str] = set()
+    seen_fingerprints: set[str] = set()
     for candidate in _candidate_queries(query):
         results = repo.search_accessible(candidate, user_id=user_id, space_id=space_id, limit=limit) if user_id and user_id != "*" else repo.search(candidate, limit=limit)
         for result in results:
+            if _is_transient_workflow_artifact(result):
+                continue
+            fingerprint = _knowledge_fingerprint(result)
+            if fingerprint in seen_fingerprints:
+                continue
             if result.id in seen_ids:
                 continue
             seen_ids.add(result.id)
+            seen_fingerprints.add(fingerprint)
             merged.append(result)
             if len(merged) >= limit:
                 return merged
@@ -85,6 +99,8 @@ def search_knowledge_entries(query: str, *, user_id: str = "", space_id: str = "
 
     scored = []
     for entry in visible_entries:
+        if _is_transient_workflow_artifact(entry):
+            continue
         title = str(entry.metadata.get("title", ""))
         haystack = f"{title}\n{' '.join(entry.tags)}\n{entry.content[:4000]}"
         score = 0
@@ -98,7 +114,73 @@ def search_knowledge_entries(query: str, *, user_id: str = "", space_id: str = "
         if score > 0:
             scored.append((score, entry))
     scored.sort(key=lambda item: item[0], reverse=True)
-    return [entry for _, entry in scored[:limit]]
+    deduped: list[Any] = []
+    seen_fingerprints.clear()
+    for _, entry in scored:
+        fingerprint = _knowledge_fingerprint(entry)
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
+        deduped.append(entry)
+        if len(deduped) >= limit:
+            break
+    if deduped:
+        return deduped
+    if allow_manual_fallback and _looks_operation_help_query(query):
+        for fallback_query in (
+            "企业 AI 助手使用总入口",
+            "企业微信 AI 助手功能与操作说明书",
+            "企业微信 AI 助手激活说明书",
+        ):
+            fallback_results = search_knowledge_entries(
+                fallback_query,
+                user_id=user_id,
+                space_id=space_id,
+                limit=limit,
+                allow_manual_fallback=False,
+            )
+            if fallback_results:
+                return fallback_results
+    return deduped
+
+
+def _looks_operation_help_query(query: str) -> bool:
+    markers = (
+        "不会",
+        "怎么用",
+        "如何用",
+        "如何操作",
+        "怎么操作",
+        "操作方法",
+        "使用方法",
+        "使用说明",
+        "说明书",
+        "指南",
+        "详细步骤",
+        "逐步操作",
+        "没回复",
+        "没有反应",
+        "打不开",
+        "上传文件",
+        "知识库",
+        "后台",
+    )
+    text = str(query or "").strip()
+    return any(marker in text for marker in markers)
+
+
+def _is_transient_workflow_artifact(entry: Any) -> bool:
+    title = str(getattr(entry, "metadata", {}).get("title", "")).strip()
+    tags = {str(tag) for tag in getattr(entry, "tags", [])}
+    if "enterprise_app_query" in tags or "approval_followup" in tags:
+        return True
+    return title in {"企业应用查询结果", "审批跟踪结果"}
+
+
+def _knowledge_fingerprint(entry: Any) -> str:
+    title = str(getattr(entry, "metadata", {}).get("title", "")).strip()
+    content = re.sub(r"\s+", "", str(getattr(entry, "content", "")))[:800]
+    return f"{title}:{content}"
 
 
 def search_knowledge_tool(args: dict[str, Any]) -> str:

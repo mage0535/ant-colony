@@ -72,9 +72,19 @@ def validate_full_roundtrip() -> dict[str, Any]:
     }
 
 
+def full_roundtrip_ok(report: dict[str, Any]) -> bool:
+    return bool(
+        report.get("configured")
+        and report.get("uploaded")
+        and report.get("bot_file")
+        and report.get("pushed")
+    )
+
+
 def main() -> int:
-    print(json.dumps(validate_full_roundtrip(), ensure_ascii=False, indent=2))
-    return 0
+    report = validate_full_roundtrip()
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if full_roundtrip_ok(report) else 1
 
 
 if __name__ == "__main__":

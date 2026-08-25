@@ -4,10 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ant-colony"
-version = "0.1.0"
+version = "1.0.1"
 description = "Enterprise multi-agent collaboration system"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.40.0",
     "cryptography>=41.0.0",
     "defusedxml>=0.7.1",
     "fastapi>=0.115.0",
@@ -23,6 +24,13 @@ dependencies = [
     "requests>=2.31.0",
     "uvicorn>=0.30.0",
     "websockets>=13.0",
+]
+
+[project.optional-dependencies]
+web-research = [
+    "crawl4ai>=0.6.0",
+    "playwright>=1.45.0",
+    "trafilatura>=1.9.0",
 ]
 
 [project.scripts]

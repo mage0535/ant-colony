@@ -141,9 +141,12 @@ class CallbackHandler(BaseHTTPRequestHandler):
     def _forward_and_reply(self, msg_dict: dict[str, str]) -> str | None:
         import httpx
         from src.gateway.wecom_outbound import send_text
+        if try_handle_approval_event(msg_dict):
+            logger.info("Handled WeCom approval callback event without LLM forwarding")
+            return None
         payload = build_gateway_payload(msg_dict)
         try:
-            with httpx.Client(base_url=self.gateway_url, timeout=60) as client:
+            with httpx.Client(base_url=self.gateway_url, timeout=600) as client:
                 resp = client.post("/", json=payload)
                 if resp.status_code != 200:
                     logger.warning("gateway returned %s: %s", resp.status_code, resp.text[:200])
@@ -201,6 +204,23 @@ def build_gateway_payload(msg_dict: dict[str, str]) -> dict[str, Any]:
     else:
         payload["is_direct"] = True
     return payload
+
+
+def try_handle_approval_event(msg_dict: dict[str, str]) -> bool:
+    msg_type = (msg_dict.get("MsgType") or "").strip().lower()
+    event = (msg_dict.get("Event") or "").strip().lower()
+    if msg_type != "event":
+        return False
+    if "approval" not in event:
+        return False
+    try:
+        from src.platform.leave_quota_service import process_wecom_approval_callback
+
+        process_wecom_approval_callback(msg_dict)
+        return True
+    except Exception as exc:
+        logger.warning("Failed to process WeCom approval event callback: %s", exc)
+        return True
 
 
 def load_crypto_from_env(prefix: str = "WECOM_") -> WeComCrypto | None:

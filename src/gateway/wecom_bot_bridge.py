@@ -21,6 +21,7 @@ from src.gateway.file_message_pairing import (
     looks_document_generation_request,
     should_generate_document_from_content,
 )
+from src.gateway.message_chunking import split_text_for_im
 from src.gateway.wecom_file_handler import summarize_file_bytes
 
 logger = logging.getLogger(__name__)
@@ -197,6 +198,17 @@ class WeComBotBridge:
             await self._handle_message_callback(body, req_id=req_id)
         except Exception:
             logger.exception("WeCom Bot message handling failed")
+            user_id = str((body.get("from") or {}).get("userid") or "")
+            chat_id = str(body.get("chatid") or user_id or "")
+            fallback_req_id = req_id or self._reply_req_id_for_chat(chat_id)
+            try:
+                await self._reply_text(
+                    fallback_req_id,
+                    "刚才消息已收到，但处理附件或消息内容时遇到异常。请稍后再发一次，或改成文字说明你的需求。",
+                    chat_id=chat_id,
+                )
+            except Exception:
+                logger.exception("failed to send WeCom Bot visible fallback after handler error")
 
     async def _handle_message_callback(self, body: dict[str, Any], req_id: str) -> None:
         now = time.time()
@@ -240,6 +252,11 @@ class WeComBotBridge:
         content = self._extract_text(body)
         if not content:
             logger.info("WeCom Bot inbound ignored: empty extracted text for msgtype=%s body=%s", msgtype, body)
+            await self._reply_text(
+                req_id,
+                "我暂时没有识别到可处理的文字内容。请直接发送文字说明需求，或上传 Word、Excel、PPT、PDF 等文件后再说明要我怎么处理。",
+                chat_id=chat_id,
+            )
             return
 
         buffered_file = self._pop_recent_file(user_id, now)
@@ -270,10 +287,20 @@ class WeComBotBridge:
         if payload.get("is_file_message") and should_generate_document_from_content(str(payload.get("content") or "")):
             await self._reply_text("", "已收到文件和要求，正在生成文档，请稍候 1-3 分钟。", chat_id=chat_id)
         timeout_seconds = 600 if payload.get("is_file_message") else 60
-        async with httpx.AsyncClient(base_url=self.gateway_url, timeout=timeout_seconds) as client:
-            resp = await client.post("/", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+        try:
+            async with httpx.AsyncClient(base_url=self.gateway_url, timeout=timeout_seconds) as client:
+                resp = await client.post("/", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception:
+            logger.exception("Gateway forwarding failed")
+            reply_req = req_id or self._reply_req_id_for_chat(chat_id)
+            await self._reply_text(
+                reply_req,
+                "刚才消息已收到，但后端处理服务暂时异常。请稍后再发一次，或换一种更具体的说法重试。",
+                chat_id=chat_id,
+            )
+            return
         logger.info("Gateway replied: req_id=%s keys=%s", req_id, sorted(data.keys()))
         reply = data.get("reply", "")
         if reply:
@@ -293,15 +320,24 @@ class WeComBotBridge:
     async def _reply_text(self, req_id: str, text: str, chat_id: str = "") -> None:
         if not self._ws or not text:
             return
+        chunks = split_text_for_im(text, hard_limit=4000)
+        if not chunks:
+            return
+        first, rest = chunks[0], chunks[1:]
         if req_id:
             await self._send_reply_request(
                 req_id,
-                {"msgtype": "markdown", "markdown": {"content": text[:4000]}},
+                {"msgtype": "markdown", "markdown": {"content": first}},
             )
         else:
             await self._send_request(
                 APP_CMD_SEND,
-                {"chatid": chat_id, "msgtype": "markdown", "markdown": {"content": text[:4000]}},
+                {"chatid": chat_id, "msgtype": "markdown", "markdown": {"content": first}},
+            )
+        for chunk in rest:
+            await self._send_request(
+                APP_CMD_SEND,
+                {"chatid": chat_id, "msgtype": "markdown", "markdown": {"content": chunk}},
             )
 
     async def _send_request(self, cmd: str, body: dict[str, Any], timeout: float = 30) -> dict[str, Any]:

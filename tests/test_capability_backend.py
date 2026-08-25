@@ -130,6 +130,17 @@ class TestCapabilityBackend(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.content, "provider-b ok")
 
+    def test_failed_provider_errors_are_not_formatted_for_users(self) -> None:
+        from src.platform.capability_backend import CapabilityBackend, PlatformCapabilityResult
+
+        backend = CapabilityBackend([])
+        text = backend.format_results(
+            [PlatformCapabilityResult("wecom", "企业微信", "HTTP Error 404: Not Found", success=False)],
+            "empty",
+        )
+
+        self.assertEqual(text, "empty")
+
     def test_supports_reports_known_capability(self) -> None:
         from src.platform.capability_backend import CapabilityBackend
 
@@ -465,6 +476,26 @@ class TestCapabilityBackend(unittest.TestCase):
             },
         )
         self.assertEqual(
+            backend.describe_capability("apps.query"),
+            {
+                "capability_id": "apps.query",
+                "method_name": "query_enterprise_apps",
+                "providers": ["系统能力"],
+                "domain": "apps",
+                "requires_user_context": True,
+            },
+        )
+        self.assertEqual(
+            backend.describe_capability("meeting.room.query"),
+            {
+                "capability_id": "meeting.room.query",
+                "method_name": "query_meeting_room",
+                "providers": ["系统能力"],
+                "domain": "meeting",
+                "requires_user_context": True,
+            },
+        )
+        self.assertEqual(
             backend.describe_capability("mail.get"),
             {
                 "capability_id": "mail.get",
@@ -475,3 +506,80 @@ class TestCapabilityBackend(unittest.TestCase):
                 "requires_user_context": True,
             },
         )
+
+
+def test_backend_injects_context_when_provider_declares_it() -> None:
+    from src.platform.capability_backend import CapabilityBackend, CapabilityProvider, CapabilitySpec
+
+    class ContextAwareClient:
+        def query(self, text, capability_context=None):
+            return f"{text}:{capability_context.user_id}:{capability_context.platform}"
+
+    backend = CapabilityBackend(
+        [CapabilityProvider("wecom", "企业微信", lambda: ContextAwareClient())],
+        {"apps.query": CapabilitySpec("apps.query", "query", requires_user_context=True)},
+    )
+
+    result = backend.invoke_first(
+        "apps.query",
+        "审批",
+        context={"user_id": "u1", "platform": "wecom"},
+    )
+
+    assert result is not None
+    assert result.content == "审批:u1:wecom"
+
+
+def test_app_query_uses_current_im_provider_and_internal_connectors_only() -> None:
+    from src.platform.capability_backend import CapabilityBackend, CapabilityProvider
+
+    class Client:
+        def __init__(self, name):
+            self.name = name
+
+        def query_enterprise_apps(self, query, capability_context=None):
+            return f"{self.name}:{query}"
+
+    backend = CapabilityBackend(
+        [
+            CapabilityProvider("internal", "系统能力", lambda: Client("internal")),
+            CapabilityProvider("wecom", "企业微信", lambda: Client("wecom")),
+            CapabilityProvider("feishu", "飞书", lambda: Client("feishu")),
+        ]
+    )
+
+    results = backend.invoke(
+        "apps.query",
+        "审批",
+        context={"user_id": "u1", "platform": "wecom_bot"},
+    )
+
+    assert [item.provider for item in results] == ["internal", "wecom"]
+
+
+def test_wecom_robot_mcp_capabilities_are_registered() -> None:
+    from src.platform.capability_backend import CapabilityBackend, CapabilityProvider
+
+    backend = CapabilityBackend(
+        [
+            CapabilityProvider("wecom", "企业微信", lambda: object()),
+            CapabilityProvider("wecom_robot_mcp", "企业微信机器人 MCP", lambda: object()),
+        ]
+    )
+
+    assert backend.describe_capability("todo.create") == {
+        "capability_id": "todo.create",
+        "method_name": "create_todo",
+        "providers": ["企业微信机器人 MCP"],
+        "risk_level": "medium",
+        "domain": "todo",
+        "requires_user_context": True,
+        "audit_scope": "sensitive",
+    }
+    assert backend.describe_capability("docs.smartpage.create") == {
+        "capability_id": "docs.smartpage.create",
+        "method_name": "smartpage_create",
+        "providers": ["企业微信机器人 MCP"],
+        "domain": "docs",
+        "requires_user_context": True,
+    }

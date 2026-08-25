@@ -117,8 +117,8 @@ def test_upload_indexes_to_auto_scope_by_default() -> None:
         result = upload_file(file=upload, user_id="u1", space_id="proj-1")
 
     assert result["indexed"] == "entry-1"
-    assert result["knowledge_owner_type"] == "department"
-    assert result["knowledge_owner_id"] == "dept-2"
+    assert result["owner_type"] == "department"
+    assert result["owner_id"] == "dept-2"
     fake_collector.collect_file.assert_called_once_with(
         os.path.join("/tmp/files", "s1/demo.docx"),
         owner_type="department",
@@ -150,8 +150,8 @@ def test_upload_can_index_to_organization_scope() -> None:
         )
 
     assert result["indexed"] == "entry-2"
-    assert result["knowledge_owner_type"] == "organization"
-    assert result["knowledge_owner_id"] == "*"
+    assert result["owner_type"] == "organization"
+    assert result["owner_id"] == "*"
     fake_collector.collect_file.assert_called_once_with(
         os.path.join("/tmp/files", "dept-1/notice.pdf"),
         owner_type="organization",

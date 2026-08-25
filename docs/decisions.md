@@ -1,4 +1,4 @@
-﻿# Architecture Decisions
+# Architecture Decisions
 
 ## 已采纳
 

@@ -32,6 +32,7 @@ class TestDocumentPushBehavior(unittest.TestCase):
                 "content": "这是一个足够长的文档内容。" * 20,
                 "from": "u123",
                 "format": "docx",
+                "_skip_enrichment": True,
             }
         )
 
@@ -59,6 +60,7 @@ class TestDocumentPushBehavior(unittest.TestCase):
                 "content": "这是一个足够长的文档内容。" * 20,
                 "from": "u123",
                 "format": "docx",
+                "_skip_enrichment": True,
             }
         )
 
@@ -85,6 +87,7 @@ class TestDocumentPushBehavior(unittest.TestCase):
                 "from": "u123",
                 "format": "docx",
                 "_source_provider": "wecom_bot",
+                "_skip_enrichment": True,
             }
         )
 
@@ -109,6 +112,7 @@ class TestDocumentPushBehavior(unittest.TestCase):
                 "from": "u123",
                 "format": "docx",
                 "_source_provider": "wecom_bot",
+                "_skip_enrichment": True,
             }
         )
 
@@ -1041,3 +1045,114 @@ class TestWeComFileRouting(unittest.TestCase):
         self.assertEqual(args["_source_provider"], "wecom_bot")
         self.assertEqual(args["_template_path"], "/tmp/template.docx")
         self.assertIn("用户发送了文件：模板.docx", args["_context_text"])
+
+    def test_web_ppt_search_request_returns_links_without_generating_pptx(self) -> None:
+        from src.gateway.inbound_service import InboundGatewayService, _text_buffer, _file_buffer
+        from src.gateway.dispatcher import Dispatcher
+
+        _text_buffer.clear()
+        _file_buffer.clear()
+        self.addCleanup(_text_buffer.clear)
+        self.addCleanup(_file_buffer.clear)
+
+        service = InboundGatewayService(dispatcher=Dispatcher(), batch_processor=MagicMock())
+        fake_convo = MagicMock(get_context=MagicMock(return_value=""), add=MagicMock())
+        service._conversations = MagicMock()
+        service._conversations.get.return_value = fake_convo
+        service._conversations.save_all = MagicMock()
+        service.get_or_create_agent = MagicMock()
+
+        with patch("src.tools.web_research_service.web_ppt_search", return_value="1. 相关PPT资料\n2. 课件链接") as mock_search, \
+             patch("src.tools.builtin._generate_report_handler", return_value="[BOT_FILE]{\"path\":\"/tmp/report.pptx\"}") as mock_generate:
+            result = service.handle_wecom_payload(
+                {
+                    "from_user_id": "u123",
+                    "msg_type": "text",
+                    "content": "上网查找生成制氢转化管缺陷方面的总结PPT",
+                    "is_direct": True,
+                    "provider": "wecom_bot",
+                    "transport": "wecom_bot_ws",
+                }
+            )
+
+        self.assertEqual(result.route_kind, "personal")
+        self.assertIn("查找已有 PPT 资料", result.response.text)
+        self.assertIn("相关PPT资料", result.response.text)
+        self.assertFalse(service.get_or_create_agent.called)
+        mock_search.assert_called_once()
+        search_args = mock_search.call_args
+        self.assertIn("制氢转化管缺陷", search_args.args[0])
+        self.assertNotIn("生成制氢", search_args.args[0])
+        self.assertEqual(search_args.kwargs["max_results"], 8)
+        mock_generate.assert_not_called()
+
+    def test_web_ppt_search_request_uses_specialized_search_without_loose_fallback(self) -> None:
+        from src.gateway.inbound_service import InboundGatewayService, _text_buffer, _file_buffer
+        from src.gateway.dispatcher import Dispatcher
+
+        _text_buffer.clear()
+        _file_buffer.clear()
+        self.addCleanup(_text_buffer.clear)
+        self.addCleanup(_file_buffer.clear)
+
+        service = InboundGatewayService(dispatcher=Dispatcher(), batch_processor=MagicMock())
+        service._conversations = MagicMock()
+        service._conversations.get.return_value = MagicMock(get_context=MagicMock(return_value=""), add=MagicMock())
+        service._conversations.save_all = MagicMock()
+
+        with patch("src.tools.web_research_service.web_ppt_search", return_value="未找到明确高相关 PPT/PPTX/课件结果：x") as mock_search:
+            result = service.handle_wecom_payload(
+                {
+                    "from_user_id": "u123",
+                    "msg_type": "text",
+                    "content": "上网查找生成制氢转化管缺陷方面的总结PPT",
+                    "is_direct": True,
+                    "provider": "wecom_bot",
+                }
+            )
+
+        self.assertIn("未找到明确高相关 PPT/PPTX/课件结果", result.response.text)
+        strict_query = mock_search.call_args.args[0]
+        self.assertIn("制氢转化管缺陷", strict_query)
+        self.assertNotIn("生成制氢", strict_query)
+
+    def test_web_research_ppt_generation_request_bypasses_llm_and_generates_pptx(self) -> None:
+        from src.gateway.inbound_service import InboundGatewayService, _text_buffer, _file_buffer
+        from src.gateway.dispatcher import Dispatcher
+
+        _text_buffer.clear()
+        _file_buffer.clear()
+        self.addCleanup(_text_buffer.clear)
+        self.addCleanup(_file_buffer.clear)
+
+        service = InboundGatewayService(dispatcher=Dispatcher(), batch_processor=MagicMock())
+        fake_convo = MagicMock(get_context=MagicMock(return_value=""), add=MagicMock())
+        service._conversations = MagicMock()
+        service._conversations.get.return_value = fake_convo
+        service._conversations.save_all = MagicMock()
+        service.get_or_create_agent = MagicMock()
+
+        with patch("src.tools.web_research_service.web_search_aggregate", return_value="1. 高相关论文\n2. 开源资料") as mock_search, \
+             patch("src.tools.builtin._generate_report_handler", return_value="[BOT_FILE]{\"path\":\"/tmp/report.pptx\"}") as mock_generate:
+            result = service.handle_wecom_payload(
+                {
+                    "from_user_id": "u123",
+                    "msg_type": "text",
+                    "content": "基于联网资料生成一份制氢转化管缺陷总结PPT",
+                    "is_direct": True,
+                    "provider": "wecom_bot",
+                    "transport": "wecom_bot_ws",
+                }
+            )
+
+        self.assertEqual(result.route_kind, "personal")
+        self.assertEqual(result.response.text, "[BOT_FILE]{\"path\":\"/tmp/report.pptx\"}")
+        self.assertFalse(service.get_or_create_agent.called)
+        mock_search.assert_called_once()
+        args = mock_generate.call_args.args[0]
+        self.assertEqual(args["format"], "pptx")
+        self.assertEqual(args["from"], "u123")
+        self.assertTrue(args["_skip_enrichment"])
+        self.assertEqual(args["_source_provider"], "wecom_bot")
+        self.assertIn("制氢转化管缺陷", args["title"])
+        self.assertIn("高相关论文", args["content"])

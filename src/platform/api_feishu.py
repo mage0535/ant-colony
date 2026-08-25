@@ -205,7 +205,7 @@ class FeishuClient:
     def read_docs_document(self, query: str) -> str | None:
         return self.search_docs(query)
 
-    def list_approvals(self, status: str = "pending") -> str | None:
+    def list_approvals(self, status: str = "pending", *, query: str = "", capability_context=None) -> str | None:
         """List approval instances by status.
 
         Returns formatted lines: ``title | applicant | start_time``
@@ -222,9 +222,21 @@ class FeishuClient:
         if not instances:
             return None
         lines: list[str] = []
+        user_id = str(getattr(capability_context, "user_id", "") or "")
         for inst in instances:
+            applicant_info = inst.get("applicant", {}) or {}
+            applicant_id = str(
+                applicant_info.get("user_id")
+                or applicant_info.get("open_id")
+                or inst.get("user_id")
+                or ""
+            )
+            if user_id and applicant_id and applicant_id != user_id:
+                continue
             title = inst.get("name", "(无标题)")
-            applicant = inst.get("applicant", {}).get("name", "")
+            applicant = applicant_info.get("name", "")
+            if query and not _fuzzy_contains(title, query):
+                continue
             start_time = inst.get("start_time", "")
             lines.append(f"{title} | {applicant} | {start_time}")
         return "\n".join(lines)
@@ -234,6 +246,50 @@ class FeishuClient:
 
     def get_event_detail(self, query: str) -> str | None:
         return self.get_agenda(days=30)
+
+    def query_meeting_room(self, query: str, days: int = 1, capability_context=None) -> str | None:
+        del capability_context
+        agenda = self.get_agenda(days=days)
+        if not agenda:
+            return None
+        lines = [line for line in agenda.splitlines() if "会议室" in line or "会议" in line or query in line]
+        return "\n".join(lines[:20]) if lines else None
+
+    def query_enterprise_apps(self, query: str, action: str = "query", capability_context=None) -> str | None:
+        del capability_context
+        sections: list[str] = []
+        if any(word in query for word in ("会议室", "会议", "日程")):
+            agenda = self.get_agenda(days=7)
+            if agenda:
+                sections.append("【日程/会议】\n" + agenda)
+        if "审批" in query or "流程" in query or "申请" in query:
+            approvals = self.list_approvals("pending")
+            if approvals:
+                sections.append("【审批/流程】\n" + approvals)
+        if "文档" in query or "资料" in query:
+            docs = self.search_docs(query)
+            if docs:
+                sections.append("【云文档】\n" + docs)
+        return "\n\n".join(sections) if sections else None
+
+    def list_accessible_applications(self, query: str = "", capability_context=None) -> str | None:
+        del capability_context
+        data = self._request("GET", "/open-apis/bot/v3/info")
+        if not data:
+            return None
+        bot = data.get("bot") or data.get("data") or {}
+        name = str(bot.get("app_name") or bot.get("name") or "")
+        if not name:
+            return None
+        if query and not _fuzzy_contains(name, query):
+            return None
+        return f"{name}：当前已接入的飞书机器人应用"
+
+    def run_enterprise_app_action(self, action: str, payload: dict | None = None) -> str | None:
+        payload = payload or {}
+        if action == "calendar.create":
+            return self.create_event(str(payload.get("summary", "日程")), str(payload.get("start_at", "")), str(payload.get("end_at", "")))
+        return f"飞书暂未开放该动作的自动执行器：{action}"
 
     def create_event(self, summary: str, start_at: str, end_at: str) -> str | None:
         """Create a calendar event.
@@ -294,3 +350,16 @@ class FeishuClient:
             if u.get("is_leader"):
                 admins.append(f"{name} (部门负责人)")
         return "\n".join(admins[:20]) if admins else None
+
+
+def _fuzzy_contains(title: str, query: str) -> bool:
+    from src.platform.enterprise_query import plan_enterprise_query
+
+    terms = plan_enterprise_query(query).query_terms
+    if not terms:
+        return True
+    normalized_title = str(title or "").replace("申请", "审批").replace("流程", "")
+    return any(
+        str(term).replace("申请", "审批").replace("流程", "") in normalized_title
+        for term in terms
+    )

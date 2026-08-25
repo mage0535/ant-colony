@@ -58,9 +58,14 @@ def validate_document_workflow() -> dict[str, Any]:
     }
 
 
+def document_workflow_ok(report: dict[str, Any]) -> bool:
+    return bool(report.get("configured") and report.get("pushed"))
+
+
 def main() -> int:
-    print(json.dumps(validate_document_workflow(), ensure_ascii=False, indent=2))
-    return 0
+    report = validate_document_workflow()
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if document_workflow_ok(report) else 1
 
 
 if __name__ == "__main__":

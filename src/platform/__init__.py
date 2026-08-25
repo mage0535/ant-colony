@@ -79,6 +79,12 @@ def _try_ocrmypdf():
     return provider
 
 
+def _try_wecom_robot_mcp():
+    from src.platform.wecom_robot_mcp_provider import build_wecom_robot_mcp_provider
+
+    return build_wecom_robot_mcp_provider()
+
+
 def get_capability_backend() -> CapabilityBackend:
     from src.platform.internal_capability_provider import InternalCapabilityProvider
 
@@ -90,6 +96,7 @@ def get_capability_backend() -> CapabilityBackend:
             CapabilityProvider("internal", "系统能力", lambda: InternalCapabilityProvider()),
             CapabilityProvider("feishu", "飞书", _try_feishu),
             CapabilityProvider("dingtalk", "钉钉", _try_dingtalk),
+            CapabilityProvider("wecom_robot_mcp", "企业微信机器人 MCP", _try_wecom_robot_mcp),
             CapabilityProvider("wecom", "企业微信", _try_wecom),
         ]
     )

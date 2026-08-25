@@ -11,6 +11,10 @@ Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+EnvironmentFile=-/opt/ant-colony/infra/.env.wecom
+# 高频轮询不写入外部追踪，避免监控配额反向影响员工提醒。
+Environment=LANGSMITH_TRACING=false
+Environment=LANGCHAIN_TRACING_V2=false
 
 [Install]
 WantedBy=multi-user.target

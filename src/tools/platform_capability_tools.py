@@ -290,7 +290,11 @@ def calendar_detail_tool(args: dict[str, str]) -> str:
 def mail_summary_tool(args: dict[str, str]) -> str:
     from src.platform import invoke_capability
 
-    return invoke_capability("mail.summary", str(args.get("query", "")), context=_context_from_args(args), empty_message="暂无可用邮箱能力（待接入企业邮箱能力）")
+    result = invoke_capability("mail.summary", str(args.get("query", "")), context=_context_from_args(args), empty_message="暂无可用邮箱能力（待接入企业邮箱能力）")
+    normalized = result.lower()
+    if "email not configured" in normalized or "missing env var" in normalized:
+        return "当前企业 IM 账号尚未配置邮箱未读统计。请管理员优先在后台为当前员工配置邮箱接收协议、服务器、账号和授权码；其他员工的邮箱配置不会共享。"
+    return result
 
 
 def list_capabilities_tool(args: dict[str, str]) -> str:
@@ -303,7 +307,35 @@ def list_capabilities_tool(args: dict[str, str]) -> str:
 def approval_list_tool(args: dict[str, str]) -> str:
     from src.platform import invoke_capability
 
-    return invoke_capability("approval.list", str(args.get("status", "pending")), context=_context_from_args(args), empty_message="无待审批事项（需配置飞书/钉钉凭证）")
+    return invoke_capability("approval.list", str(args.get("status", "pending")), context=_context_from_args(args), empty_message="无待审批事项或当前平台审批权限未开放")
+
+
+def enterprise_app_query_tool(args: dict[str, str]) -> str:
+    from src.platform.enterprise_query_service import execute_enterprise_query
+
+    query = str(
+        args.get("query", "")
+        or args.get("_context_text", "")
+        or args.get("content", "")
+        or args.get("text", "")
+    )
+    if not query:
+        return "请提供要查询的企业应用、流程、会议室、审批或第三方系统问题"
+    return execute_enterprise_query(query, _context_from_args(args)) or "未查询到企业应用数据，或当前 AI 助手尚未获得对应应用权限"
+
+
+def enterprise_app_action_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    action = str(args.get("action", ""))
+    if not action:
+        return "请提供要执行的企业应用动作，例如 meeting.create 或 calendar.create"
+    payload = {
+        key: value
+        for key, value in args.items()
+        if key not in {"action", "user_id", "_source_provider", "_source_transport", "platform", "transport"}
+    }
+    return invoke_capability_first("apps.action", action, payload, context=_context_from_args(args), empty_message="当前企业应用动作无法执行，可能是权限不足或动作暂未接入")
 
 
 def calendar_create_tool(args: dict[str, str]) -> str:
@@ -325,6 +357,111 @@ def create_doc_tool(args: dict[str, str]) -> str:
         return "请提供文档标题"
     result = invoke_capability_first("docs.create", title, str(args.get("content", "")), context=_context_from_args(args), empty_message="需配置企业微信凭证")
     return result or "文档创建成功"
+
+
+def smartpage_create_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    title = str(args.get("title", ""))
+    if not title:
+        return "请提供智能文档标题"
+    return invoke_capability_first(
+        "docs.smartpage.create",
+        title,
+        str(args.get("content", "")),
+        context=_context_from_args(args),
+        empty_message="企业微信智能文档 MCP 尚未配置或不可用",
+    )
+
+
+def edit_doc_content_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    doc_id = str(args.get("doc_id", "") or args.get("document_id", ""))
+    content = str(args.get("content", ""))
+    if not doc_id or not content:
+        return "请提供文档 ID 和要写入的内容"
+    return invoke_capability_first(
+        "docs.edit",
+        doc_id,
+        content,
+        context=_context_from_args(args),
+        empty_message="企业微信文档编辑 MCP 尚未配置或不可用",
+    )
+
+
+def sheet_append_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    doc_id = str(args.get("doc_id", "") or args.get("document_id", ""))
+    values = args.get("values", "") or args.get("data", "")
+    if not doc_id or not values:
+        return "请提供表格文档 ID 和要追加的数据"
+    return invoke_capability_first(
+        "sheet.append",
+        doc_id,
+        values,
+        context=_context_from_args(args),
+        empty_message="企业微信表格 MCP 尚未配置或不可用",
+    )
+
+
+def todo_create_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    title = str(args.get("title", "") or args.get("content", ""))
+    if not title:
+        return "请提供待办主题"
+    return invoke_capability_first(
+        "todo.create",
+        title,
+        str(args.get("due_time", "") or args.get("deadline", "")),
+        str(args.get("participants", "") or args.get("userids", "")),
+        context=_context_from_args(args),
+        empty_message="企业微信待办 MCP 尚未配置或不可用",
+    )
+
+
+def todo_list_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    return invoke_capability_first(
+        "todo.list",
+        str(args.get("query", "")),
+        context=_context_from_args(args),
+        empty_message="未查询到待办，或企业微信待办 MCP 尚未配置",
+    )
+
+
+def todo_update_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    todo_id = str(args.get("todo_id", "") or args.get("id", ""))
+    if not todo_id:
+        return "请提供待办 ID"
+    return invoke_capability_first(
+        "todo.update",
+        todo_id,
+        str(args.get("title", "") or args.get("content", "")),
+        str(args.get("status", "")),
+        str(args.get("due_time", "") or args.get("deadline", "")),
+        context=_context_from_args(args),
+        empty_message="企业微信待办更新 MCP 尚未配置或不可用",
+    )
+
+
+def todo_user_search_tool(args: dict[str, str]) -> str:
+    from src.platform import invoke_capability_first
+
+    query = str(args.get("query", "") or args.get("name", ""))
+    if not query:
+        return "请提供要搜索的成员姓名或别名"
+    return invoke_capability_first(
+        "todo.user.search",
+        query,
+        context=_context_from_args(args),
+        empty_message="未找到成员，或企业微信待办成员搜索 MCP 尚未配置",
+    )
 
 
 def list_meetings_tool(args: dict[str, str]) -> str:

@@ -13,6 +13,7 @@ from threading import Event, Thread
 from typing import Any
 
 from src.gateway.entry_links import build_platform_entry_payloads, is_entry_menu_command
+from src.gateway.message_chunking import split_text_for_im
 from src.gateway.provider_file_ingestion import summarize_platform_file_bytes
 from src.web import admin_auth
 
@@ -130,23 +131,24 @@ class DingTalkAdapter:
             return False
         try:
             token = self._ensure_token()
-            msg_param = json.dumps({"title": title, "text": text}, ensure_ascii=False)
-            payload = json.dumps({
-                "targetId": chat_id,
-                "msgKey": "sampleMarkdown",
-                "msgParam": msg_param,
-            }, ensure_ascii=False).encode("utf-8")
-
             url = f"{API_BASE}/topapi/im/chat/scencegroup/message/send_v2?access_token={token}"
-            req = urllib.request.Request(url, data=payload, headers={
-                "Content-Type": "application/json; charset=utf-8",
-            })
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
+            for chunk in split_text_for_im(text, hard_limit=4000):
+                msg_param = json.dumps({"title": title, "text": chunk}, ensure_ascii=False)
+                payload = json.dumps({
+                    "targetId": chat_id,
+                    "msgKey": "sampleMarkdown",
+                    "msgParam": msg_param,
+                }, ensure_ascii=False).encode("utf-8")
 
-            if data.get("errcode", 0) != 0:
-                logger.warning("DingTalk send failed: %s (code=%s)", data.get("errmsg", "unknown"), data.get("errcode"))
-                return False
+                req = urllib.request.Request(url, data=payload, headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                })
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+
+                if data.get("errcode", 0) != 0:
+                    logger.warning("DingTalk send failed: %s (code=%s)", data.get("errmsg", "unknown"), data.get("errcode"))
+                    return False
 
             logger.info("DingTalk message sent to chat %s (%d chars)", chat_id, len(text))
             return True

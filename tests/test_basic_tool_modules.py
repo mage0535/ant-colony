@@ -8,9 +8,9 @@ class TestBasicToolModules(unittest.TestCase):
         from src.tools.basic_tool_modules import contact_search_tool
 
         with patch("src.platform.invoke_capability", return_value="contact-result") as mock_invoke:
-            result = contact_search_tool({"query": "马戈", "user_id": "u1", "_source_provider": "wecom_bot"})
+            result = contact_search_tool({"query": "张三", "user_id": "u1", "_source_provider": "wecom_bot"})
 
-        self.assertEqual(mock_invoke.call_args.args[:2], ("contacts.search", "马戈"))
+        self.assertEqual(mock_invoke.call_args.args[:2], ("contacts.search", "张三"))
         self.assertEqual(mock_invoke.call_args.kwargs["context"]["user_id"], "u1")
         self.assertEqual(result, "contact-result")
 

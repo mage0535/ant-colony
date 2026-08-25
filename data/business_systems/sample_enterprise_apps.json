@@ -1,0 +1,44 @@
+{
+  "meeting_rooms": [
+    {
+      "room_name": "三号会议室",
+      "date": "今天",
+      "start": "09:30",
+      "end": "10:30",
+      "title": "生产例会",
+      "applicant": "生产部"
+    },
+    {
+      "room_name": "一号会议室",
+      "date": "今天",
+      "start": "14:00",
+      "end": "15:00",
+      "title": "质量复盘",
+      "applicant": "质量部"
+    }
+  ],
+  "approvals": [
+    {
+      "title": "付款审批",
+      "status": "审批中",
+      "applicant": "财务部",
+      "current_node": "部门负责人"
+    },
+    {
+      "title": "会议室申请",
+      "status": "已通过",
+      "applicant": "生产部",
+      "current_node": "完成"
+    }
+  ],
+  "third_party_apps": [
+    {
+      "name": "工单系统",
+      "summary": "支持按工单号查询进度、异常、负责人和待审批节点"
+    },
+    {
+      "name": "设备点检",
+      "summary": "支持查询设备点检异常和维修跟进状态"
+    }
+  ]
+}

@@ -1,10 +1,42 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
 
 class TestInternalCapabilityProvider(unittest.TestCase):
+    def test_search_user_uses_local_org_cache(self) -> None:
+        from src.platform.internal_capability_provider import InternalCapabilityProvider
+        from src.store.database import Database
+
+        with tempfile.TemporaryDirectory() as td, patch.dict("os.environ", {"ANT_COLONY_DB_PATH": os.path.join(td, "ant.db")}):
+            db = Database.get()
+            conn = db.connect()
+            conn.execute(
+                "INSERT INTO org_users(platform,user_id,name,email,mobile,title) VALUES (?,?,?,?,?,?)",
+                ("wecom", "AdminUser", "张三", "mage@example.com", "13800000000", "经理"),
+            )
+            conn.execute(
+                "INSERT INTO org_departments(platform,dept_id,name,parent_dept_id) VALUES (?,?,?,?)",
+                ("wecom", "1", "技术部", ""),
+            )
+            conn.execute(
+                "INSERT INTO org_memberships(platform,user_id,dept_id,is_leader,is_admin) VALUES (?,?,?,?,?)",
+                ("wecom", "AdminUser", "1", 1, 1),
+            )
+            conn.commit()
+
+            try:
+                result = InternalCapabilityProvider().search_user("张三")
+            finally:
+                db.close()
+
+        self.assertIn("张三", result)
+        self.assertIn("mage@example.com", result)
+        self.assertIn("技术部", result)
+
     def test_generate_docx_document_uses_document_tool(self) -> None:
         from src.platform.internal_capability_provider import InternalCapabilityProvider
 

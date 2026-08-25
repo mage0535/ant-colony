@@ -46,3 +46,33 @@ class TestOrgSyncGraph(unittest.TestCase):
         self.assertEqual(record.members, ["u1", "u2"])
         self.assertEqual(record.metadata["platform"], "wecom")
         self.assertEqual(record.metadata["dept_id"], "2")
+
+    def test_public_org_sync_keeps_graph_success_when_compatibility_sync_fails(self) -> None:
+        from src.web import dashboard
+
+        class FakeGraph:
+            def sync_wecom_directory(self):
+                return {"departments": 1, "users": 2}
+
+        class FakeSyncer:
+            seen_sync_graph: bool | None = None
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def sync_all(self, *, sync_graph: bool = True):
+                FakeSyncer.seen_sync_graph = sync_graph
+                raise RuntimeError("legacy registry busy")
+
+        with (
+            patch("src.platform.org_graph.OrgGraphService", return_value=FakeGraph()),
+            patch("src.orchestrator.org_sync.OrgSynchronizer", FakeSyncer),
+            patch("src.web.dashboard.get_space_registry", return_value=object()),
+        ):
+            result = dashboard.sync_organization()
+
+        self.assertFalse(FakeSyncer.seen_sync_graph)
+        self.assertTrue(result["synced"])
+        self.assertEqual(result["graph"]["users"], 2)
+        self.assertFalse(result["compatibility_ok"])
+        self.assertIn("legacy registry busy", result["compatibility"]["error"])

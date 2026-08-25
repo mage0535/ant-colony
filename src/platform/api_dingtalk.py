@@ -256,7 +256,7 @@ class DingTalkClient:
     def read_docs_document(self, query: str) -> str | None:
         return self.search_docs(query)
 
-    def list_approvals(self, status: str = "pending") -> str | None:
+    def list_approvals(self, status: str = "pending", *, query: str = "", capability_context=None) -> str | None:
         """List approval process instances by status.
 
         Supported status values (DingTalk): ``NEW``, ``RUNNING``,
@@ -289,6 +289,7 @@ class DingTalkClient:
             return None
 
         lines: list[str] = []
+        user_id = str(getattr(capability_context, "user_id", "") or "")
         for inst_id in instance_ids[:10]:
             detail = self._request(
                 "POST",
@@ -298,7 +299,12 @@ class DingTalkClient:
             if detail is None:
                 continue
             proc = detail.get("process_instance") or {}
+            applicant_id = str(proc.get("originator_userid") or "")
+            if user_id and applicant_id and applicant_id != user_id:
+                continue
             title = (proc.get("title") or "").strip()
+            if query and not _fuzzy_contains(title, query):
+                continue
             applicant = (proc.get("originator_name") or (proc.get("originator_userid") or ""))
             created = proc.get("create_time", "")
             lines.append(f"{title} | {applicant} | {created}")
@@ -345,6 +351,43 @@ class DingTalkClient:
     def get_meeting_detail(self, query: str) -> str | None:
         return None
 
+    def query_meeting_room(self, query: str, days: int = 1, capability_context=None) -> str | None:
+        del capability_context
+        agenda = self.get_agenda(days=days)
+        if not agenda:
+            return None
+        lines = [line for line in agenda.splitlines() if "会议室" in line or "会议" in line or query in line]
+        return "\n".join(lines[:20]) if lines else None
+
+    def query_enterprise_apps(self, query: str, action: str = "query", capability_context=None) -> str | None:
+        del capability_context
+        sections: list[str] = []
+        if any(word in query for word in ("会议室", "会议", "日程")):
+            agenda = self.get_agenda(days=7)
+            if agenda:
+                sections.append("【日程/会议】\n" + agenda)
+        if "审批" in query or "流程" in query or "申请" in query:
+            approvals = self.list_approvals("pending")
+            if approvals:
+                sections.append("【审批/流程】\n" + approvals)
+        if "文档" in query or "资料" in query:
+            docs = self.search_docs(query)
+            if docs:
+                sections.append("【钉盘/文档】\n" + docs)
+        return "\n\n".join(sections) if sections else None
+
+    def list_accessible_applications(self, query: str = "", capability_context=None) -> str | None:
+        del query, capability_context
+        # DingTalk does not expose a tenant-wide user-visible application
+        # catalog through the bot credential used by this adapter.
+        return None
+
+    def run_enterprise_app_action(self, action: str, payload: dict | None = None) -> str | None:
+        payload = payload or {}
+        if action == "calendar.create":
+            return self.create_event(str(payload.get("summary", "日程")), str(payload.get("start_at", "")), str(payload.get("end_at", "")))
+        return f"钉钉暂未开放该动作的自动执行器：{action}"
+
     def get_admin_users(self) -> str | None:
         result = self._request("POST", "/topapi/org/admin/list", body={})
         if result is None:
@@ -363,3 +406,16 @@ class DingTalkClient:
                 name = userid
             admins.append(f"{name} ({role})")
         return "\n".join(admins[:20]) if admins else None
+
+
+def _fuzzy_contains(title: str, query: str) -> bool:
+    from src.platform.enterprise_query import plan_enterprise_query
+
+    terms = plan_enterprise_query(query).query_terms
+    if not terms:
+        return True
+    normalized_title = str(title or "").replace("申请", "审批").replace("流程", "")
+    return any(
+        str(term).replace("申请", "审批").replace("流程", "") in normalized_title
+        for term in terms
+    )

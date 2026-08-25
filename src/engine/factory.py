@@ -12,15 +12,26 @@ def build_registry() -> FusionToolRegistry:
     return registry
 
 
-def build_engine(agent_role: str = "personal", profile_id: str = "default-anthropic") -> AgentEngine:
+def build_engine(agent_role: str = "personal", profile_id: str | None = None) -> AgentEngine:
     svc = build_settings_service()
     snapshot = svc.build_runtime_snapshot()
 
     profile = None
-    for p in snapshot.llm_profiles:
-        if p.profile_id == profile_id and p.enabled:
-            profile = p
-            break
+    if profile_id:
+        for p in snapshot.llm_profiles:
+            if p.profile_id == profile_id and p.enabled:
+                profile = p
+                break
+    if not profile:
+        for p in snapshot.llm_profiles:
+            if p.enabled and bool((p.metadata or {}).get("is_default")):
+                profile = p
+                break
+    if not profile and profile_id:
+        for p in snapshot.llm_profiles:
+            if p.profile_id == profile_id and p.enabled:
+                profile = p
+                break
     if not profile:
         for p in snapshot.llm_profiles:
             if p.enabled:

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 _LLM_MAX_RETRIES = 3
 _LLM_RETRY_BASE = 1.0
-_TOOL_CALL_RE = re.compile(r"<tool_call>([^(\s]+)\((.*?)\)</tool_call>", re.DOTALL)
+_TOOL_CALL_RE = re.compile(r"<tool_call>\s*([A-Za-z0-9_:\.-]+)\s*\((.*?)\)\s*</tool_call>", re.DOTALL)
 
 
 def _retry_llm(fn, max_retries: int = _LLM_MAX_RETRIES) -> str:
@@ -154,6 +154,15 @@ class AgentEngine:
 
         if has_tc:
             reply = self._execute_tool_calls(reply)
+            if self._has_tool_calls(reply):
+                # LLM produced malformed tool calls — retry with format correction
+                print("[ENGINE] malformed tool calls detected, retrying with correction", file=_sys2.stderr, flush=True)
+                correction = "\n\n你的上一段回复中有工具调用格式错误。正确的格式是：<tool_call>builtin:get_entry_link({\"target\": \"admin\"})</tool_call>。工具id必须写完整，括号和参数不能省略。请严格按此格式重新调用工具。"
+                if provider == "anthropic":
+                    reply = self._call_anthropic(system, text + correction)
+                else:
+                    reply = self._call_openai(system, text + correction)
+                reply = self._execute_tool_calls(reply)
 
         return AgentResponse(
             text=reply,
@@ -172,7 +181,8 @@ class AgentEngine:
             "1. 先理解用户需求。用户可能用任何方式表达：文件、文字、模板都可以。\n"
             "2. 理解后用下方工具完成任务。用户要求生成文档时，用generate_report生成docx并推送。\n"
             "3. 调用generate_report时content只写简短概述（如'车间通行管理规定'），from填@你的用户名。系统自动从对话历史提取并丰富完整文档内容。\n"
-            "4. 用户可随时发/stop终止。回复去掉AI味（此外/值得注意的是/总的来说/作为AI这类词）。"
+            "4. 用户可随时发/stop终止。回复去掉AI味（此外/值得注意的是/总的来说/作为AI这类词）。\n"
+            "5. 用户请求打开页面入口（后台、管理、控制台、知识库、上传文档等）时，使用get_entry_link工具生成链接。用户说'后台'、'知识库'、'管理页面'、'开通助手'等意图时都调用此工具。"
         )
 
     def _load_matching_role(self, text: str) -> str:
@@ -197,8 +207,9 @@ class AgentEngine:
             lines.append(f"- {t.name}（{t.id}）：{t.description}")
             if t.parameters:
                 lines.append(f"  参数：{json.dumps(t.parameters, ensure_ascii=False)}")
-        lines.append("\n如需使用工具，请在回复中包含 <tool_call>工具名({json参数})</tool_call>")
-        lines.append("例如：<tool_call>builtin:now()</tool_call>")
+        lines.append("\n如需使用工具，请在回复中包含 <tool_call>工具id({json参数})</tool_call>，工具id必须用括号内列出的英文id，不要省略工具名。")
+        lines.append("例如无参：<tool_call>builtin:now()</tool_call>")
+        lines.append("带参数：<tool_call>builtin:get_entry_link({\"target\": \"admin\"})</tool_call>")
         return system + "\n".join(lines)
 
     def _has_tool_calls(self, text: str) -> bool:
@@ -236,6 +247,16 @@ class AgentEngine:
                 if meta.get("transport"):
                     args["_source_transport"] = meta.get("transport")
                 print("[BASE] after inject: from=%s" % args.get("from"), file=_sys.stderr, flush=True)
+            elif not args.get("from"):
+                uid = getattr(self, "_latest_user_id", "")
+                args["from"] = uid
+                if not args.get("user_id"):
+                    args["user_id"] = uid
+                meta = getattr(self, "_latest_context_metadata", {}) or {}
+                if not args.get("_source_provider") and meta.get("provider"):
+                    args["_source_provider"] = meta.get("provider")
+                if not args.get("_source_transport") and meta.get("transport"):
+                    args["_source_transport"] = meta.get("transport")
             replacement = self._dispatch_tool(name, args, tools)
             result = result.replace(
                 f"<tool_call>{name}({raw_args})</tool_call>",
@@ -270,8 +291,15 @@ class AgentEngine:
     def _openai_inner(self, client_kwargs: dict, system: str, user_text: str) -> str:
         from openai import OpenAI
         client = wrap_openai_client(OpenAI(**client_kwargs))
+        model_name = self.config.model_name or "gpt-4o-mini"
+        try:
+            from src.platform.model_management_service import normalize_model_name_for_api
+
+            model_name = normalize_model_name_for_api(model_name, self.config.api_base)
+        except Exception:
+            pass
         resp = client.chat.completions.create(
-            model=self.config.model_name or "gpt-4o-mini",
+            model=model_name,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_text},

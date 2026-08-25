@@ -73,7 +73,7 @@ class TestPlatformActivationService(unittest.TestCase):
         with patch.dict("os.environ", {"WECOM_BOT_ID": "bot-env", "WECOM_BOT_SECRET": "secret-env"}, clear=False), \
              patch("src.platform.activation_service.write_env_values") as mock_write_env, \
              patch("src.platform.activation_service.build_settings_service", return_value=fake_service):
-            result = activate_platform_bot(platform="wecom", credentials={})
+            result = activate_platform_bot(platform="wecom", credentials={}, env_file="missing-process-env-test.env")
 
         self.assertEqual(result.credential_sources["bot_secret"], "当前服务环境变量")
         self.assertEqual(mock_write_env.call_args.args[1]["WECOM_BOT_SECRET"], "secret-env")

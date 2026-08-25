@@ -21,6 +21,9 @@ from src.tools.platform_capability_tools import (
     compress_pdf_tool as _compress_pdf_tool,
     create_doc_tool as _create_doc_tool,
     create_meeting_tool as _create_meeting_tool,
+    enterprise_app_action_tool as _enterprise_app_action_tool,
+    enterprise_app_query_tool as _enterprise_app_query_tool,
+    edit_doc_content_tool as _edit_doc_content_tool,
     doc_search_tool as _doc_search_tool,
     read_docs_tool as _read_docs_tool,
     docx_template_outline_tool as _docx_template_outline_tool,
@@ -41,7 +44,13 @@ from src.tools.platform_capability_tools import (
     read_pdf_tool as _read_pdf_tool,
     read_pptx_tool as _read_pptx_tool,
     read_xlsx_tool as _read_xlsx_tool,
+    sheet_append_tool as _sheet_append_tool,
+    smartpage_create_tool as _smartpage_create_tool,
     split_pdf_tool as _split_pdf_tool,
+    todo_create_tool as _todo_create_tool,
+    todo_list_tool as _todo_list_tool,
+    todo_update_tool as _todo_update_tool,
+    todo_user_search_tool as _todo_user_search_tool,
     watermark_pdf_tool as _watermark_pdf_tool,
     who_is_admin_tool as _who_is_admin_tool,
     who_is_leader_tool as _who_is_leader_tool,
@@ -160,6 +169,196 @@ def _generate_report_handler(args):
 
 
 
+
+
+def _get_entry_link_tool(args: dict[str, Any]) -> str:
+    target = str(args.get("target", "menu")).strip().lower()
+    user_id = str(args.get("user_id") or args.get("from") or "")
+    platform = str(args.get("platform", "") or args.get("_source_provider", "")) or "wecom"
+    from src.gateway.entry_links import _admin_reply, _knowledge_reply, _menu_reply
+
+    if target == "admin":
+        from src.web.admin_auth import is_hr_specialist, is_platform_admin
+        if not (is_platform_admin(platform, user_id) or is_hr_specialist(platform, user_id)):
+            return "你当前没有管理员或人事专员权限，不能打开后台控制台。你可以发送「打开知识库」进入自己的知识库管理页面。"
+        return _admin_reply(platform, user_id)
+    if target == "knowledge":
+        return _knowledge_reply(platform, user_id)
+    return _menu_reply(platform, user_id)
+
+
+def _broadcast_org_message_tool(args: dict[str, Any]) -> str:
+    platform = str(args.get("platform", "") or args.get("_source_provider", "")) or "wecom"
+    user_id = str(args.get("user_id") or args.get("from") or args.get("sender_user_id") or "")
+    target = str(args.get("target") or args.get("scope") or args.get("department") or "")
+    message = str(args.get("message") or args.get("text") or args.get("content") or "")
+    from src.web.admin_auth import is_platform_admin
+
+    if not is_platform_admin(platform, user_id):
+        return "你当前没有管理员权限，不能向组织架构群发通知。"
+    try:
+        from src.platform.organization_broadcast_service import broadcast_to_organization
+
+        result = broadcast_to_organization(
+            platform=platform,
+            sender_user_id=user_id,
+            target=target,
+            message=message,
+        )
+    except Exception as exc:
+        return f"组织通知发送失败：{exc}"
+
+    failed = int(result.get("failed", 0) or 0)
+    if failed:
+        return (
+            f"组织通知已部分发送：目标「{target}」，已发送 {result.get('sent', 0)} 人，"
+            f"失败 {failed} 人，跳过 {result.get('skipped', 0)} 人。"
+        )
+    return (
+        f"组织通知已发送：目标「{target}」，已发送 {result.get('sent', 0)} 人，"
+        f"跳过未开通或暂停的 AI 助手 {result.get('skipped', 0)} 人。"
+    )
+
+
+def _query_public_data_tool(args: dict[str, Any]) -> str:
+    kind = str(args.get("kind") or args.get("type") or "")
+    query = str(args.get("query") or args.get("keyword") or args.get("city") or "")
+    params = args.get("params") if isinstance(args.get("params"), dict) else {}
+    try:
+        from src.platform.public_data_service import query_public_data
+
+        result = query_public_data(kind, query=query, params=params)
+    except Exception as exc:
+        return f"公共数据查询失败：{exc}"
+    return str(result.get("content") or "")
+
+
+def _subscribe_public_data_tool(args: dict[str, Any]) -> str:
+    platform = str(args.get("platform", "") or args.get("_source_provider", "")) or "wecom"
+    user_id = str(args.get("user_id") or args.get("from") or args.get("sender_user_id") or "")
+    kind = str(args.get("kind") or args.get("type") or "")
+    query = str(args.get("query") or args.get("keyword") or args.get("city") or "")
+    schedule = str(args.get("schedule") or args.get("time") or "every 1d")
+    params = args.get("params") if isinstance(args.get("params"), dict) else {}
+    if not user_id:
+        return "无法创建订阅：缺少用户身份。"
+    try:
+        from src.platform.public_data_service import create_subscription
+
+        sub = create_subscription(platform=platform, user_id=user_id, kind=kind, query=query, schedule=schedule, params=params)
+    except Exception as exc:
+        return f"公共数据订阅创建失败：{exc}"
+    return (
+        f"已创建公共数据订阅：{sub.get('kind')} {sub.get('query') or ''}，"
+        f"检查频率：{sub.get('schedule')}。后续数据变化时会通过 AI 助手通知你。"
+    )
+
+
+def _list_public_data_subscriptions_tool(args: dict[str, Any]) -> str:
+    platform = str(args.get("platform", "") or args.get("_source_provider", "")) or ""
+    user_id = str(args.get("user_id") or args.get("from") or args.get("sender_user_id") or "")
+    try:
+        from src.platform.public_data_service import list_subscriptions
+
+        subs = list_subscriptions(user_id=user_id, platform=platform)
+    except Exception as exc:
+        return f"公共数据订阅查询失败：{exc}"
+    if not subs:
+        return "你当前没有公共数据订阅。"
+    lines = ["你的公共数据订阅："]
+    for item in subs[:20]:
+        status = "启用" if item.get("enabled") else "停用"
+        lines.append(f"- {item.get('kind')} {item.get('query') or ''}：{item.get('schedule')}，{status}")
+    return "\n".join(lines)
+
+
+def _query_ratemin_todos_tool(args: dict[str, Any]) -> str:
+    platform = str(args.get("platform", "") or args.get("_source_provider", "")) or "wecom"
+    user_id = str(args.get("user_id") or args.get("from") or args.get("sender_user_id") or "")
+    query = str(args.get("query") or args.get("keyword") or "")
+    source_db = str(args.get("source_db") or args.get("database") or "")
+    target_user = str(args.get("target_user") or args.get("name") or args.get("target") or "")
+    limit = int(args.get("limit") or 20)
+    if not user_id:
+        return "无法查询业务系统待办：缺少用户身份。"
+    try:
+        if target_user:
+            from src.platform.ratemin_service import format_ratemin_todos_for_target
+
+            return format_ratemin_todos_for_target(
+                platform=platform,
+                requester_user_id=user_id,
+                target_user=target_user,
+                query=query,
+                source_db=source_db,
+                limit=limit,
+            )
+        from src.platform.ratemin_service import format_my_ratemin_todos
+
+        return format_my_ratemin_todos(platform=platform, user_id=user_id, query=query, source_db=source_db, limit=limit)
+    except Exception as exc:
+        return f"业务系统待办查询失败：{exc}"
+
+
+def _web_research_tool(args: dict[str, Any]) -> str:
+    query = str(args.get("query") or args.get("topic") or "")
+    max_results = int(args.get("max_results") or 5)
+    read_top = int(args.get("read_top") or 3)
+    freshness = str(args.get("freshness") or "")
+    from src.tools.web_research_service import web_research
+
+    return web_research(query, max_results=max_results, read_top=read_top, freshness=freshness)
+
+
+def _web_search_aggregate_tool(args: dict[str, Any]) -> str:
+    query = str(args.get("query") or args.get("topic") or "")
+    max_results = int(args.get("max_results") or 10)
+    freshness = str(args.get("freshness") or "")
+    domains_raw = args.get("domains")
+    domains = domains_raw if isinstance(domains_raw, list) else []
+    sources_raw = args.get("include_sources")
+    include_sources = sources_raw if isinstance(sources_raw, list) else []
+    from src.tools.web_research_service import web_search_aggregate
+
+    return web_search_aggregate(
+        query,
+        max_results=max_results,
+        freshness=freshness,
+        domains=[str(item) for item in domains],
+        include_sources=[str(item) for item in include_sources],
+    )
+
+
+def _web_research_health_tool(args: dict[str, Any]) -> str:
+    from src.tools.web_research_service import web_research_health
+
+    return web_research_health()
+
+
+def _web_read_tool(args: dict[str, Any]) -> str:
+    url = str(args.get("url") or args.get("link") or "")
+    max_chars = int(args.get("max_chars") or 6000)
+    render = bool(args.get("render") or args.get("dynamic"))
+    backend = str(args.get("backend") or args.get("read_backend") or "auto")
+    from src.tools.web_research_service import web_read
+
+    return web_read(url, max_chars=max_chars, render=render, backend=backend)
+
+
+def _web_discover_sources_tool(args: dict[str, Any]) -> str:
+    target = str(args.get("url") or args.get("query") or args.get("topic") or "")
+    max_items = int(args.get("max_items") or 12)
+    from src.tools.web_research_service import discover_public_sources
+
+    return discover_public_sources(target, max_items=max_items)
+
+
+def _web_random_info_tool(args: dict[str, Any]) -> str:
+    topic = str(args.get("topic") or args.get("query") or "")
+    count = int(args.get("count") or 3)
+    from src.tools.web_research_service import random_public_info
+
+    return random_public_info(topic, count=count)
 
 
 BUILTIN_TOOLS: list[ToolSpec] = [
@@ -486,13 +685,13 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal"],
 
-        description="部门负责人通过姓名查询特定下属员工的考勤或审批记录。当负责人说'马戈的考勤'或'韩斌的请假'或'张三上周的考勤'或'李四的审批'等时，使用此工具。name参数填员工姓名，type参数填'attendance'考勤或'approval'审批。",
+        description="部门负责人通过姓名查询特定下属员工的考勤或审批记录。当负责人说'张三的考勤'或'李四的请假'或'张三上周的考勤'或'李四的审批'等时，使用此工具。name参数填员工姓名，type参数填'attendance'考勤或'approval'审批。",
 
         parameters={
 
             "user_id": {"type": "string", "description": "当前用户的微信ID（必填）"},
 
-            "name": {"type": "string", "description": "员工姓名（必填，如'马戈'、'韩斌'）"},
+            "name": {"type": "string", "description": "员工姓名（必填，如'张三'、'李四'）"},
 
             "type": {"type": "string", "description": "查询类型：'attendance'考勤或'approval'审批"},
 
@@ -894,7 +1093,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         allowed_roles=["personal", "project"],
 
-        description="将系统内置的三份公司级操作说明书作为普通公司文档导入公司知识库，带稳定标题和关键词。",
+        description="将系统内置的四份公司级操作说明书作为普通公司文档导入公司知识库，带稳定标题和关键词。",
 
         parameters={},
 
@@ -1300,56 +1499,6 @@ BUILTIN_TOOLS: list[ToolSpec] = [
         },
 
         handler=_watermark_pdf_tool,
-
-    ),
-
-    ToolSpec(
-
-        id="builtin:read_pdf",
-
-        name="读取PDF文本",
-
-        category="productivity",
-
-        risk_level="low",
-
-        allowed_roles=["personal", "project"],
-
-        description="读取并提取 PDF 文本内容。当用户说'读取PDF'、'查看PDF文字'时使用。",
-
-        parameters={
-
-            "path": {"type": "string", "description": "PDF文件路径（必填）"},
-
-        },
-
-        handler=_read_pdf_tool,
-
-    ),
-
-    ToolSpec(
-
-        id="builtin:extract_pdf_images",
-
-        name="提取PDF图片",
-
-        category="productivity",
-
-        risk_level="low",
-
-        allowed_roles=["personal", "project"],
-
-        description="提取 PDF 中的图片资源。当用户说'提取PDF图片'、'导出PDF图片'时使用。",
-
-        parameters={
-
-            "path": {"type": "string", "description": "PDF文件路径（必填）"},
-
-            "output_dir": {"type": "string", "description": "输出目录（可选，默认pdf_images）"},
-
-        },
-
-        handler=_extract_pdf_images_tool,
 
     ),
 
@@ -1827,6 +1976,64 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
     ToolSpec(
 
+        id="builtin:enterprise_app_query",
+
+        name="查询企业应用和流程数据",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="查询企业 IM 内置应用、审批流程、会议室、日程、在线文档、第三方应用或内部业务系统数据。用户问会议室是否被申请、审批流程进度、多个应用数据汇总时优先使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "用户要查询的企业应用、流程、会议室、审批或第三方系统问题"},
+
+        },
+
+        handler=_enterprise_app_query_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:enterprise_app_action",
+
+        name="执行企业应用动作",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="根据用户明确指令调用企业应用或流程执行动作，例如创建会议、创建日程或后续接入的审批催办。执行前应确认动作、对象和时间等关键参数。",
+
+        parameters={
+
+            "action": {"type": "string", "description": "动作 ID，例如 meeting.create 或 calendar.create"},
+
+            "title": {"type": "string", "description": "会议或流程标题，可选"},
+
+            "summary": {"type": "string", "description": "日程标题，可选"},
+
+            "start_at": {"type": "string", "description": "开始时间，可选"},
+
+            "end_at": {"type": "string", "description": "结束时间，可选"},
+
+            "attendees": {"type": "string", "description": "参与人 UserID，逗号分隔，可选"},
+
+        },
+
+        handler=_enterprise_app_action_tool,
+
+    ),
+
+    ToolSpec(
+
         id="builtin:calendar_create",
 
         name="创建日程/会议",
@@ -1876,6 +2083,190 @@ BUILTIN_TOOLS: list[ToolSpec] = [
         },
 
         handler=_create_doc_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:smartpage_create",
+
+        name="创建企业微信智能文档",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="在企业微信中创建智能文档，支持 Markdown 内容和多页面内容整理。当用户要求生成在线智能文档、汇总成企微智能文档时使用。",
+
+        parameters={
+
+            "title": {"type": "string", "description": "智能文档标题（必填）"},
+
+            "content": {"type": "string", "description": "文档正文，支持 Markdown（可选）"},
+
+        },
+
+        handler=_smartpage_create_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:edit_doc_content",
+
+        name="编辑企业微信文档内容",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="向已有企业微信文档写入或追加内容。只有用户明确要求编辑已有在线文档时使用。",
+
+        parameters={
+
+            "doc_id": {"type": "string", "description": "文档 ID 或文档标识（必填）"},
+
+            "content": {"type": "string", "description": "要写入的内容，支持 Markdown（必填）"},
+
+        },
+
+        handler=_edit_doc_content_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:sheet_append",
+
+        name="追加企业微信表格数据",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="向企业微信表格追加一行或多行数据。当用户要求把结果写入企微表格、追加表格记录时使用。",
+
+        parameters={
+
+            "doc_id": {"type": "string", "description": "表格文档 ID（必填）"},
+
+            "values": {"type": "string", "description": "要追加的数据，可为 JSON 数组或逗号分隔文本（必填）"},
+
+        },
+
+        handler=_sheet_append_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:todo_create",
+
+        name="创建企业微信待办",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="创建企业微信待办，可指定主题、截止时间和参与人。当用户说创建待办、提醒某人处理、安排任务时使用。",
+
+        parameters={
+
+            "title": {"type": "string", "description": "待办主题或内容（必填）"},
+
+            "due_time": {"type": "string", "description": "截止时间，例如 明天下午3点 或 2026-07-14 15:00（可选）"},
+
+            "participants": {"type": "string", "description": "参与人 userid，多个用逗号分隔（可选）"},
+
+        },
+
+        handler=_todo_create_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:todo_list",
+
+        name="查询企业微信待办",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="查询当前授权用户的企业微信待办列表。当用户问我的待办、本周待办、待办状态时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "待办筛选关键词或时间范围（可选）"},
+
+        },
+
+        handler=_todo_list_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:todo_update",
+
+        name="更新企业微信待办",
+
+        category="productivity",
+
+        risk_level="medium",
+
+        allowed_roles=["personal", "project"],
+
+        description="更新机器人创建的企业微信待办标题、截止时间或状态。只有用户明确要求修改待办时使用。",
+
+        parameters={
+
+            "todo_id": {"type": "string", "description": "待办 ID（必填）"},
+
+            "title": {"type": "string", "description": "新的待办标题或内容（可选）"},
+
+            "status": {"type": "string", "description": "状态，例如 accepted、done、rejected 或已完成（可选）"},
+
+            "due_time": {"type": "string", "description": "新的截止时间（可选）"},
+
+        },
+
+        handler=_todo_update_tool,
+
+    ),
+
+    ToolSpec(
+
+        id="builtin:todo_user_search",
+
+        name="搜索企业微信待办参与人",
+
+        category="productivity",
+
+        risk_level="low",
+
+        allowed_roles=["personal", "project"],
+
+        description="根据姓名或别名搜索可加入待办的成员 userid。当创建待办前需要查找张三、李四等成员时使用。",
+
+        parameters={
+
+            "query": {"type": "string", "description": "成员姓名或别名（必填）"},
+
+        },
+
+        handler=_todo_user_search_tool,
 
     ),
 
@@ -2347,7 +2738,7 @@ BUILTIN_TOOLS: list[ToolSpec] = [
 
         parameters={
 
-            "name": {"type": "string", "description": "员工姓名（必填），如'马戈'"},
+            "name": {"type": "string", "description": "员工姓名（必填），如'张三'"},
 
             "from": {"type": "string", "description": "当前用户的ID，从会话上下文获取"},
 
@@ -2395,6 +2786,172 @@ BUILTIN_TOOLS: list[ToolSpec] = [
             "text": {"type": "string", "description": "要处理的文本（必填）"},
         },
         handler=_humanize_tool,
+    ),
+    ToolSpec(
+        id="builtin:get_entry_link",
+        name="获取入口链接",
+        category="productivity",
+        risk_level="none",
+        allowed_roles=["personal", "project"],
+        description="当用户需要打开后台管理、管理员控制台、知识库管理、上传文档入口等管理页面时使用。target可填'admin'管理员控制台、'knowledge'知识库管理、'menu'入口菜单。用户说'后台'、'管理'、'控制台'、'知识库'、'上传文档'、'管理页面'、'管理员页面'、'帮我打开后台'等意图时调用。",
+        parameters={
+            "target": {"type": "string", "description": "目标页面：'admin'管理员控制台、'knowledge'知识库管理、'menu'入口菜单"},
+        },
+        handler=_get_entry_link_tool,
+    ),
+    ToolSpec(
+        id="builtin:broadcast_org_message",
+        name="组织架构通知群发",
+        category="admin",
+        risk_level="medium",
+        allowed_roles=["personal", "project"],
+        description="仅管理员可用。按企业 IM 通讯录组织架构给全体员工或指定部门内已开通企业 AI 助手的员工发送通知消息。用户说“通知全体员工...”“给技术部通知...”等意图时调用。",
+        parameters={
+            "platform": {"type": "string", "description": "企业 IM 平台，默认 wecom"},
+            "user_id": {"type": "string", "description": "发起通知的管理员企业 IM user_id"},
+            "target": {"type": "string", "description": "通知范围，例如：全体员工、技术部、部门 ID"},
+            "message": {"type": "string", "description": "要发送给员工的通知内容"},
+        },
+        handler=_broadcast_org_message_tool,
+    ),
+    ToolSpec(
+        id="builtin:query_ratemin_todos",
+        name="查询我的业务系统待办",
+        category="enterprise-app",
+        risk_level="low",
+        allowed_roles=["personal", "project"],
+        description="查询业务系统软件中的待办和流程通知。普通员工默认查询本人；管理员可以查询指定员工，例如“查询员工甲的业务系统待办”“查李四的外购申请单”。只查询，不发起、不同意、不退回、不处理业务系统流程。",
+        parameters={
+            "platform": {"type": "string", "description": "企业 IM 平台，默认 wecom"},
+            "user_id": {"type": "string", "description": "当前用户企业 IM user_id"},
+            "target_user": {"type": "string", "description": "可选。要查询的目标员工姓名或 user_id；普通员工不填，管理员可填“员工甲”之类"},
+            "query": {"type": "string", "description": "可选关键词，可按主题、内容、时间、发起人模糊查询"},
+            "source_db": {"type": "string", "description": "可选业务系统数据库：business_a 或 business_b"},
+            "limit": {"type": "integer", "description": "最多返回条数，默认 20"},
+        },
+        handler=_query_ratemin_todos_tool,
+    ),
+    ToolSpec(
+        id="builtin:web_search_aggregate",
+        name="多源联网搜索",
+        category="search",
+        risk_level="low",
+        allowed_roles=["personal", "project"],
+        description="跨多个公开搜索来源聚合结果并去重排序。适合用户要求联网搜索、尽量多找来源、对比多个公开来源、减少单一搜索源不稳定影响时使用。遵守 robots.txt、缓存和限速，不绕过登录、验证码、付费墙或访问控制。",
+        parameters={
+            "query": {"type": "string", "description": "搜索关键词或问题"},
+            "max_results": {"type": "integer", "description": "最多结果数，默认 10，最多 30"},
+            "freshness": {"type": "string", "description": "可选时间范围，SearXNG 支持时可填 day/week/month/year"},
+            "domains": {"type": "array", "description": "可选限定域名列表，例如 open-meteo.com"},
+            "include_sources": {"type": "array", "description": "可选指定来源：Crossref、OpenAlex、arXiv、Tavily、Firecrawl Search、Exa、Brave Search、SerpAPI、GitHub、StackExchange、Hacker News、SearXNG、Bing HTML、AnySearch"},
+        },
+        handler=_web_search_aggregate_tool,
+    ),
+    ToolSpec(
+        id="builtin:web_research",
+        name="互联网综合调研",
+        category="search",
+        risk_level="low",
+        allowed_roles=["personal", "project"],
+        description="对公开互联网信息进行综合检索和正文摘取。可使用自托管 SearXNG、结构化开放源，以及可选的 Tavily/Firecrawl Search/Exa/Brave Search/SerpAPI/AnySearch 私有 API；会遵守 robots.txt、缓存和限速。用户要求网上检索、综合资料、对比多个来源、查最新公开信息时优先使用。不会绕过登录、验证码、付费墙或网站访问控制。",
+        parameters={
+            "query": {"type": "string", "description": "调研主题或搜索关键词"},
+            "max_results": {"type": "integer", "description": "搜索结果数量，默认 5，最多 20"},
+            "read_top": {"type": "integer", "description": "读取前几个网页正文，默认 3"},
+            "freshness": {"type": "string", "description": "可选时间范围，SearXNG 支持时可填 day/week/month/year"},
+        },
+        handler=_web_research_tool,
+    ),
+    ToolSpec(
+        id="builtin:web_read",
+        name="读取公开网页正文",
+        category="search",
+        risk_level="low",
+        allowed_roles=["personal", "project"],
+        description="读取公开网页并抽取正文，适合用户发来 URL 要求总结、提炼、对比。默认使用静态抓取；render=true 时尝试 Playwright 渲染动态页面。遵守 robots.txt，不绕过登录、验证码、付费墙或访问控制。",
+        parameters={
+            "url": {"type": "string", "description": "http/https 网页地址"},
+            "max_chars": {"type": "integer", "description": "最多返回字符数，默认 6000"},
+            "render": {"type": "boolean", "description": "是否尝试浏览器渲染动态页面，默认 false"},
+            "backend": {"type": "string", "description": "读取后端：auto、static、firecrawl、crawl4ai、playwright、jina_reader。默认 auto"},
+        },
+        handler=_web_read_tool,
+    ),
+    ToolSpec(
+        id="builtin:web_discover_sources",
+        name="发现公开信息源",
+        category="search",
+        risk_level="low",
+        allowed_roles=["personal", "project"],
+        description="发现网站公开 RSS/Atom、sitemap、API 或数据集入口。适合用户想长期跟踪某网站、行业、新闻、公告、政策时使用，可配合公共数据订阅或知识库入库。",
+        parameters={
+            "url": {"type": "string", "description": "网站首页 URL；如果没有 URL，可改用 query/topic"},
+            "query": {"type": "string", "description": "主题关键词，用于搜索 RSS/sitemap/API/dataset"},
+            "max_items": {"type": "integer", "description": "最多返回信息源数量，默认 12"},
+        },
+        handler=_web_discover_sources_tool,
+    ),
+    ToolSpec(
+        id="builtin:web_research_health",
+        name="联网搜索能力诊断",
+        category="search",
+        risk_level="low",
+        allowed_roles=["personal", "project"],
+        description="诊断企业 AI 助手当前联网搜索和网页读取能力，包括 SearXNG、Jina、AnySearch、Crawl4AI、Playwright、trafilatura、缓存和 robots 配置。管理员询问搜索能力是否可用、网页读取后端是否启用、为什么搜索差时调用。",
+        parameters={},
+        handler=_web_research_health_tool,
+    ),
+    ToolSpec(
+        id="builtin:web_random_info",
+        name="随机公共信息获取",
+        category="search",
+        risk_level="low",
+        allowed_roles=["personal", "project"],
+        description="获取随机公共知识或围绕主题做轻量随机发现，适合用户要求随机资料、拓展视野、找灵感、随机学习材料。",
+        parameters={
+            "topic": {"type": "string", "description": "可选主题；为空时从公共百科随机获取"},
+            "count": {"type": "integer", "description": "数量，默认 3"},
+        },
+        handler=_web_random_info_tool,
+    ),
+    ToolSpec(
+        id="builtin:query_public_data",
+        name="公共数据查询",
+        category="public_data",
+        risk_level="low",
+        allowed_roles=["personal", "project"],
+        description="查询公共数据源。支持天气、空气质量、汇率、节假日、RSS、Wikidata、OpenAlex、GDELT、行业监测；货运、航班、供应链价格在配置企业可用数据源后可用。用户询问天气、空气质量、汇率、新闻、节假日、论文、公共知识、舆情、行业动态时调用。",
+        parameters={
+            "kind": {"type": "string", "description": "数据类型：weather、air_quality、exchange_rate、holiday、rss、wikidata、openalex、gdelt、industry、fred、shipment、flight、supply_price"},
+            "query": {"type": "string", "description": "查询关键词、城市、RSS 地址、主题或代码"},
+            "params": {"type": "object", "description": "可选参数，例如 base/symbols/country/year/latitude/longitude/url/series_id"},
+        },
+        handler=_query_public_data_tool,
+    ),
+    ToolSpec(
+        id="builtin:subscribe_public_data",
+        name="公共数据订阅",
+        category="public_data",
+        risk_level="low",
+        allowed_roles=["personal", "project"],
+        description="为当前用户创建公共数据变化订阅。适用于每天提醒天气、空气质量、汇率、行业新闻、节假日、公共知识源、舆情等；后续状态变化由 AI 助手自动通知用户。",
+        parameters={
+            "kind": {"type": "string", "description": "数据类型：weather、air_quality、exchange_rate、holiday、rss、wikidata、openalex、gdelt、industry、fred、shipment、flight、supply_price"},
+            "query": {"type": "string", "description": "订阅关键词、城市、RSS 地址、主题或代码"},
+            "schedule": {"type": "string", "description": "检查频率，例如 every 1d、every 6h、every 30 min"},
+            "params": {"type": "object", "description": "可选参数，例如 base/symbols/country/year/latitude/longitude/url/series_id"},
+        },
+        handler=_subscribe_public_data_tool,
+    ),
+    ToolSpec(
+        id="builtin:list_public_data_subscriptions",
+        name="查看公共数据订阅",
+        category="public_data",
+        risk_level="none",
+        allowed_roles=["personal", "project"],
+        description="查看当前用户已经创建的公共数据订阅。用户询问我的订阅、公共数据提醒有哪些、取消或核对提醒前先调用。",
+        parameters={},
+        handler=_list_public_data_subscriptions_tool,
     ),
 ]
 

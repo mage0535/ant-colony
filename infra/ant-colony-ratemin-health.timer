@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Ant Colony RatMin Collector Health Check every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=ant-colony-ratemin-health.service
+
+[Install]
+WantedBy=timers.target

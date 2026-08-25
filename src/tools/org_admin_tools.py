@@ -3,35 +3,47 @@ from __future__ import annotations
 from typing import Any
 
 
+def _resolve_user_id(args: dict[str, Any]) -> str:
+    return str(args.get("user_id") or args.get("from") or args.get("_context_user_id") or "")
+
+
 def attendance_tool(args: dict[str, Any]) -> str:
     from src.tools.attendance_tool import query_attendance
 
-    return query_attendance(args.get("user_id", ""), int(args.get("days", 7)))
+    return query_attendance(_resolve_user_id(args), int(args.get("days", 7)))
 
 
 def leave_tool(args: dict[str, Any]) -> str:
     from src.tools.attendance_tool import query_attendance
 
-    return query_attendance(args.get("user_id", ""), int(args.get("days", 30)), query_type="leave")
+    return query_attendance(_resolve_user_id(args), int(args.get("days", 30)), query_type="leave")
 
 
 def leave_balance_tool(args: dict[str, Any]) -> str:
+    from src.platform.leave_quota_service import build_employee_leave_form_notice
     from src.tools.attendance_tool import query_leave_balance
 
-    return query_leave_balance(args.get("user_id", ""))
+    user_id = _resolve_user_id(args)
+    try:
+        local_notice = build_employee_leave_form_notice(platform="wecom", user_id=user_id)
+        if "当前未同步公司假期类型" not in local_notice:
+            return local_notice
+    except Exception:
+        pass
+    return query_leave_balance(user_id)
 
 
 def dept_attendance_tool(args: dict[str, Any]) -> str:
     from src.tools.dept_tool import query_subordinates
 
-    return query_subordinates(args.get("user_id", ""), "all", int(args.get("days", 7)))
+    return query_subordinates(_resolve_user_id(args), "all", int(args.get("days", 7)))
 
 
 def subordinate_tool(args: dict[str, Any]) -> str:
     from src.tools.dept_tool import query_subordinate_by_name
 
     return query_subordinate_by_name(
-        args.get("user_id", ""),
+        _resolve_user_id(args),
         args.get("name", ""),
         args.get("type", "all"),
         int(args.get("days", 7)),
@@ -41,7 +53,7 @@ def subordinate_tool(args: dict[str, Any]) -> str:
 def subordinate_balance_tool(args: dict[str, Any]) -> str:
     from src.tools.dept_tool import query_subordinate_balance
 
-    return query_subordinate_balance(args.get("user_id", ""), args.get("name", ""))
+    return query_subordinate_balance(_resolve_user_id(args), args.get("name", ""))
 
 
 def add_admin_tool(args: dict[str, Any]) -> str:

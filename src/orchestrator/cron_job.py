@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 ALLOWED_NO_AGENT_CALLABLES = {
     "src.orchestrator.cron_scheduler._health_check",
     "src.orchestrator.cron_scheduler._org_sync",
+    "src.platform.process_change_notifier.run_process_change_notifier",
+    "src.platform.leave_quota_service.run_realtime_leave_sync",
+    "src.platform.daily_brief_service.run_daily_briefs",
+    "src.platform.mail_account_service.run_mail_new_message_notifier",
+    "src.platform.public_data_service.run_public_data_subscriptions",
+    "src.platform.ratemin_service.run_ratemin_pending_notifier",
+    "src.platform.ratemin_collector_health.run_ratemin_collector_health_check",
 }
 
 
@@ -178,6 +185,16 @@ def run_no_agent(command: str) -> str:
         return str(func())[:2000]
     except Exception as e:
         return f"EXCEPTION: {e}"
+
+
+def cron_result_status(result: str) -> str:
+    """Convert a cron execution result into the persisted status label."""
+    text = str(result or "").strip()
+    if text.startswith(("FAILED", "EXCEPTION", "REJECTED")):
+        return text[:100]
+    if "not yet implemented" in text.lower() or text.startswith("(agent mode"):
+        return "REJECTED: agent mode cron execution is not implemented"
+    return "OK"
 
 
 REGISTRY: CronJobRegistry | None = None

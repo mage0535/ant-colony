@@ -244,6 +244,12 @@ def _merge_credentials(
             sources[source_key] = "页面确认输入"
             continue
 
+        file_value = _first_value(env_file_values, env_key, *ENV_KEY_ALIASES.get(platform, {}).get(source_key, ()))
+        if file_value:
+            merged[source_key] = file_value
+            sources[source_key] = f"\u914d\u7f6e\u6587\u4ef6 {env_file}"
+            continue
+
         env_value = _first_value(os.environ, env_key, *ENV_KEY_ALIASES.get(platform, {}).get(source_key, ()))
         if env_value:
             merged[source_key] = env_value

@@ -65,6 +65,27 @@ class TestAgentEngine(unittest.TestCase):
         self.assertEqual(response.text, "ok")
         mock_openai.assert_called_once_with(api_key="sk-ds-test", base_url="https://api.deepseek.com/v1")
 
+    @patch("openai.OpenAI")
+    def test_opencode_zen_api_uses_raw_model_id(self, mock_openai: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_openai.return_value = mock_client
+        mock_client.chat.completions.create.return_value.choices[0].message.content = "ok"
+
+        config = AgentEngineConfig(
+            model_name="opencode/deepseek-v4-flash-free",
+            agent_role="test",
+            provider="openai_compatible",
+            api_key="sk-test",
+            api_base="https://opencode.ai/zen/v1",
+        )
+        engine = AgentEngine(config)
+        context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="d1")
+        response = engine.process_text("ping", context)
+
+        self.assertEqual(response.text, "ok")
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        self.assertEqual(call_kwargs["model"], "deepseek-v4-flash-free")
+
     @patch("anthropic.Anthropic")
     def test_anthropic_provider(self, mock_anthropic: MagicMock) -> None:
         mock_client = MagicMock()
@@ -279,7 +300,7 @@ class TestPersonalAgent(unittest.TestCase):
         agent = PersonalAgent("u1", engine)
         context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
 
-        response = agent.process_message("u1", "你好", context)
+        response = agent.process_message("u1", "请分析这个问题", context)
 
         self.assertEqual(response.text, "你好，我是你的 AI 助手")
         self.assertTrue(response.visible_to_user)
@@ -316,6 +337,41 @@ class TestPersonalAgent(unittest.TestCase):
         self.assertIn("企业微信 AI 助手激活说明书", response.text)
         self.assertIn("打开查看", response.text)
         self.assertIn("第一步 打开企业微信", response.text)
+
+    def test_personal_agent_falls_back_to_user_manual_for_operation_help_queries(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        engine = AgentEngine(config)
+        agent = PersonalAgent("u1", engine)
+        context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
+
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        entry = KnowledgeEntry(
+            id="company-guide-user-manual",
+            owner_type=KnowledgeOwnerType.ORGANIZATION,
+            owner_id="*",
+            content="企业 AI 助手使用说明书\n\n第一步 搜索企业 AI 助手\n第二步 发送消息",
+            tags=["guide"],
+            metadata={"title": "企业 AI 助手使用说明书"},
+        )
+
+        def fake_search(query: str, **kwargs):
+            if query == "我不会上传文件，告诉我具体操作步骤":
+                return []
+            if query == "企业 AI 助手使用总入口":
+                return [entry]
+            return []
+
+        with patch("src.tools.knowledge_tools.search_knowledge_entries", side_effect=fake_search):
+            response = agent.process_message("u1", "我不会上传文件，告诉我具体操作步骤", context)
+
+        self.assertIn("企业 AI 助手使用说明书", response.text)
+        self.assertIn("如果你是想看一步一步的操作说明", response.text)
 
     def test_personal_agent_uses_last_knowledge_for_followup_question(self) -> None:
         config = AgentEngineConfig(
@@ -382,7 +438,7 @@ class TestPersonalAgent(unittest.TestCase):
         self.assertTrue(response.text.startswith("[BOT_FILE]"))
         self.assertIn("企业微信 AI 助手激活说明书", response.text)
 
-    def test_personal_agent_shortcuts_to_approval_workflow(self) -> None:
+    def test_personal_agent_routes_approval_tracking_to_bounded_enterprise_query(self) -> None:
         config = AgentEngineConfig(
             model_name="gpt-4o-mini",
             agent_role="personal",
@@ -393,10 +449,92 @@ class TestPersonalAgent(unittest.TestCase):
         agent = PersonalAgent("u1", engine)
         context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1")
 
-        with patch("src.agents.personal_agent.OfficeWorkflowService.approval_followup", return_value=type("Result", (), {"content": "审批跟踪结果"})()):
+        with patch("src.agents.personal_agent.OfficeWorkflowService.enterprise_app_query", return_value=type("Result", (), {"content": "审批跟踪结果"})()):
             response = agent.process_message("u1", "帮我跟踪一下付款审批进度", context)
 
         self.assertEqual(response.text, "审批跟踪结果")
+
+    def test_personal_agent_shortcuts_to_enterprise_app_query(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        engine = AgentEngine(config)
+        agent = PersonalAgent("u1", engine)
+        context = MessageContext(space_type=SpaceType.DEPARTMENT, space_id="dept-1", dept_id="dept-1", metadata={"provider": "wecom"})
+
+        with patch("src.agents.personal_agent.OfficeWorkflowService.enterprise_app_query", return_value=type("Result", (), {"content": "三号会议室查询结果"})()):
+            response = agent.process_message("u1", "三号会议室有人申请吗？", context)
+
+        self.assertEqual(response.text, "三号会议室查询结果")
+
+    def test_personal_agent_routes_personal_approval_query_to_enterprise_apps(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        agent = PersonalAgent("u1", AgentEngine(config))
+        context = MessageContext(
+            space_type=SpaceType.DEPARTMENT,
+            space_id="dept-1",
+            metadata={"provider": "wecom"},
+        )
+        with patch(
+            "src.agents.personal_agent.OfficeWorkflowService.enterprise_app_query",
+            return_value=type("Result", (), {"content": "我的审批状态"})(),
+        ):
+            response = agent.process_message("u1", "查询我所有审批的状态", context)
+
+        self.assertEqual(response.text, "我的审批状态")
+
+    def test_personal_process_query_ignores_stale_enterprise_artifact_prefetch(self) -> None:
+        config = AgentEngineConfig(
+            model_name="gpt-4o-mini",
+            agent_role="personal",
+            provider="openai",
+            api_key="sk-test",
+        )
+        agent = PersonalAgent("u1", AgentEngine(config))
+        context = MessageContext(
+            space_type=SpaceType.DEPARTMENT,
+            space_id="dept-1",
+            metadata={"provider": "wecom"},
+        )
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        stale = KnowledgeEntry(
+            id="txt-old",
+            owner_type=KnowledgeOwnerType.PERSONAL,
+            owner_id="u1",
+            content="企业应用查询结果\n\n【会议室/会议】\n三号会议室：今天 09:30-10:30",
+            tags=["workflow", "enterprise_app_query"],
+            metadata={"title": "企业应用查询结果", "source_type": "text"},
+        )
+
+        with patch("src.agents.personal_agent._prefetch_accessible_entries", return_value=[stale]), \
+             patch(
+                 "src.agents.personal_agent.OfficeWorkflowService.enterprise_app_query",
+                 return_value=type("Result", (), {"content": "只返回我的申请流程"})(),
+             ) as query:
+            response = agent.process_message("u1", "我所有的申请和流程是否还有未完成的", context)
+
+        self.assertEqual(response.text, "只返回我的申请流程")
+        query.assert_called_once()
+
+    def test_plain_workshop_question_is_not_forced_into_enterprise_apps(self) -> None:
+        from src.agents.personal_agent import _run_workflow_shortcut
+
+        context = MessageContext(
+            space_type=SpaceType.DEPARTMENT,
+            space_id="dept-1",
+            metadata={"provider": "wecom"},
+        )
+
+        self.assertIsNone(_run_workflow_shortcut("u1", "目前车间通行是什么情况", context))
 
     def test_personal_agent_shortcuts_to_workorder_workflow(self) -> None:
         config = AgentEngineConfig(
@@ -418,19 +556,19 @@ class TestPersonalAgent(unittest.TestCase):
 class TestToolCalling(unittest.TestCase):
     def test_tool_call_regex_match(self) -> None:
         text = "查时间 <tool_call>builtin:now()</tool_call>"
-        from src.engine.base import _TOOL_CALL_RE
-        match = _TOOL_CALL_RE.search(text)
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), "builtin:now")
-        self.assertEqual(match.group(2), "")
+        from src.engine.base import _extract_tool_calls
+        calls = _extract_tool_calls(text)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "builtin:now")
+        self.assertEqual(calls[0][1], "")
 
     def test_tool_call_with_args(self) -> None:
         text = '<tool_call>builtin:echo({"text": "hello"})</tool_call>'
-        from src.engine.base import _TOOL_CALL_RE
-        match = _TOOL_CALL_RE.search(text)
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), "builtin:echo")
-        self.assertIn("hello", match.group(2))
+        from src.engine.base import _extract_tool_calls
+        calls = _extract_tool_calls(text)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "builtin:echo")
+        self.assertIn("hello", calls[0][1])
 
     def test_engine_executes_tool_call(self) -> None:
         from src.tools.registry import FusionToolRegistry
@@ -488,6 +626,18 @@ class TestToolCalling(unittest.TestCase):
         prompt = engine._inject_tools("你是助手")
         self.assertIn("可用工具", prompt)
         self.assertIn("builtin:now", prompt)
+        self.assertIn("builtin:broadcast_org_message", prompt)
+        self.assertIn("builtin:query_public_data", prompt)
+        self.assertIn("builtin:subscribe_public_data", prompt)
+        self.assertIn("builtin:query_ratemin_todos", prompt)
+        self.assertIn("builtin:web_research", prompt)
+        self.assertIn("builtin:web_search_aggregate", prompt)
+        self.assertIn("builtin:web_read", prompt)
+        self.assertIn("builtin:web_research_health", prompt)
+        self.assertIn("通知全体员工", prompt)
+        self.assertIn("天气、空气质量、汇率", prompt)
+        self.assertIn("业务系统", prompt)
+        self.assertIn("公开互联网信息", prompt)
         self.assertIn("<tool_call>", prompt)
 
     def test_builtin_tools_registered(self) -> None:

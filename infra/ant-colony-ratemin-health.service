@@ -1,0 +1,10 @@
+[Unit]
+Description=Ant Colony RatMin Collector Health Check
+After=network-online.target ant-colony-dashboard.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=ANT_COLONY_HOME=/opt/ant-colony
+Environment=ANT_COLONY_PYTHON=/opt/ant-colony/.venv/bin/python
+ExecStart=/usr/bin/env bash -lc 'cd "$ANT_COLONY_HOME" && "$ANT_COLONY_PYTHON" -c "from src.platform.ratemin_collector_health import run_ratemin_collector_health_check; print(run_ratemin_collector_health_check())"'

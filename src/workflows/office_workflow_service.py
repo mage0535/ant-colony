@@ -34,7 +34,15 @@ def _default_owner(user_id: str, context: MessageContext) -> tuple[str, str]:
     return default_write_scope(role, user_id, platform=platform)
 
 
-def _record_artifacts(user_id: str, context: MessageContext, title: str, content: str, source: str) -> None:
+def _record_artifacts(
+    user_id: str,
+    context: MessageContext,
+    title: str,
+    content: str,
+    source: str,
+    *,
+    collect_knowledge: bool = True,
+) -> None:
     conn = Database.get().connect()
     store = ScopedMemoryStore(conn)
     scope_type = "personal"
@@ -45,9 +53,10 @@ def _record_artifacts(user_id: str, context: MessageContext, title: str, content
         scope_type, scope_id = "department", context.dept_id
     store.retain(f"{title}\n\n{content}", scope_type=scope_type, scope_id=scope_id, source=source)
 
-    owner_type, owner_id = _default_owner(user_id, context)
-    collector = KnowledgeCollector(build_knowledge_repository())
-    collector.collect_text(content, title, owner_type=owner_type, owner_id=owner_id, tags=["workflow", source])
+    if collect_knowledge:
+        owner_type, owner_id = _default_owner(user_id, context)
+        collector = KnowledgeCollector(build_knowledge_repository())
+        collector.collect_text(content, title, owner_type=owner_type, owner_id=owner_id, tags=["workflow", source])
 
 
 def _role_prefix(query: str) -> str:
@@ -93,7 +102,49 @@ class WorkflowResult:
     content: str
 
 
+def _enterprise_next_steps(query: str) -> str:
+    from src.platform.enterprise_query import plan_enterprise_query
+
+    plan = plan_enterprise_query(query)
+    if plan.domains == ("meeting_room",):
+        return (
+            "【下一步建议】\n"
+            "1. 可继续指定日期和时间段查询会议室占用情况。\n"
+            "2. 如果提示权限不足，需要给 AI 助手应用补充会议室、会议和日程读取权限。\n"
+            "3. 确认空闲时段后，可以继续发起预订操作。"
+        )
+    if plan.domains == ("approval",):
+        return (
+            "【下一步建议】\n"
+            "1. 可继续提供审批名称或审批编号查询当前节点。\n"
+            "2. 如果提示权限不足，需要给 AI 助手应用补充审批数据读取权限。\n"
+            "3. 催办、撤回或同意等写操作会在执行前再次确认。"
+        )
+    return (
+        "【下一步建议】\n"
+        "1. 可继续指定应用、对象和时间范围缩小查询。\n"
+        "2. 跨应用汇总只会包含当前用户有权访问且已接入接口的数据。\n"
+        "3. 写操作会在执行前校验权限并再次确认。"
+    )
+
+
 class OfficeWorkflowService:
+    def enterprise_app_query(self, user_id: str, query: str, context: MessageContext) -> WorkflowResult:
+        cap_ctx = _context_dict(user_id, context)
+        from src.platform.enterprise_query_service import execute_enterprise_query
+
+        app_data = _clean_capability_text(
+            execute_enterprise_query(query, cap_ctx),
+            "暂未查询到企业应用数据。可能原因是对应应用未授权给当前 AI 助手，或该应用没有当前条件下的数据。",
+        )
+        body = (
+            _role_prefix(query or "企业应用查询")
+            + f"【企业应用查询结果】\n{app_data}\n\n"
+        )
+        body += _enterprise_next_steps(query)
+        _record_artifacts(user_id, context, "企业应用查询结果", body, "enterprise_app_query", collect_knowledge=False)
+        return WorkflowResult("企业应用查询结果", body)
+
     def approval_followup(self, user_id: str, query: str, context: MessageContext) -> WorkflowResult:
         cap_ctx = _context_dict(user_id, context)
         approvals = _clean_capability_text(invoke_capability("approval.list", "pending", context=cap_ctx, empty_message=""), "暂无审批列表能力")
@@ -105,10 +156,10 @@ class OfficeWorkflowService:
             + f"【审批待办】\n{approvals or '暂无待办'}\n\n"
             + f"【审批详情】\n{detail or '暂无详情'}\n\n"
             + f"【相关文档】\n{docs or '未找到相关文档'}\n\n"
-            + f"【相关邮件摘要】\n{mail or '暂无相关邮件'}\n\n"
+            + f"【相关邮箱未读情况】\n{mail or '暂无相关邮箱未读信息'}\n\n"
             + "【下一步建议】\n1. 先确认审批当前节点和卡点原因。\n2. 如果缺材料，直接整理补件清单。\n3. 如需催办，可生成催办消息或发起会议。"
         )
-        _record_artifacts(user_id, context, "审批跟踪结果", body, "approval_followup")
+        _record_artifacts(user_id, context, "审批跟踪结果", body, "approval_followup", collect_knowledge=False)
         return WorkflowResult("审批跟踪结果", body)
 
     def meeting_coordination(self, user_id: str, query: str, context: MessageContext) -> WorkflowResult:

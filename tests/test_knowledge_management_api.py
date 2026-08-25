@@ -146,8 +146,8 @@ class TestKnowledgeManagementApi(unittest.TestCase):
             )
 
         self.assertEqual(result["indexed"], "file-indexed")
-        self.assertEqual(result["knowledge_owner_type"], "department")
-        self.assertEqual(result["knowledge_owner_id"], "dept-2")
+        self.assertEqual(result["owner_type"], "department")
+        self.assertEqual(result["owner_id"], "dept-2")
         self.assertEqual(saved["owner_type"], "department")
         self.assertEqual(saved["owner_id"], "dept-2")
 
@@ -178,6 +178,187 @@ class TestKnowledgeManagementApi(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         auth.assert_not_called()
+
+    def test_delete_knowledge_removes_writable_entry(self) -> None:
+        from src.web.dashboard import delete_knowledge
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        class FakeRepo:
+            def __init__(self) -> None:
+                self.entries = {
+                    "k-delete": KnowledgeEntry(
+                        id="k-delete",
+                        owner_type=KnowledgeOwnerType.PERSONAL,
+                        owner_id="u1",
+                        content="obsolete",
+                    )
+                }
+
+            def get(self, entry_id: str):
+                return self.entries.get(entry_id)
+
+            def delete(self, entry_id: str, user_id: str = "") -> bool:
+                return self.entries.pop(entry_id, None) is not None
+
+        repo = FakeRepo()
+        with patch("src.web.dashboard.get_knowledge_repo", return_value=repo), \
+             patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"value": 1})()), \
+             patch("src.knowledge.acl.may_write", return_value=True):
+            result = delete_knowledge("k-delete", user_id="u1")
+
+        self.assertEqual(result, {"id": "k-delete", "deleted": True})
+        self.assertNotIn("k-delete", repo.entries)
+
+    def test_delete_knowledge_rejects_entry_without_write_permission(self) -> None:
+        from fastapi import HTTPException
+        from src.web.dashboard import delete_knowledge
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        entry = KnowledgeEntry(
+            id="company-guide",
+            owner_type=KnowledgeOwnerType.ORGANIZATION,
+            owner_id="*",
+            content="company guide",
+        )
+        fake_repo = type("Repo", (), {"get": lambda self, entry_id: entry})()
+
+        with patch("src.web.dashboard.get_knowledge_repo", return_value=fake_repo), \
+             patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"value": 1})()), \
+             patch("src.knowledge.acl.may_write", return_value=False):
+            with self.assertRaises(HTTPException) as exc:
+                delete_knowledge("company-guide", user_id="u1")
+
+        self.assertEqual(exc.exception.status_code, 403)
+
+    def test_transfer_knowledge_copy_keeps_source_and_creates_target_entry(self) -> None:
+        from src.web.dashboard import KnowledgeTransferRequest, transfer_knowledge
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        class FakeRepo:
+            def __init__(self) -> None:
+                self.entries = {
+                    "personal-meeting": KnowledgeEntry(
+                        id="personal-meeting",
+                        owner_type=KnowledgeOwnerType.PERSONAL,
+                        owner_id="AdminUser",
+                        content="会议组织建议正文",
+                        tags=["会议"],
+                        metadata={"title": "会议组织建议"},
+                    )
+                }
+
+            def get(self, entry_id: str):
+                return self.entries.get(entry_id)
+
+            def save(self, entry):
+                self.entries[entry.id] = entry
+                return entry
+
+            def delete(self, entry_id: str, user_id: str = "") -> bool:
+                return self.entries.pop(entry_id, None) is not None
+
+        repo = FakeRepo()
+        with patch("src.web.dashboard.get_knowledge_repo", return_value=repo), \
+             patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"value": 4})()), \
+             patch("src.knowledge.acl.may_read", return_value=True), \
+             patch("src.knowledge.acl.may_write", return_value=True):
+            result = transfer_knowledge(
+                KnowledgeTransferRequest(
+                    entry_id="personal-meeting",
+                    action="copy",
+                    target_owner_type="organization",
+                    target_owner_id="*",
+                    user_id="AdminUser",
+                )
+            )
+
+        self.assertEqual(result["action"], "copy")
+        self.assertEqual(result["source_deleted"], False)
+        self.assertIn("personal-meeting", repo.entries)
+        self.assertEqual(repo.entries[result["entry"]["id"]].owner_type, KnowledgeOwnerType.ORGANIZATION)
+        self.assertEqual(repo.entries[result["entry"]["id"]].metadata["copied_from"], "personal-meeting")
+
+    def test_transfer_knowledge_cut_removes_source_after_creating_target_entry(self) -> None:
+        from src.web.dashboard import KnowledgeTransferRequest, transfer_knowledge
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        class FakeRepo:
+            def __init__(self) -> None:
+                self.entries = {
+                    "personal-meeting": KnowledgeEntry(
+                        id="personal-meeting",
+                        owner_type=KnowledgeOwnerType.PERSONAL,
+                        owner_id="AdminUser",
+                        content="会议组织建议正文",
+                        tags=["会议"],
+                        metadata={"title": "会议组织建议"},
+                    )
+                }
+
+            def get(self, entry_id: str):
+                return self.entries.get(entry_id)
+
+            def save(self, entry):
+                self.entries[entry.id] = entry
+                return entry
+
+            def delete(self, entry_id: str, user_id: str = "") -> bool:
+                return self.entries.pop(entry_id, None) is not None
+
+        repo = FakeRepo()
+        with patch("src.web.dashboard.get_knowledge_repo", return_value=repo), \
+             patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"value": 4})()), \
+             patch("src.knowledge.acl.may_read", return_value=True), \
+             patch("src.knowledge.acl.may_write", return_value=True):
+            result = transfer_knowledge(
+                KnowledgeTransferRequest(
+                    entry_id="personal-meeting",
+                    action="cut",
+                    target_owner_type="organization",
+                    target_owner_id="*",
+                    user_id="AdminUser",
+                )
+            )
+
+        self.assertEqual(result["action"], "cut")
+        self.assertEqual(result["source_deleted"], True)
+        self.assertNotIn("personal-meeting", repo.entries)
+        self.assertEqual(repo.entries[result["entry"]["id"]].metadata["moved_from"], "personal-meeting")
+
+    def test_transfer_knowledge_rejects_unwritable_target_scope(self) -> None:
+        from fastapi import HTTPException
+        from src.web.dashboard import KnowledgeTransferRequest, transfer_knowledge
+        from src.knowledge.contracts import KnowledgeEntry, KnowledgeOwnerType
+
+        entry = KnowledgeEntry(
+            id="personal-meeting",
+            owner_type=KnowledgeOwnerType.PERSONAL,
+            owner_id="AdminUser",
+            content="会议组织建议正文",
+            tags=["会议"],
+            metadata={"title": "会议组织建议"},
+        )
+        fake_repo = type("Repo", (), {"get": lambda self, entry_id: entry})()
+
+        def fake_may_write(role, owner_type, owner_id, user_id, platform="wecom"):
+            return owner_type == "personal"
+
+        with patch("src.web.dashboard.get_knowledge_repo", return_value=fake_repo), \
+             patch("src.knowledge.acl.resolve_role", return_value=type("RoleValue", (), {"value": 1})()), \
+             patch("src.knowledge.acl.may_read", return_value=True), \
+             patch("src.knowledge.acl.may_write", side_effect=fake_may_write):
+            with self.assertRaises(HTTPException) as exc:
+                transfer_knowledge(
+                    KnowledgeTransferRequest(
+                        entry_id="personal-meeting",
+                        action="copy",
+                        target_owner_type="organization",
+                        target_owner_id="*",
+                        user_id="AdminUser",
+                    )
+                )
+
+        self.assertEqual(exc.exception.status_code, 403)
 
 
 if __name__ == "__main__":

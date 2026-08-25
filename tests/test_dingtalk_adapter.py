@@ -71,6 +71,40 @@ class TestDingTalkAdapter(unittest.TestCase):
         self.assertEqual(payload["targetId"], "chat-1")
         self.assertEqual(payload["msgKey"], "sampleMarkdown")
 
+    def test_send_message_splits_long_text_into_multiple_requests(self) -> None:
+        from src.gateway.adapter_dingtalk import DingTalkAdapter
+
+        adapter = DingTalkAdapter()
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps({"errcode": 0, "errmsg": "ok"}).encode("utf-8")
+
+        payloads: list[dict[str, object]] = []
+
+        def fake_urlopen(req, timeout=10):
+            payloads.append(json.loads(req.data.decode("utf-8")))
+            return Response()
+
+        with (
+            patch.object(adapter, "_ensure_token", return_value="token-1"),
+            patch("src.gateway.adapter_dingtalk.urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            ok = adapter.send_message("chat-1", "很长的内容。" * 300)
+
+        self.assertTrue(ok)
+        self.assertGreaterEqual(len(payloads), 2)
+        second_msg = json.loads(payloads[1]["msgParam"])
+        first_msg = json.loads(payloads[0]["msgParam"])
+        self.assertTrue(first_msg["text"].startswith("（1/"))
+        self.assertTrue(second_msg["text"].startswith("（2/"))
+
     def test_handle_event_ignores_unsupported_message_type(self) -> None:
         from src.gateway.adapter_dingtalk import DingTalkAdapter
 
