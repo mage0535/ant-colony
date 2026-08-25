@@ -193,6 +193,7 @@ class InboundGatewayService:
         self.batch_processor = batch_processor
         self.personal_agents = personal_agents or {}
         self._engine = engine
+        self._engine_signature = _engine_signature_from_engine(engine)
         self._memory_dir = memory_dir
         self._memory_builder = MemoryContextBuilder(enabled=memory_enabled)
         self._conversations = ConversationStore(save_dir="./data/conversations",
@@ -466,6 +467,7 @@ class InboundGatewayService:
         return InboundResult(route_kind=decision.kind.value, target_id=decision.target_id, buffered_count=buffered)
 
     def get_or_create_agent(self, user_id: str) -> PersonalAgent:
+        self._refresh_engine_if_default_model_changed()
         agent = self.personal_agents.get(user_id)
         if agent is not None:
             return agent
@@ -474,6 +476,23 @@ class InboundGatewayService:
         agent = PersonalAgent(user_id, self._engine, memory_dir=self._memory_dir)
         self.personal_agents[user_id] = agent
         return agent
+
+    def _refresh_engine_if_default_model_changed(self) -> None:
+        current_signature = _current_default_engine_signature()
+        if not current_signature or current_signature == self._engine_signature:
+            return
+        try:
+            from src.engine.factory import build_engine
+
+            new_engine = build_engine("personal")
+        except Exception:
+            logger.exception("failed to refresh personal engine after model config change")
+            return
+        self._engine = new_engine
+        self._engine_signature = current_signature
+        for agent in self.personal_agents.values():
+            agent.engine = new_engine
+        logger.info("refreshed personal engine after model config change: %s", current_signature)
 
     def _clear_stale_pair_buffers(self, now: float) -> None:
         stale_files = [uid for uid, (_, ts) in _file_buffer.items() if now - ts > _PAIR_TIMEOUT]
@@ -491,3 +510,42 @@ class InboundGatewayService:
         if now - ts > _PAIR_TIMEOUT:
             return None
         return text
+
+
+def _engine_signature_from_engine(engine: AgentEngine | None) -> tuple[Any, ...] | None:
+    if engine is None:
+        return None
+    config = getattr(engine, "config", None)
+    if config is None:
+        return None
+    return (
+        "",
+        str(getattr(config, "provider", "") or ""),
+        str(getattr(config, "model_name", "") or ""),
+        str(getattr(config, "api_base", "") or ""),
+        int(getattr(config, "max_tokens", 0) or 0),
+        "",
+    )
+
+
+def _current_default_engine_signature() -> tuple[Any, ...] | None:
+    try:
+        from src.config.bootstrap import build_settings_service
+
+        snapshot = build_settings_service().build_runtime_snapshot()
+        profiles = [p for p in snapshot.llm_profiles if p.enabled]
+        if not profiles:
+            return None
+        profile = next((p for p in profiles if bool((p.metadata or {}).get("is_default"))), profiles[0])
+        metadata = profile.metadata or {}
+        return (
+            profile.profile_id,
+            str(getattr(profile.provider, "value", profile.provider)),
+            profile.model_name,
+            profile.api_base or "",
+            int(profile.max_tokens or 0),
+            str(metadata.get("updated_at") or ""),
+        )
+    except Exception:
+        logger.exception("failed to inspect current default model signature")
+        return None

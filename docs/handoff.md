@@ -32,10 +32,11 @@
 - 已补企业应用状态变化通知、审批/流程用户边界控制、消息分段发送和消息无回复兜底。
 - 已补统一工具与集成管理中心、公共数据源管理、联网检索聚合和搜索结果翻页能力。
 - 已补企业知识库说明书和面向小白用户的操作手册。
+- 已补模型管理测试按钮，以及默认模型变更后的前台个人 Agent engine 热刷新能力。
 
 ## 最新验证
 
-- 本地全量测试：`863 passed`。
+- 本地全量测试：`872 passed`。
 - 测试服务器全量测试：`863 passed`。
 - 测试服务器服务状态：
   - `ant-colony-dashboard` active。
@@ -43,6 +44,17 @@
   - `ant-colony-wecom-bot` active。
   - `ant-colony-cron` active。
 - 后台页面和网关健康检查通过。
+
+## 2026-08-25 默认模型热刷新
+
+- 问题：后台“模型管理”保存或切换默认模型后，管理后台测试可立即使用新模型，但企微前台已有个人会话中的 `PersonalAgent` 会继续持有服务启动时创建的旧 `engine`，导致用户仍可能看到旧模型的 429 错误。
+- 处理：`InboundGatewayService.get_or_create_agent()` 在每条个人消息进入前检查当前默认模型签名；当 `profile_id/provider/model/api_base/max_tokens/updated_at` 变化时，自动重建个人 `engine`，并替换所有已缓存个人 Agent 的 `engine`。
+- 效果：管理员保存并设为默认模型后，无需手动重启 gateway/wecom-bot；下一条个人前台消息会自动切换到新默认模型。
+- 边界：该机制面向个人前台消息链路；批量项目消息的 project engine 仍按服务启动时配置运行，如后续需要群/项目批处理也热刷新，可扩展同样签名机制到 `BatchFlusher`。
+- 测试：
+  - `python -m pytest -q tests/test_gateway_model_refresh.py`：1 passed。
+  - `python -m pytest -q tests/test_gateway_model_refresh.py tests/test_contracts_smoke.py tests/test_document_pipeline.py tests/test_inbound_entry_links.py tests/test_inbound_web_search.py tests/test_admin_user_and_model_services.py tests/test_admin_console.py`：159 passed。
+  - `python -m pytest -q`：872 passed。
 
 ## 发布注意事项
 
