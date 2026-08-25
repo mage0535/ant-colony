@@ -180,3 +180,43 @@ def test_build_engine_prefers_default_profile(tmp_path, monkeypatch) -> None:
 
     assert engine.config.model_name == "claude-sonnet-4-20250514"
     assert engine.config.provider == "anthropic"
+
+
+def test_model_profile_test_invokes_selected_profile(tmp_path, monkeypatch) -> None:
+    from src.platform.model_management_service import save_model_profile, test_model_profile
+
+    settings_path = tmp_path / "runtime_settings.json"
+    monkeypatch.setattr("src.config.bootstrap.DEFAULT_SETTINGS_PATH", settings_path)
+
+    save_model_profile({
+        "profile_id": "test-model",
+        "provider": "openai_compatible",
+        "model_name": "x-preview-f-free",
+        "api_base": "https://opencode.ai/zen/v1/",
+        "api_key": "sk-test",
+    })
+
+    class FakeResponse:
+        text = "正常"
+        metadata = {"model": "x-preview-f-free", "provider": "openai_compatible"}
+
+    class FakeEngine:
+        def __init__(self):
+            self.config = type("Config", (), {
+                "model_name": "x-preview-f-free",
+                "provider": "openai_compatible",
+                "api_base": "https://opencode.ai/zen/v1/",
+            })()
+
+        def process_text(self, text, context):
+            assert "只回复" in text
+            return FakeResponse()
+
+    with patch("src.engine.factory.build_engine", return_value=FakeEngine()) as build:
+        result = test_model_profile("test-model")
+
+    assert result["ok"] is True
+    assert result["profile_id"] == "test-model"
+    assert result["model_name"] == "x-preview-f-free"
+    assert result["response"] == "正常"
+    build.assert_called_once_with(agent_role="personal", profile_id="test-model")

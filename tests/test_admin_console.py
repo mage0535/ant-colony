@@ -407,7 +407,7 @@ def test_admin_broadcast_uses_admin_context_sender() -> None:
 
 
 def test_admin_model_management_apis() -> None:
-    from src.web.dashboard import ModelDefaultRequest, ModelDiscoverRequest, ModelProfileRequest, admin_delete_model_profile, admin_discover_models, admin_model_profiles, admin_save_model_profile, admin_set_default_model
+    from src.web.dashboard import ModelDefaultRequest, ModelDiscoverRequest, ModelProfileRequest, admin_delete_model_profile, admin_discover_models, admin_model_profiles, admin_save_model_profile, admin_set_default_model, admin_test_model_profile
 
     request = _request("/api/v1/admin/models")
     with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
@@ -430,6 +430,13 @@ def test_admin_model_management_apis() -> None:
         result = admin_set_default_model(ModelDefaultRequest(profile_id="default"), request)
     assert result["profile_id"] == "default"
     set_default.assert_called_once_with("default")
+
+    with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
+         patch("src.platform.model_management_service.test_model_profile", return_value={"ok": True, "profile_id": "default", "response": "正常"}) as test_profile:
+        result = admin_test_model_profile(ModelDefaultRequest(profile_id="default"), request)
+    assert result["ok"] is True
+    assert result["response"] == "正常"
+    test_profile.assert_called_once_with("default")
 
     with patch("src.web.dashboard.require_admin_context_from_request", return_value={"platform": "wecom", "user_id": "u-admin"}), \
          patch("src.platform.model_management_service.delete_model_profile", return_value={"ok": True, "profile_id": "default", "deleted": True}) as delete_profile:
@@ -975,9 +982,11 @@ def test_admin_console_page_contains_material_business_sections() -> None:
     assert "chooseModel(${jsAttr(model.id)},${jsAttr(model.name || model.id)})" in html
     assert "function modelProfileSlug(modelId)" in html
     assert "function setDefaultModel(profileId)" in html
+    assert "function testModelProfile(profileId)" in html
     assert "function deleteModelProfile(profileId)" in html
     assert "function applyProfileToForm(profileId, provider, sdkFormat, apiBase, modelName, maxTokens)" in html
     assert "<button class=\"tonal\" onclick=\"setDefaultModel(${jsAttr(profile.profile_id)})\">默认</button>" in html
+    assert "<button class=\"secondary\" onclick=\"testModelProfile(${jsAttr(profile.profile_id)})\">测试</button>" in html
     assert "<button class=\"danger\" onclick=\"deleteModelProfile(${jsAttr(profile.profile_id)})\">删除</button>" in html
     assert "applyProfileToForm(${jsAttr(profile.profile_id)},${jsAttr(profile.provider)}" in html
     assert "开通并通知员工" in html

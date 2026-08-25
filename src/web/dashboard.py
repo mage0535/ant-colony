@@ -1298,6 +1298,17 @@ def admin_set_default_model(req: ModelDefaultRequest, request: Request):
         raise HTTPException(400, str(exc))
 
 
+@app.post("/api/v1/admin/models/test")
+def admin_test_model_profile(req: ModelDefaultRequest, request: Request):
+    require_admin_context_from_request(request)
+    from src.platform.model_management_service import test_model_profile
+
+    try:
+        return test_model_profile(req.profile_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 @app.delete("/api/v1/admin/models/{profile_id}")
 def admin_delete_model_profile(profile_id: str, request: Request):
     require_admin_context_from_request(request)
@@ -4702,7 +4713,7 @@ def admin_console_page(request: Request = None):
           const defaultBtn = profile.is_default
             ? `<button class="tonal" disabled>默认</button>`
             : `<button class="tonal" onclick="setDefaultModel(${jsAttr(profile.profile_id)})">默认</button>`;
-          const actions = `<button class="secondary" onclick="applyProfileToForm(${jsAttr(profile.profile_id)},${jsAttr(profile.provider)},${jsAttr(((profile.metadata||{}).sdk_format || profile.provider))},${jsAttr(profile.api_base || '')},${jsAttr(profile.model_name)},${jsAttr(String(profile.max_tokens || 4096))})">编辑</button> ${defaultBtn} <button class="danger" onclick="deleteModelProfile(${jsAttr(profile.profile_id)})">删除</button>`;
+          const actions = `<button class="secondary" onclick="applyProfileToForm(${jsAttr(profile.profile_id)},${jsAttr(profile.provider)},${jsAttr(((profile.metadata||{}).sdk_format || profile.provider))},${jsAttr(profile.api_base || '')},${jsAttr(profile.model_name)},${jsAttr(String(profile.max_tokens || 4096))})">编辑</button> ${defaultBtn} <button class="secondary" onclick="testModelProfile(${jsAttr(profile.profile_id)})">测试</button> <button class="danger" onclick="deleteModelProfile(${jsAttr(profile.profile_id)})">删除</button>`;
           return `<tr><td>${safe(profile.profile_id)}</td><td>${safe(profile.model_name)}</td><td>${status}</td><td>${actions}</td></tr>`;
         });
         setHtml('modelProfiles', table(['配置','模型','状态','操作'], rows));
@@ -4753,6 +4764,18 @@ def admin_console_page(request: Request = None):
         const data = await api(`/api/v1/admin/models/${encodeURIComponent(profileId)}`, {method:'DELETE'});
         setHtml('modelActionStatus', chip(`已删除模型配置 ${safe(data.profile_id)}`, 'warn'));
         await loadModels();
+      } catch (err) {
+        setText('modelActionStatus', String(err.message || err), true);
+      }
+    }
+    async function testModelProfile(profileId) {
+      try {
+        if (!profileId) throw new Error('缺少模型配置名称');
+        setHtml('modelActionStatus', chip(`正在测试 ${safe(profileId)}，请稍候`, 'warn'));
+        const data = await api('/api/v1/admin/models/test', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({profile_id: profileId})});
+        const cls = data.ok ? 'ok' : 'bad';
+        const response = data.response ? `<pre class="result-box">${safe(data.response)}</pre>` : '';
+        setHtml('modelActionStatus', `${chip(data.message || (data.ok ? '模型调用成功' : '模型调用失败'), cls)}<p>配置：${safe(data.profile_id)}；模型：${safe(data.model_name || '-')}; 耗时：${safe(String(data.latency_ms || 0))} ms</p>${response}`);
       } catch (err) {
         setText('modelActionStatus', String(err.message || err), true);
       }

@@ -127,6 +127,59 @@ def delete_model_profile(profile_id: str) -> dict[str, Any]:
     return {"ok": True, "profile_id": normalized_id, "deleted": True}
 
 
+def test_model_profile(profile_id: str, prompt: str = "只回复两个字：正常") -> dict[str, Any]:
+    normalized_id = str(profile_id or "").strip()
+    if not normalized_id:
+        raise ValueError("缺少模型配置名称")
+    service = build_settings_service()
+    profile = service.get_llm_profile(normalized_id)
+    if profile is None:
+        raise ValueError("未找到模型配置")
+    if not profile.enabled:
+        raise ValueError("该模型配置已停用，请先启用后再测试")
+    if not profile.api_key:
+        raise ValueError("该模型配置缺少 API Key，无法测试")
+
+    from src.engine.factory import build_engine
+    from src.models.contracts import MessageContext, SpaceType
+
+    started = time.time()
+    try:
+        engine = build_engine(agent_role="personal", profile_id=normalized_id)
+        response = engine.process_text(
+            prompt,
+            MessageContext(
+                space_type=SpaceType.DEPARTMENT,
+                space_id="admin-model-test",
+                dept_id="admin-model-test",
+                metadata={"provider": "admin"},
+            ),
+        )
+        text = str(response.text or "")
+        ok = bool(text.strip()) and not text.startswith("[LLM 调用失败")
+        return {
+            "ok": ok,
+            "profile_id": normalized_id,
+            "model_name": str(getattr(engine.config, "model_name", profile.model_name) or profile.model_name),
+            "provider": str(getattr(engine.config, "provider", profile.provider.value) or profile.provider.value),
+            "api_base": str(getattr(engine.config, "api_base", profile.api_base or "") or profile.api_base or ""),
+            "response": text[:1000],
+            "latency_ms": int((time.time() - started) * 1000),
+            "message": "模型调用成功" if ok else "模型调用失败，请查看返回内容",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "profile_id": normalized_id,
+            "model_name": profile.model_name,
+            "provider": profile.provider.value,
+            "api_base": profile.api_base or "",
+            "response": "",
+            "latency_ms": int((time.time() - started) * 1000),
+            "message": f"模型调用失败：{exc}",
+        }
+
+
 def discover_models(payload: dict[str, Any]) -> dict[str, Any]:
     provider = str(payload.get("provider") or "openai").lower()
     sdk_format = str(payload.get("sdk_format") or provider or "openai").lower()
